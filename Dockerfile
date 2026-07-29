@@ -23,7 +23,7 @@ COPY ./pyproject.toml ./README.md ./uv.lock* ./
 COPY ./app ./app
 COPY ./coscientist ./coscientist
 
-RUN uv sync --frozen
+RUN uv sync --default-index https://pypi.org/simple
 
 ARG AGENT_VERSION=0.0.0
 ENV AGENT_VERSION=${AGENT_VERSION}

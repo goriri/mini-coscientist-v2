@@ -58,10 +58,13 @@ class ResearchDecision(BaseModel):
         "provide_input",
         "edit",
         "continue",
+        "refine_section",
     ]
     feedback: str = ""
     content: str = Field(default="", max_length=200000)
     artifact_id: str | None = None
+    candidate_id: str | None = None
+    section: str | None = None
     input_type: str | None = None
     input_reference: str | None = None
     actor: str = Field(default="web_researcher", max_length=120)
@@ -547,6 +550,15 @@ def decide_research_session(
                 )
             elif request.action == "edit":
                 workflow.edit_draft(request.content, actor=request.actor)
+            elif request.action == "refine_section":
+                if not request.candidate_id or not request.section:
+                    raise ValueError("candidate_id and section are required for refine_section.")
+                workflow.refine_section(
+                    request.candidate_id,
+                    request.section,
+                    request.feedback,
+                    actor=request.actor,
+                )
             elif request.action == "continue":
                 if workflow.session.status == "evidence_required":
                     workflow.retry_evidence(actor=request.actor)

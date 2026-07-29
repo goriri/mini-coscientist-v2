@@ -37,9 +37,12 @@ from .models import (
     DeepResearchRun,
     DiscoveryManifest,
     EvidencePacket,
+    EvidenceRequest,
     HumanDecision,
+    KnowledgeBaseManifest,
     ResearchPlan,
     ReviewSet,
+    CandidatePopulation,
     Session,
 )
 from .parity import detect_input_requirements, unresolved_blockers
@@ -229,7 +232,17 @@ class CoScientistWorkflow:
         stage = self.stage
         if stage == "evidence":
             return await self._preview_evidence(feedback)
-        definitions = SPECIALISTS_BY_STAGE[stage]
+        if stage == "generate":
+            if self.session.workflow_version == 1:
+                definitions = tuple(
+                    item for item in SPECIALISTS_BY_STAGE["generate"] if item.role == "generation"
+                )
+            else:
+                definitions = tuple(
+                    item for item in SPECIALISTS_BY_STAGE["generate"] if item.role != "generation"
+                )
+        else:
+            definitions = SPECIALISTS_BY_STAGE[stage]
         earlier_bundles = [
             item
             for item in self.session.artifacts
@@ -251,6 +264,41 @@ class CoScientistWorkflow:
             ):
                 self.session.artifacts.append(result.artifact)
             output_ids.append(result.artifact.id)
+
+        if stage == "generate":
+            merged_candidates = []
+            seen_claims = set()
+            for res in results:
+                if res.artifact.schema_name == "CandidatePopulation" and res.artifact.payload:
+                    pop = CandidatePopulation.model_validate(res.artifact.payload)
+                    for cand in pop.candidates:
+                        key = (cand.claim.strip().lower(), cand.rationale.strip().lower())
+                        if key not in seen_claims:
+                            seen_claims.add(key)
+                            merged_candidates.append(cand)
+            if merged_candidates:
+                merged_pop = CandidatePopulation(
+                    candidates=merged_candidates,
+                    target_size=max(8, len(merged_candidates)),
+                )
+                from .normalization import (
+                    validate_candidate_comprehensiveness,
+                    validate_candidate_distinctness,
+                )
+
+                validate_candidate_distinctness(merged_pop)
+                if self.session.workflow_version >= 2:
+                    validate_candidate_comprehensiveness(merged_pop)
+                agg_artifact = Artifact(
+                    stage="generate",
+                    agent="generation_aggregator",
+                    content=f"Merged {len(merged_candidates)} candidates across 4 parallel generation strategies.",
+                    artifact_type="specialist_output",
+                    schema_name="CandidatePopulation",
+                    payload=merged_pop.model_dump(mode="json"),
+                )
+                self.session.artifacts.append(agg_artifact)
+                output_ids.append(agg_artifact.id)
 
         sections = [
             f"### {result.artifact.agent.replace('_', ' ').title()}\n\n"
@@ -626,6 +674,26 @@ class CoScientistWorkflow:
                 self._persist(event)
                 return
 
+        if (
+            artifact.stage in {"rank", "meta_review"}
+            and self.session.workflow_version >= 2
+        ):
+            all_reviews = [
+                review
+                for item in self.session.artifacts
+                if item.stage == "reflect"
+                and item.schema_name == "ReviewSet"
+                for review in ReviewSet.model_validate(item.payload).reviews
+            ]
+            if all_reviews and all(
+                review.recommendation == "insufficient_evidence"
+                for review in all_reviews
+            ):
+                raise ValueError(
+                    "A review set in which all candidates have insufficient evidence "
+                    "cannot produce a scientific recommendation."
+                )
+
         is_automatic = (
             self.approval_profile == ApprovalProfile.AUTO
             if automatic is None
@@ -861,6 +929,128 @@ class CoScientistWorkflow:
         )
         self._persist(event)
         return edited
+
+    def refine_section(
+        self,
+        candidate_id: str,
+        section: str,
+        feedback: str,
+        *,
+        actor: str = "researcher",
+    ) -> Artifact:
+        """Refine a single field of a candidate card without regenerating the population."""
+        pending = self.pending_draft
+        if pending is None or pending.stage != "generate":
+            raise ValueError("Targeted section refinement is available only during candidate generation.")
+        pop_artifact = None
+        for art in reversed(self.session.artifacts):
+            if art.stage == "generate" and art.schema_name == "CandidatePopulation" and art.payload:
+                pop_artifact = art
+                break
+        if not pop_artifact:
+            raise ValueError("No CandidatePopulation artifact found to refine.")
+        pop = CandidatePopulation.model_validate(pop_artifact.payload)
+        target_cand = None
+        for cand in pop.candidates:
+            if cand.id == candidate_id:
+                target_cand = cand
+                break
+        if not target_cand:
+            raise ValueError(f"Candidate {candidate_id} not found in current population.")
+        if not hasattr(target_cand, section):
+            raise ValueError(f"Candidate has no section '{section}'.")
+        current_val = getattr(target_cand, section)
+        if isinstance(current_val, str):
+            setattr(target_cand, section, f"{current_val}\n\nResearcher refinement ({feedback})")
+        elif isinstance(current_val, list):
+            current_val.append(f"Researcher refinement: {feedback}")
+        pop_artifact.payload = pop.model_dump(mode="json")
+        decision = HumanDecision(
+            action=DecisionAction.REFINE_SECTION,
+            artifact_id=pop_artifact.id,
+            artifact_version=pop_artifact.version,
+            stage=pop_artifact.stage,
+            actor=actor,
+            feedback=f"Refined section '{section}' of candidate '{candidate_id}': {feedback}",
+            session_version=self.session.version,
+        )
+        self.session.decisions.append(decision)
+        event = self._event(
+            "candidate_section_refined",
+            actor,
+            payload={
+                "candidate_id": candidate_id,
+                "section": section,
+                "feedback": feedback,
+                "artifact_id": pop_artifact.id,
+                "decision_id": decision.id,
+            },
+        )
+        self._persist(event)
+        return pop_artifact
+
+    def request_evidence_delta(
+        self,
+        requesting_stage: str,
+        requesting_agent: str,
+        claim_to_verify: str,
+        *,
+        priority: int = 1,
+        budget_usd: float = 1.0,
+    ) -> EvidenceRequest:
+        """Submit an asynchronous evidence request during review or evolution."""
+        searches_used = sum(
+            1
+            for event in self.session.events
+            if event.event_type == "evidence_delta_requested"
+        )
+        for item in self.session.artifacts:
+            if item.schema_name == "DiscoveryManifest" and item.payload:
+                dm = DiscoveryManifest.model_validate(item.payload)
+                searches_used += len(dm.runs)
+            elif item.schema_name == "KnowledgeBaseManifest" and item.payload:
+                kb = KnowledgeBaseManifest.model_validate(item.payload)
+                searches_used += len(kb.evidence_requests)
+
+        if searches_used >= self.session.budget.max_searches:
+            raise ValueError("ResearchBudget max_searches exceeded for evidence delta requests.")
+
+        ev_req = EvidenceRequest(
+            requesting_stage=requesting_stage,
+            requesting_agent=requesting_agent,
+            claim_to_verify=claim_to_verify,
+            priority=priority,
+            budget_usd=budget_usd,
+            status="submitted",
+        )
+        kb_artifact = next(
+            (item for item in reversed(self.session.artifacts) if item.schema_name == "KnowledgeBaseManifest"),
+            None,
+        )
+        if kb_artifact:
+            kb = KnowledgeBaseManifest.model_validate(kb_artifact.payload)
+            kb.evidence_requests.append(ev_req)
+            kb_artifact.payload = kb.model_dump(mode="json")
+            kb_artifact.content = f"Knowledge Base Manifest v{kb.version} with {len(kb.evidence_requests)} evidence requests."
+            kb_artifact.populate_checksum()
+        else:
+            kb = KnowledgeBaseManifest(version=1, evidence_requests=[ev_req])
+            kb_artifact = Artifact(
+                stage="evidence",
+                agent="knowledge_curator",
+                content=f"Knowledge Base Manifest v1 with 1 evidence requests.",
+                schema_name="KnowledgeBaseManifest",
+                payload=kb.model_dump(mode="json"),
+            )
+            self.session.artifacts.append(kb_artifact)
+        self._persist(
+            self._event(
+                "evidence_delta_requested",
+                requesting_agent,
+                payload={"evidence_request_id": ev_req.id, "claim": claim_to_verify},
+            )
+        )
+        return ev_req
 
     def stop(self, *, actor: str = "researcher") -> None:
         if self.session.status != "active":

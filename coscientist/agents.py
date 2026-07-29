@@ -32,14 +32,34 @@ STRUCTURED_OUTPUT_INSTRUCTIONS = {
         "ID, original URL, exact supporting or contradicting location, relation, "
         "and correction/retraction status. Otherwise keep it unverified."
     ),
+    "generation_evidence_first": (
+        "Return one CandidatePopulation JSON object containing exactly two candidates "
+        "using the evidence_first strategy. For each candidate, generate a reader-facing title, "
+        "comprehensive paragraphs for mechanism_model and validation_protocol (>= 50 words each), "
+        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+    ),
+    "generation_mechanism_first": (
+        "Return one CandidatePopulation JSON object containing exactly two candidates "
+        "using the mechanism_first strategy. For each candidate, generate a reader-facing title, "
+        "comprehensive paragraphs for mechanism_model and validation_protocol (>= 50 words each), "
+        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+    ),
+    "generation_analogy_transfer": (
+        "Return one CandidatePopulation JSON object containing exactly two candidates "
+        "using the analogy_transfer strategy. For each candidate, generate a reader-facing title, "
+        "comprehensive paragraphs for mechanism_model and validation_protocol (>= 50 words each), "
+        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+    ),
+    "generation_competing_explanation": (
+        "Return one CandidatePopulation JSON object containing exactly two candidates "
+        "using the competing_explanation strategy. For each candidate, generate a reader-facing title, "
+        "comprehensive paragraphs for mechanism_model and validation_protocol (>= 50 words each), "
+        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+    ),
     "generation": (
-        "Return one CandidatePopulation JSON object containing exactly eight "
-        "candidates: two each from evidence_first, mechanism_first, "
-        "analogy_transfer, and competing_explanation. Include IDs, claims, "
-        "rationales, predictions, alternatives, falsifiers, dependencies, "
-        "risks, go_no_go_tests, and evidence_ids for every candidate. Include "
-        "top-level comparison_criteria covering evidence, feasibility, "
-        "information gain, impact, cost/time, reproducibility, and safety."
+        "Return one CandidatePopulation JSON object containing exactly eight candidates. "
+        "Each candidate must define a reader-facing title, distinct claim, rationale, mechanism_model, "
+        "validation_protocol, predictions, alternatives, falsifier, categorized evidence, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
     ),
     "reflection": "Return one ReviewSet JSON object with one evidence_correctness review per candidate.",
     "novelty_review": "Return one ReviewSet JSON object with one novelty review per candidate.",
@@ -111,6 +131,10 @@ class DeterministicProvider:
             "evidence_discovery": "Evidence discovery status: OFFLINE / UNVERIFIED.\n\nSearch questions to run with the live Google Search specialist:\n- What primary studies directly test the proposed mechanism?\n- What negative findings, replications, corrections, or retractions exist?\n- Which official datasets, standards, or registered protocols apply?\n\nNo source has been discovered or verified by the deterministic provider.",
             "source_verification": "Source verification status: NO SOURCES PROVIDED.\n\nA live verifier must open the original source, resolve its DOI/PMID or dataset identifier, inspect the exact supporting passage, and check correction/retraction status. Search snippets cannot satisfy an evidence gate.",
             "generation": "Eight candidate records were created using evidence-first, mechanism-first, analogy/transfer, and competing-explanation strategies. All are proposals pending verified evidence; inspect the typed CandidatePopulation artifact for their predictions, alternatives, dependencies, risks, falsifiers, go/no-go tests, and cross-candidate comparison criteria.",
+            "generation_evidence_first": "Eight candidate records were created using evidence-first strategy. All are proposals pending verified evidence; inspect the typed CandidatePopulation artifact for their predictions, alternatives, dependencies, risks, falsifiers, go/no-go tests, and cross-candidate comparison criteria.",
+            "generation_mechanism_first": "Eight candidate records were created using mechanism-first strategy. All are proposals pending verified evidence; inspect the typed CandidatePopulation artifact for their predictions, alternatives, dependencies, risks, falsifiers, go/no-go tests, and cross-candidate comparison criteria.",
+            "generation_analogy_transfer": "Eight candidate records were created using analogy/transfer strategy. All are proposals pending verified evidence; inspect the typed CandidatePopulation artifact for their predictions, alternatives, dependencies, risks, falsifiers, go/no-go tests, and cross-candidate comparison criteria.",
+            "generation_competing_explanation": "Eight candidate records were created using competing-explanation strategy. All are proposals pending verified evidence; inspect the typed CandidatePopulation artifact for their predictions, alternatives, dependencies, risks, falsifiers, go/no-go tests, and cross-candidate comparison criteria.",
             "reflection": "Critical review:\n- Novelty is unverified; search primary literature and negative results before claiming it.\n- Causal claims need controls, randomization/blinding where applicable, and independent replication.\n- Specify effect size, power calculation, preregistered exclusions, and adverse-event monitoring.\n\nRecommendation: advance only candidates that remain feasible after these checks.",
             "novelty_review": "Novelty review:\n- Compare each candidate with verified prior art rather than search-result similarity.\n- Treat missing primary sources and inaccessible dates as insufficient evidence.\n- Preserve potentially valuable minority hypotheses while novelty remains unresolved.",
             "methods_statistics": "Methods and statistics review:\n- Declare the research mode and intended claim before choosing a design.\n- Define constructs, estimand or proof obligation, sampling/precision rationale, controls, missing-data handling, uncertainty, robustness checks, and stopping rules.\n- Separate exploratory analysis from confirmatory tests and require an independent replication or validation path.\n\nStatus: CONDITIONAL; domain-specific calculations require validated inputs.",
@@ -299,7 +323,29 @@ SPECIALISTS = (
         "Inspect permitted original sources, normalize identifiers, and map exact claim support; never treat snippets as verified evidence.",
     ),
     Specialist(
-        "generate", "generation", "Generate diverse, falsifiable candidate hypotheses."
+        "generate",
+        "generation",
+        "Generate diverse, falsifiable candidate hypotheses.",
+    ),
+    Specialist(
+        "generate",
+        "generation_evidence_first",
+        "Generate 2 candidates by bridging established empirical findings with unexplained anomalies or gaps in the Knowledge Base.",
+    ),
+    Specialist(
+        "generate",
+        "generation_mechanism_first",
+        "Generate 2 bottom-up candidates by constructing novel causal pathways, mathematical formulations, or biophysical/computational models.",
+    ),
+    Specialist(
+        "generate",
+        "generation_analogy_transfer",
+        "Generate 2 candidates by transferring validated control mechanisms, algorithms, or structural motifs from adjacent scientific domains.",
+    ),
+    Specialist(
+        "generate",
+        "generation_competing_explanation",
+        "Generate 2 rival candidates that challenge the prevailing consensus or dominant interpretation in the Knowledge Base.",
     ),
     Specialist(
         "reflect",

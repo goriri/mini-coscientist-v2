@@ -12,7 +12,7 @@ def test_adk_app_is_resumable_and_global():
 
 def test_live_tree_is_not_an_automatic_sequential_workflow():
     assert not isinstance(root_agent, SequentialAgent)
-    assert len(root_agent.sub_agents) == 13
+    assert len(root_agent.sub_agents) == 17
     search_agents = []
     for agent in root_agent.sub_agents:
         tool_names = [getattr(tool, "name", "") for tool in getattr(agent, "tools", [])]

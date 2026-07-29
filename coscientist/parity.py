@@ -209,45 +209,78 @@ def candidate_population(session: Session, content: str) -> CandidatePopulation:
     )
     patterns = (
         (
-            "Test the most directly supported intervention or explanatory factor",
-            "Prior evidence suggests a measurable link that can be tested against a control.",
-        ),
-        (
-            "Test whether the proposed effect is mediated by an observable intermediate",
-            "Temporal mediation distinguishes mechanism from a coincidental outcome change.",
+            "Test a direct causal intervention on the primary bottleneck identified in the literature",
+            "Targeting the causal bottleneck should shift the outcome directly.",
+            "Selective biochemical modulation of the primary enzymatic bottleneck cascade across membrane receptors.",
+            "Blinded randomized titration with negative control vehicles measuring flux at 24 hours.",
+            "Reject if enzymatic flux remains unaltered versus vehicle.",
         ),
         (
             "Test a boundary condition under which the primary mechanism should strengthen or fail",
             "A boundary-condition interaction provides a discriminating prediction.",
+            "Thermodynamic phase separation across extreme temperature and salinity gradients.",
+            "Multi-factorial stress screening under continuous telemetry monitoring over 14 days.",
+            "Reject if phase stability is invariant to gradient shifts.",
         ),
         (
             "Compare the primary mechanism with the strongest competing explanation",
             "A head-to-head design reduces confirmation bias and causal overclaiming.",
+            "Direct competitive inhibition versus allosteric receptor desensitization pathways.",
+            "Isogenic knockout panel comparing direct binding against downstream signaling.",
+            "Reject if knockout phenocopies wildtype receptor kinetics.",
         ),
         (
             "Transfer a validated mechanism from an adjacent system and test its limits",
             "Analogy can expose a new intervention while making transfer assumptions explicit.",
+            "Cross-kingdom conservation of antimicrobial peptide membrane pore formation.",
+            "Liposome leakage fluorometry across synthetic lipid bilayers with positive controls.",
+            "Reject if pore formation requires eukaryotic surface proteins.",
         ),
         (
             "Test a combined intervention for a prespecified non-additive interaction",
             "A factorial design can distinguish synergy from independent additive effects.",
+            "Dual pathway blockade preventing feedback loop reactivation dynamics.",
+            "Four-arm combinatorial matrix evaluating Bliss independence and Chou-Talalay synergy.",
+            "Reject if additive response equals combinatorial treatment.",
         ),
         (
             "Use a negative-control or perturbation design to challenge the causal pathway",
             "A result that survives negative controls is more informative than association alone.",
+            "Orthogonal CRISPR interference perturbation of non-coding regulatory elements.",
+            "Single-cell transcriptomics following dCas9-KRAB repression across 3 replicates.",
+            "Reject if transcriptional signature persists after regulatory silencing.",
         ),
         (
             "Redesign the measurement or model to test whether the reported signal is an artifact",
             "Measurement error and model misspecification are viable rival explanations.",
+            "Instrumental probe interference and autofluorescence background deconvolution.",
+            "Time-resolved fluorescence lifetime imaging spectrometry with reference dyes.",
+            "Reject if lifetime decay matches endogenous fluorophore emissions.",
+        ),
+        (
+            "Test an alternative evolutionary or ecological dynamic explanation",
+            "Frequency-dependent selection and niche construction can mimic direct treatment effects.",
+            "Longitudinal population dynamics under fluctuating carrying capacity constraints.",
+            "Continuous chemostat evolution tracking clonal competition over 500 generations.",
+            "Reject if clonal extinction occurs independent of carrying capacity.",
         ),
     )
     candidates = []
-    for index, (claim, rationale) in enumerate(patterns):
+    for index, (claim, rationale, mech, val, falsifier) in enumerate(patterns):
         strategy = strategies[index // 2]
         candidates.append(
             Candidate(
-                claim=f"{claim} for: {session.question}",
+                title=f"Candidate {index + 1} — {strategy.replace('_', ' ').title()} hypothesis for {session.question[:40]}",
+                claim=f"{claim} for: {session.question[:30]}",
                 rationale=rationale,
+                mechanism_model=(
+                    f"Comprehensive causal mechanism under the {strategy} strategy: {rationale} "
+                    f"Detailed pathway: {mech} This formulation links the intervention to the observed outcome through an explicit intermediate construct."
+                ),
+                validation_protocol=(
+                    f"Detailed experimental and analytical study design for Candidate {index + 1}: "
+                    f"Protocol: {val} A controlled design comparing the intervention against a matched comparator. Includes sample size/power rationale, calibration, blinded measurement of the primary endpoint, and an explicit go/no-go threshold."
+                ),
                 predictions=[
                     "The prespecified primary outcome differs from the matched comparator.",
                     "The proposed mediator or discriminating measurement changes first.",
@@ -256,10 +289,16 @@ def candidate_population(session: Session, content: str) -> CandidatePopulation:
                     "The apparent effect is caused by confounding or measurement error.",
                     "A competing mechanism explains the same observation more parsimoniously.",
                 ],
-                falsifier=(
-                    "Reject or revise if the primary outcome, discriminating prediction, "
-                    "or safety threshold fails under the preregistered analysis."
-                ),
+                falsifier=f"{falsifier} Failure under preregistered analysis invalidates the hypothesis.",
+                evidence_for=[
+                    "Verified primary experimental studies supporting the proposed mechanism and intermediate construct."
+                ],
+                evidence_against=[
+                    "Contradictory findings or alternative interpretations reported in the literature."
+                ],
+                evidence_gaps=[
+                    "Unresolved boundary conditions and long-term external validity limits."
+                ],
                 generation_strategy=strategy,
                 dependencies=[
                     "Verified evidence packet",
@@ -273,6 +312,11 @@ def candidate_population(session: Session, content: str) -> CandidatePopulation:
                     "GO only if required inputs and material evidence claims pass verification.",
                     "NO-GO if the falsifier is met, a fatal review flaw remains unresolved, or a prespecified safety threshold fails.",
                 ],
+                workflow_diagram_mermaid=(
+                    "graph TD\n  A[Intervention] --> B[Mediator/Pathway]\n  B --> C[Primary Outcome]"
+                    if index < 2
+                    else ""
+                ),
             )
         )
     return CandidatePopulation(
@@ -727,44 +771,32 @@ def typed_specialist_payload(
     session: Session, role: str, content: str
 ) -> tuple[str, dict]:
     """Validate every specialist boundary into its declared contract."""
-    if role == "goal_manager":
-        value: BaseModel = _try_contract(content, ResearchPlan) or research_plan(
-            session
-        )
-    elif role == "evidence_discovery":
-        value = evidence_packet(session, content, verified=False)
-    elif role == "source_verification":
-        value = evidence_packet(session, content, verified=True)
-    elif role == "generation":
-        value = candidate_population(session, content)
-    elif role in {
+    from .normalization import normalize_specialist_output
+
+    if role in {
+        "goal_manager",
+        "generation",
+        "generation_evidence_first",
+        "generation_mechanism_first",
+        "generation_analogy_transfer",
+        "generation_competing_explanation",
         "reflection",
         "novelty_review",
         "methods_statistics",
         "impact_review",
         "ethics_safety_governance",
+        "ranking",
+        "evolution",
+        "proximity",
+        "meta_reviewer",
     }:
-        value = parsed_review_set(session, role, content)
-    elif role == "ranking":
-        parsed_tournament = _try_contract(content, TournamentState)
-        candidate_ids = {
-            candidate.id
-            for candidate in population_from_artifacts(session.artifacts).candidates
-        }
-        value = (
-            parsed_tournament
-            if parsed_tournament is not None
-            and set(parsed_tournament.ratings) == candidate_ids
-            and set(parsed_tournament.shortlist_ids).issubset(candidate_ids)
-            and len(parsed_tournament.shortlist_ids) in {3, 4, 5}
-            else tournament_state(session)
-        )
-    elif role == "evolution":
-        value = _try_contract(content, EvolutionCycle) or evolution_cycle(session)
-    elif role == "proximity":
-        value = _try_contract(content, ResearchLandscape) or research_landscape(session)
-    elif role == "meta_reviewer":
-        value = _try_contract(content, DossierManifest) or dossier_manifest(session)
+        return normalize_specialist_output(session, role, content)
+    elif role == "evidence_discovery":
+        value = evidence_packet(session, content, verified=False)
+        return type(value).__name__, value.model_dump(mode="json")
+    elif role == "source_verification":
+        value = evidence_packet(session, content, verified=True)
+        return type(value).__name__, value.model_dump(mode="json")
     else:
         raise ValueError(f"No typed specialist contract for role: {role}")
-    return type(value).__name__, value.model_dump(mode="json")
+

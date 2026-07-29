@@ -95,7 +95,7 @@ def test_only_discovery_card_has_google_search():
         card for card in flow.agent_cards if card.name == "source_verification"
     )
     assert verifier.tools == ["load_web_page"]
-    assert len(flow.agent_cards) == 13
+    assert len(flow.agent_cards) == 17
 
 
 def test_stopped_session_cannot_advance():

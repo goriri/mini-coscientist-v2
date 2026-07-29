@@ -84,21 +84,62 @@ def _typed_summary(schema_name: str, payload: dict) -> list[str]:
         population = CandidatePopulation.model_validate(payload)
         lines = [
             f"Eight-candidate target: {population.target_size}; "
-            f"actual candidates: {len(population.candidates)}."
+            f"actual candidates: {len(population.candidates)}.",
+            "",
+            "### Executive Candidate Summary",
+            "",
+            "| # | Candidate Title | Strategy | Primary Claim | Falsifier Summary |",
+            "| ---: | --- | --- | --- | --- |",
         ]
+        for idx, cand in enumerate(population.candidates, 1):
+            short_claim = cand.claim.replace("\n", " ")[:60] + ("..." if len(cand.claim) > 60 else "")
+            short_falsifier = cand.falsifier.replace("\n", " ")[:60] + ("..." if len(cand.falsifier) > 60 else "")
+            lines.append(
+                f"| {idx} | `{cand.title or cand.id}` | `{cand.generation_strategy}` | {short_claim} | {short_falsifier} |"
+            )
+
+        def _badge_evidence(items: list[str]) -> list[str]:
+            out = []
+            for item in items:
+                badge = "[Verified Source] " if any(token in item.lower() for token in ("doi", "pmid", "10.", "http")) else "[Literature Lead] "
+                out.append(f"- {badge}{item}")
+            return out
+
         for index, candidate in enumerate(population.candidates, 1):
             lines.extend(
                 [
                     "",
-                    f"#### Candidate {index}",
+                    f"#### {candidate.title or f'Candidate {index}'}",
                     "",
                     f"**Strategy:** {candidate.generation_strategy}",
                     "",
-                    candidate.claim,
+                    f"**Claim:** {candidate.claim}",
                     "",
-                    f"**Rationale:** {candidate.rationale}",
+                    "**Mechanism & Model:**",
+                    candidate.mechanism_model or candidate.rationale,
                     "",
-                    "**Predictions:**",
+                    "**Plausibility Rationale:**",
+                    candidate.rationale,
+                    "",
+                    "**Evidence for:**",
+                    *(
+                        _badge_evidence(candidate.evidence_for)
+                        or ["- None specified."]
+                    ),
+                    "",
+                    "**Evidence against:**",
+                    *(
+                        _badge_evidence(candidate.evidence_against)
+                        or ["- None specified."]
+                    ),
+                    "",
+                    "**Evidence gaps:**",
+                    *(
+                        _badge_evidence(candidate.evidence_gaps)
+                        or ["- None specified."]
+                    ),
+                    "",
+                    "**Discriminating Predictions:**",
                     *[f"- {item}" for item in candidate.predictions],
                     "",
                     "**Competing explanations:**",
@@ -106,19 +147,32 @@ def _typed_summary(schema_name: str, payload: dict) -> list[str]:
                     "",
                     f"**Falsifier:** {candidate.falsifier}",
                     "",
-                    "**Risks:**",
-                    *(
-                        [f"- {item}" for item in candidate.risks]
-                        or ["- Not yet characterized."]
-                    ),
+                    "**Validation Protocol & Design:**",
+                    candidate.validation_protocol or "Not yet specified.",
                     "",
                     "**Go/no-go tests:**",
                     *(
                         [f"- {item}" for item in candidate.go_no_go_tests]
                         or ["- Not yet specified."]
                     ),
+                    "",
+                    "**Feasibility, Safety & Governance Risks:**",
+                    *(
+                        [f"- {item}" for item in candidate.risks]
+                        or ["- Not yet characterized."]
+                    ),
                 ]
             )
+            if candidate.workflow_diagram_mermaid:
+                lines.extend(
+                    [
+                        "",
+                        "**Workflow / Pathway Diagram:**",
+                        "```mermaid",
+                        candidate.workflow_diagram_mermaid.strip(),
+                        "```",
+                    ]
+                )
         if population.comparison_criteria:
             lines.extend(
                 [
