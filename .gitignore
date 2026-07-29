@@ -1,0 +1,133 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.pyc
+*$py.class
+**/dist
+/tmp
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage / linting caches
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ty/
+.pyre/
+
+# Translations
+*.mo
+*.pot
+
+# Logs and Database files
+*.log
+local_settings.py
+*.db
+db.sqlite3
+db.sqlite3-journal
+instance/
+.webassets-cache
+
+# IPython
+profile_default/
+ipython_config.py
+
+# Environments and Secrets
+.env
+!.env.example
+.venv
+.venv*
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+*.pem
+*-key.json
+credentials*.json
+my_env.tfvars
+
+# Editor and System files
+.DS_Store
+Thumbs.db
+.idea/
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/*
+
+# Terraform
+.terraform*
+.Terraform*
+
+# Node / Web (if applicable)
+**/node_modules
+npm-debug.log
+yarn-error.log
+
+# Temporary files
+tmp*
+scratch/
+
+# Google Agents CLI / ADK / Coscientist runtime and test artifacts
+.adk/
+.agents/
+.agents-cli-scripts/
+.codex/
+.coscientist/
+.google-agents-cli/
+.tools/
+.persist_vector_store
+.saved_chats
+.locust_env
+artifacts/
+tests/load_test/.results/*.html
+tests/load_test/.results/*.csv
+tools/a2a-inspector/

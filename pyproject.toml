@@ -1,0 +1,79 @@
+[project]
+name = "coscientist"
+version = "0.1.0"
+description = "Human-steered, multi-agent scientific co-scientist"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "a2a-sdk[http-server]~=0.3.22",
+    "aiosqlite>=0.22,<1",
+    "asyncpg>=0.30,<1",
+    "google-adk[a2a,db,gcp,otel-gcp]>=2.5.0,<3.0.0",
+    "google-cloud-storage>=3.0,<4",
+    "google-cloud-tasks>=2.19,<3",
+    "google-genai>=2.14,<3",
+    "psycopg[binary]>=3.2,<4",
+    "python-docx>=1.1,<2",
+    "reportlab>=4.2,<5",
+]
+
+[project.scripts]
+coscientist = "coscientist.cli:main"
+
+[tool.setuptools]
+packages = ["app", "coscientist"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "pytest>=9,<10",
+    "pytest-asyncio>=1,<2",
+    "requests>=2.32,<3",
+]
+
+[project.optional-dependencies]
+eval = [
+    "google-adk[eval]>=2.5.0,<3.0.0",
+    "google-cloud-aiplatform[evaluation]>=1.156.0",
+]
+lint = [
+    "codespell>=2.2,<3",
+    "ruff>=0.4.6,<1",
+    "ty>=0.0.1a0",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+extend-exclude = [".tools", ".venv", ".agents-cli-scripts", "artifacts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF"]
+ignore = ["E501", "B006"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "coscientist"]
+
+[tool.ty.src]
+exclude = [".venv/**", ".tools/**"]
+
+[tool.ty.rules]
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+invalid-return-type = "ignore"
+possibly-missing-attribute = "ignore"
+not-subscriptable = "ignore"
+deprecated = "ignore"
+
+[tool.codespell]
+ignore-words-list = "artefact,artefacts"
+skip = "./.tools,./.venv,uv.lock,artifacts,*.pdf"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"

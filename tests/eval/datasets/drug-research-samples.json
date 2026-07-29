@@ -1,0 +1,37 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "kras_inhibitor_resistance",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Identify rational combination strategies to overcome primary and acquired resistance to KRAS inhibitors in non-small cell lung cancer. Distinguish genomic, cell-state, and tumor-microenvironment mechanisms and propose discriminating validation experiments."
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "glp1_lean_tissue_preservation",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Design a research program to preserve muscle function and lean tissue during GLP-1-based obesity treatment. Distinguish tissue quantity from strength and function and define clinically meaningful endpoints, controls, and go/no-go criteria."
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "gram_negative_antimicrobial_resistance",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Prioritize drug and nontraditional combination strategies against multidrug-resistant Gram-negative infections. Incorporate rapid diagnostics, resistance evolution, PK/PD, safety, and feasible clinical-trial designs."
+          }
+        ]
+      }
+    }
+  ]
+}

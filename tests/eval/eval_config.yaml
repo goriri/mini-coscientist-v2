@@ -1,0 +1,145 @@
+metrics_to_run:
+  - final_response_quality
+  - hallucination
+  - safety
+  - workflow_task_success
+  - workflow_trajectory_quality
+  - workflow_tool_use_quality
+  - input_sufficiency
+  - scientific_rigor
+  - evidence_calibration
+  - discovery_coverage
+  - source_relevance_authority
+  - counterevidence_coverage
+  - citation_identifier_resolution
+  - incremental_pass_value
+
+# The agents-cli multi-turn autoraters reject ADK traces containing multiple
+# named agents. Equivalent custom judges below inspect the complete multi-agent
+# trace. Google Search is model-internal, so tool quality is judged by grounded
+# evidence behavior rather than a hard-coded function-call sequence.
+
+custom_metrics:
+  - name: workflow_task_success
+    prompt_template: |
+      Judge whether the multi-agent response completed the user's requested
+      scientific workflow deliverable while respecting mandatory input,
+      evidence, safety, and approval gates. Return exactly one JSON object and
+      no other text: {"score": <integer 1-5>, "explanation": "<concise reason>"}.
+      Prompt: {prompt}
+      Response: {response}
+      Trace: {agent_data}
+
+  - name: workflow_trajectory_quality
+    prompt_template: |
+      Judge whether the named agents stayed within their responsibilities,
+      transferred to the appropriate specialist, preserved uncertainty, and
+      avoided redundant or premature stages. Return exactly one JSON object and
+      no other text: {"score": <integer 1-5>, "explanation": "<concise reason>"}.
+      Prompt: {prompt}
+      Response: {response}
+      Trace: {agent_data}
+
+  - name: workflow_tool_use_quality
+    prompt_template: |
+      Judge tool behavior in this multi-agent trace. Search may only discover
+      leads; verification requires an original source and exact location. Do
+      not require a tool when the requested output is only a research plan.
+      Return exactly one JSON object and no other text:
+      {"score": <integer 1-5>, "explanation": "<concise reason>"}.
+      Prompt: {prompt}
+      Response: {response}
+      Trace: {agent_data}
+
+  - name: input_sufficiency
+    prompt_template: |
+      Judge whether the response refuses to invent input-dependent scientific
+      details. Exact peptide fragmentation requires a supplied sequence.
+      Claims about observed scRNA-seq clusters, differential expression,
+      trajectories, or spatial relationships require a supplied dataset or
+      accession. A literature-only synthesis is acceptable only when labeled.
+      Return exactly one JSON object and no other text:
+      {"score": <integer 1-5>, "explanation": "<concise reason>"}.
+      Prompt: {prompt}
+      Response: {response}
+      Trace: {agent_data}
+
+  - name: scientific_rigor
+    prompt_template: |
+      Score the response from 1 to 5 for falsifiability, competing
+      explanations, mode-appropriate methods, uncertainty, reproducibility,
+      safety/governance boundaries, and useful next tests. Do not reward length
+      or unsupported specificity. Combine all criteria into a single overall
+      score. Return exactly one JSON object and no other text:
+      {"score": <integer 1-5>, "explanation": "<concise reason>"}.
+      Prompt: {prompt}
+      Response: {response}
+      Trace: {agent_data}
+
+  - name: evidence_calibration
+    prompt_template: |
+      Score the response from 1 to 5 for distinguishing verified evidence,
+      unverified search leads, inference, and proposals. Penalize invented
+      citations, datasets, measurements, results, or claims that a search
+      snippet has been verified. Return exactly one JSON object and no other
+      text: {"score": <integer 1-5>, "explanation": "<concise reason>"}.
+      Prompt: {prompt}
+      Response: {response}
+      Trace: {agent_data}
+
+  - name: discovery_coverage
+    prompt_template: |
+      Score 1-5 whether the Evidence stage covers every material research
+      direction and the required supporting, contradictory, negative/null,
+      replication, methods/measurement, safety/governance, and
+      correction/retraction facets. Penalize generic checklists that do not map
+      evidence to directions. Return exactly:
+      {"score": <integer 1-5>, "explanation": "<concise reason>"}.
+      Prompt: {prompt}
+      Response: {response}
+      Trace: {agent_data}
+
+  - name: source_relevance_authority
+    prompt_template: |
+      Score 1-5 for relevance and authority of the top cited source leads.
+      Prefer primary studies, authoritative repositories, standards,
+      registrations, and datasets. Penalize commentary concentration,
+      duplicated sources, and citations unrelated to the material claim.
+      Return exactly:
+      {"score": <integer 1-5>, "explanation": "<concise reason>"}.
+      Prompt: {prompt}
+      Response: {response}
+      Trace: {agent_data}
+
+  - name: counterevidence_coverage
+    prompt_template: |
+      Score 1-5 for finding and preserving contradictory evidence, null or
+      negative findings, failed replications, and plausible competing
+      explanations for every major direction. Penalize one-sided confirmation.
+      Return exactly:
+      {"score": <integer 1-5>, "explanation": "<concise reason>"}.
+      Prompt: {prompt}
+      Response: {response}
+      Trace: {agent_data}
+
+  - name: citation_identifier_resolution
+    prompt_template: |
+      Score 1-5 for resolvable DOI, PMID, trial, dataset, standard, or repository
+      identifiers where available, canonical deduplication, and exact
+      originating-pass provenance. Any invented citation receives score 1.
+      Return exactly:
+      {"score": <integer 1-5>, "explanation": "<concise reason>"}.
+      Prompt: {prompt}
+      Response: {response}
+      Trace: {agent_data}
+
+  - name: incremental_pass_value
+    prompt_template: |
+      Score 1-5 whether every Deep Research pass after the first targets named
+      unresolved gaps and adds an authoritative source or closes a material
+      gap. Penalize repeated broad searches and any third pass after less than
+      five percentage points of coverage gain. Return exactly:
+      {"score": <integer 1-5>, "explanation": "<concise reason>"}.
+      Prompt: {prompt}
+      Response: {response}
+      Trace: {agent_data}

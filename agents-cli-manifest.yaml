@@ -1,0 +1,9 @@
+name: coscientist
+agent_directory: app
+create_params:
+  deployment_target: cloud_run
+  region: us-east1
+  session_type: in_memory
+  agent_directory: app
+  agent_guidance_filename: AGENTS.md
+acli_version: 1.2.1

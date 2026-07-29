@@ -1,0 +1,48 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "peptide_missing_sequence",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Design exact fragmentation points and a 2026 synthesis strategy for a hydrophobic 45-mer therapeutic peptide, but no residue sequence is available."
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "scrna_missing_dataset",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Identify the scRNA-seq cell cluster and target that causes PD-1 resistance in NSCLC. I have not supplied a dataset or accession."
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "peptide_complete_synthetic_input",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Develop competing synthesis hypotheses for the synthetic 45-mer sequence: ACDEFGHIKLMNPQRSTVWYACDEFGHIKLMNPQRSTVWYACDEF. Treat it as a planning exercise, verify literature before factual claims, and include falsifiers, risks, comparison criteria, and go/no-go tests."
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "scrna_declared_public_dataset",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Create a rigorous analysis plan—not results—for investigating PD-1 resistance using public accession GSE198099. Include cell-state annotation, differential abundance, trajectory limitations, batch effects, validation, alternative explanations, and explicit rules against claiming unobserved findings."
+          }
+        ]
+      }
+    }
+  ]
+}

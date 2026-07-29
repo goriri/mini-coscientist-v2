@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A rigor-first workspace for scientific research planning."
+    />
+    <meta name="theme-color" content="#0b1714" />
+    <title>Co-Scientist — Research Workspace</title>
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">Skip to workspace</a>
+
+    <div class="app-shell">
+      <aside class="navigation" aria-label="Research workspace navigation">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span></span>
+            <i></i>
+          </div>
+          <div>
+            <p>Co—Scientist</p>
+            <span>Research intelligence</span>
+          </div>
+        </div>
+
+        <button class="new-inquiry" id="newInquiry" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          New inquiry
+        </button>
+
+        <section class="current-session-card" id="currentSessionCard" hidden>
+          <p class="eyebrow">Current session</p>
+          <strong id="currentSessionName">Untitled inquiry</strong>
+          <span id="currentSessionState">Preparing scope</span>
+        </section>
+
+        <nav class="stage-nav" aria-label="Research stages">
+          <p class="eyebrow">Research record</p>
+          <ol>
+            <li class="active" data-stage="scope">
+              <button type="button" disabled>
+                <span>01</span>
+                <div><strong>Scope</strong><small>Question &amp; inputs</small></div>
+              </button>
+            </li>
+            <li data-stage="evidence">
+              <button type="button" disabled>
+                <span>02</span>
+                <div><strong>Evidence</strong><small>Deep Research &amp; verification</small></div>
+              </button>
+            </li>
+            <li data-stage="generate">
+              <button type="button" disabled>
+                <span>03</span>
+                <div><strong>Generate</strong><small>Candidate hypotheses</small></div>
+              </button>
+            </li>
+            <li data-stage="reflect">
+              <button type="button" disabled>
+                <span>04</span>
+                <div><strong>Reflect</strong><small>Independent review</small></div>
+              </button>
+            </li>
+            <li data-stage="rank">
+              <button type="button" disabled>
+                <span>05</span>
+                <div><strong>Rank</strong><small>Tournament comparison</small></div>
+              </button>
+            </li>
+            <li data-stage="evolve">
+              <button type="button" disabled>
+                <span>06</span>
+                <div><strong>Evolve</strong><small>Refine candidates</small></div>
+              </button>
+            </li>
+            <li data-stage="proximity">
+              <button type="button" disabled>
+                <span>07</span>
+                <div><strong>Proximity</strong><small>Landscape &amp; diversity</small></div>
+              </button>
+            </li>
+            <li data-stage="meta_review">
+              <button type="button" disabled>
+                <span>08</span>
+                <div><strong>Meta-review</strong><small>Final reconciliation</small></div>
+              </button>
+            </li>
+            <li class="dossier-stage" data-stage="report" hidden>
+              <button type="button" disabled>
+                <span>↗</span>
+                <div><strong>Dossier</strong><small>Complete research record</small></div>
+              </button>
+            </li>
+          </ol>
+        </nav>
+      </aside>
+
+      <main class="workspace" id="workspace">
+        <header class="topbar">
+          <div>
+            <button
+              class="mobile-menu"
+              id="mobileMenu"
+              type="button"
+              aria-label="Open navigation"
+            >
+              <span></span><span></span>
+            </button>
+            <p class="eyebrow">Scientific research workspace</p>
+            <h1>Inquiry <span id="inquiryNumber">001</span></h1>
+          </div>
+          <div class="topbar-actions">
+            <span class="public-badge">
+              <i></i>
+              Public preview
+            </span>
+            <button
+              class="icon-button history-button"
+              id="historyButton"
+              type="button"
+              aria-label="Open recent research sessions"
+              title="Recent sessions"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h16M4 12h16M4 17h10" />
+              </svg>
+            </button>
+            <button
+              class="icon-button"
+              id="copySession"
+              type="button"
+              aria-label="Copy session identifier"
+              title="Copy session identifier"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="8" y="8" width="11" height="11" rx="2" />
+                <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <section class="conversation" aria-live="polite">
+          <div class="welcome" id="welcome">
+            <div class="kicker">
+              <span class="kicker-line"></span>
+              <span>Built for questions that resist easy answers</span>
+            </div>
+            <h2>Turn uncertainty into<br /><em>testable direction.</em></h2>
+            <p class="welcome-copy">
+              Frame a scientific problem, pressure-test competing explanations,
+              and leave with a traceable research plan—not manufactured certainty.
+            </p>
+
+            <div class="prompt-grid">
+              <button
+                class="prompt-card"
+                type="button"
+                data-prompt="Identify rational combination strategies to overcome primary and acquired resistance to KRAS inhibitors in non-small cell lung cancer. Distinguish genomic, cell-state, and tumor-microenvironment mechanisms and propose discriminating validation experiments."
+              >
+                <span class="card-index">01</span>
+                <div>
+                  <strong>Overcome KRAS inhibitor resistance</strong>
+                  <p>Compare genetic, cell-state, and microenvironmental escape.</p>
+                </div>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </button>
+              <button
+                class="prompt-card"
+                type="button"
+                data-prompt="Design a research program to preserve muscle function and lean tissue during GLP-1-based obesity treatment. Distinguish tissue quantity from strength and function and define clinically meaningful endpoints, controls, and go/no-go criteria."
+              >
+                <span class="card-index">02</span>
+                <div>
+                  <strong>Preserve muscle during GLP-1 therapy</strong>
+                  <p>Separate lean tissue measurements from functional outcomes.</p>
+                </div>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </button>
+              <button
+                class="prompt-card"
+                type="button"
+                data-prompt="Prioritize drug and nontraditional combination strategies against multidrug-resistant Gram-negative infections. Incorporate rapid diagnostics, resistance evolution, PK/PD, safety, and feasible clinical-trial designs."
+              >
+                <span class="card-index">03</span>
+                <div>
+                  <strong>Confront antimicrobial resistance</strong>
+                  <p>Prioritize combinations, diagnostics, and trial strategies.</p>
+                </div>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="integrity-strip">
+              <span>Input sufficiency gates</span>
+              <span>Claim-level provenance</span>
+              <span>Independent critique</span>
+              <span>Explicit uncertainty</span>
+            </div>
+          </div>
+
+          <div class="messages" id="messages" hidden></div>
+          <button
+            class="jump-latest"
+            id="jumpLatest"
+            type="button"
+            hidden
+            aria-label="Jump to the latest workflow update"
+          >
+            Latest update ↓
+          </button>
+        </section>
+
+        <section class="composer-wrap" aria-label="Research prompt composer">
+          <form class="composer" id="composer">
+            <div class="workflow-controls">
+              <div class="mode-switch" role="group" aria-label="Interaction mode">
+                <button class="active" type="button" data-mode="guided">
+                  Guided HITL
+                </button>
+                <button type="button" data-mode="conversation">Conversation</button>
+              </div>
+              <label class="profile-control" for="approvalProfile">
+                Approval cadence
+                <select id="approvalProfile">
+                  <option value="milestone">Milestones</option>
+                  <option value="stage">Every stage</option>
+                  <option value="artifact">Every artifact</option>
+                  <option value="auto">Auto</option>
+                </select>
+              </label>
+            </div>
+            <label for="promptInput">Research question</label>
+            <textarea
+              id="promptInput"
+              rows="1"
+              maxlength="12000"
+              placeholder="Describe the question, available inputs, and what a useful answer would change…"
+              required
+            ></textarea>
+            <div class="composer-footer">
+              <div class="composer-note">
+                <span id="connectionDot"></span>
+                <span id="connectionText">Preparing secure session</span>
+              </div>
+              <div class="composer-actions">
+                <span class="keyboard-hint"><kbd>⌘</kbd><kbd>↵</kbd></span>
+                <button class="send-button" id="sendButton" type="submit">
+                  <span>Begin inquiry</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 12h14M13 6l6 6-6 6" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </form>
+          <p class="disclaimer">
+            Research planning only. Outputs are proposals, not findings or
+            authorization to conduct experiments.
+          </p>
+        </section>
+      </main>
+
+      <aside class="context-panel" aria-label="Recent research sessions">
+        <div class="context-head">
+          <div>
+            <p class="eyebrow">Research history</p>
+            <h2>Recent sessions</h2>
+          </div>
+          <button
+            class="close-history"
+            id="closeHistory"
+            type="button"
+            aria-label="Close recent sessions"
+          >
+            ×
+          </button>
+        </div>
+
+        <section class="context-section session-history-section">
+          <div class="section-heading">
+            <span id="sessionCount">0 saved</span>
+          </div>
+          <div class="session-history-list" id="sessionHistory">
+            <div class="history-empty">
+              <span>∅</span>
+              <strong>No saved research yet</strong>
+              <p>Guided inquiries created in this browser will appear here.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="context-section compact runtime-section">
+          <div class="runtime-card">
+            <div class="model-orbit" aria-hidden="true"><span></span></div>
+            <div>
+              <small>Reasoning engine</small>
+              <strong>Gemini 3.1 Pro</strong>
+              <p><span></span> Global · high thinking</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="context-section compact">
+          <div class="section-heading">
+            <h2>Integrity gates</h2>
+          </div>
+          <ul class="gate-list">
+            <li><span>01</span> No invented inputs or results</li>
+            <li><span>02</span> Search leads remain unverified</li>
+            <li><span>03</span> Fatal flaws block promotion</li>
+            <li><span>04</span> Humans own real-world decisions</li>
+          </ul>
+          <div class="approval-indicator" id="approvalIndicator">
+            <i></i>
+            <div>
+              <strong>Human review enabled</strong>
+              <span>Milestone decisions are audited</span>
+            </div>
+          </div>
+        </section>
+
+        <div class="context-foot">
+          <span>A2A connected</span>
+          <span>Global endpoint</span>
+        </div>
+      </aside>
+    </div>
+
+    <div class="toast" id="toast" role="status"></div>
+  </body>
+</html>

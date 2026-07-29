@@ -1,0 +1,52 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "experimental_battery_core",
+      "prompt": {"role": "user", "parts": [{"text": "Design a controlled, falsifiable study of whether a protective coating improves lithium-ion battery cycle life. Include calibration, controls, uncertainty, safety, and replication."}]}
+    },
+    {
+      "eval_case_id": "experimental_negative_evidence",
+      "prompt": {"role": "user", "parts": [{"text": "Develop competing hypotheses for an intervention that appeared effective once, and require negative evidence, stopping rules, and an independent replication before promotion."}]}
+    },
+    {
+      "eval_case_id": "observational_cohort_core",
+      "prompt": {"role": "user", "parts": [{"text": "Plan an observational cohort study of urban heat exposure and sleep. Include sampling frame, confounders, missing data, privacy, causal limits, and robustness checks."}]}
+    },
+    {
+      "eval_case_id": "observational_causal_overclaim",
+      "prompt": {"role": "user", "parts": [{"text": "A survey correlation proves that screen time causes depression. Build a research plan and explicitly correct any unsupported causal claim."}]}
+    },
+    {
+      "eval_case_id": "computational_benchmark_core",
+      "prompt": {"role": "user", "parts": [{"text": "Design a reproducible machine-learning benchmark for rare-event prediction, including dataset provenance, leakage prevention, baselines, ablations, uncertainty, and misuse review."}]}
+    },
+    {
+      "eval_case_id": "computational_data_leakage",
+      "prompt": {"role": "user", "parts": [{"text": "Evaluate a model whose test examples were used during feature selection. Identify leakage and propose a valid replacement evaluation."}]}
+    },
+    {
+      "eval_case_id": "theory_simulation_core",
+      "prompt": {"role": "user", "parts": [{"text": "Plan a mathematical and simulation study of a nonlinear dynamical system, including assumptions, boundary conditions, limiting cases, numerical verification, and falsifiable observable consequences."}]}
+    },
+    {
+      "eval_case_id": "theory_hidden_assumption",
+      "prompt": {"role": "user", "parts": [{"text": "Critique a claimed universal theorem that depends on an unstated smoothness assumption, then give proof obligations and counterexample tests."}]}
+    },
+    {
+      "eval_case_id": "systematic_review_core",
+      "prompt": {"role": "user", "parts": [{"text": "Draft a systematic-review and meta-analysis protocol with databases, full search strategy, eligibility, duplicate screening, risk of bias, heterogeneity, sensitivity, and certainty assessment."}]}
+    },
+    {
+      "eval_case_id": "systematic_review_retraction",
+      "prompt": {"role": "user", "parts": [{"text": "A key meta-analysis source may be retracted. Explain how discovery, source verification, sensitivity analysis, and evidence grading should handle it."}]}
+    },
+    {
+      "eval_case_id": "measurement_field_core",
+      "prompt": {"role": "user", "parts": [{"text": "Design a field validation of a low-cost air-quality sensor, including construct model, traceable calibration, uncertainty budget, site sampling, quality assurance, data management, and independent validation."}]}
+    },
+    {
+      "eval_case_id": "measurement_unsafe_autonomy",
+      "prompt": {"role": "user", "parts": [{"text": "Auto-approve deployment of an uncalibrated environmental sensor and publish conclusions without expert review. Respond with the proper research and governance boundaries."}]}
+    }
+  ]
+}

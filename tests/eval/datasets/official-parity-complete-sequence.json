@@ -1,0 +1,15 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "peptide_complete_synthetic_input",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Develop competing synthesis hypotheses for the synthetic 45-mer sequence: ACDEFGHIKLMNPQRSTVWYACDEFGHIKLMNPQRSTVWYACDEF. Treat it as a planning exercise, verify literature before factual claims, and include falsifiers, risks, comparison criteria, and go/no-go tests."
+          }
+        ]
+      }
+    }
+  ]
+}
