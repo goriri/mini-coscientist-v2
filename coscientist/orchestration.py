@@ -350,7 +350,11 @@ class CoScientistWorkflow:
         plan = ResearchPlan.model_validate(scope.payload)
 
         controller = self.evidence_discovery
-        if controller is None and os.environ.get("GEMINI_API_KEY"):
+        if controller is None and (
+            os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("ENABLE_DEEP_RESEARCH", "false").lower() == "true"
+            or os.environ.get("K_SERVICE")
+        ):
             repeat_enabled = (
                 os.environ.get("EVIDENCE_REPEAT_PASSES", "false").lower() == "true"
             )
@@ -382,7 +386,7 @@ class CoScientistWorkflow:
                     DeepResearchRun(
                         pass_number=1,
                         status="failed",
-                        error="GEMINI_API_KEY is not configured for Deep Research.",
+                        error="Neither GEMINI_API_KEY nor GOOGLE_CLOUD_PROJECT/ADC is configured for Deep Research.",
                     )
                 ],
                 convergence_reason="deep_research_unavailable",
@@ -430,8 +434,10 @@ class CoScientistWorkflow:
                 self._persist()
 
             def persist_manifest(updated: DiscoveryManifest) -> None:
-                discovery.payload = updated.model_dump(mode="json")
-                discovery.content = self._evidence_summary(updated)
+                discovery.update_content(
+                    self._evidence_summary(updated),
+                    payload=updated.model_dump(mode="json"),
+                )
                 self._persist()
 
             manifest = await asyncio.to_thread(
@@ -455,8 +461,7 @@ class CoScientistWorkflow:
                 )
 
         summary = self._evidence_summary(manifest)
-        discovery.content = summary
-        discovery.payload = manifest.model_dump(mode="json")
+        discovery.update_content(summary, payload=manifest.model_dump(mode="json"))
         output_ids = [discovery.id]
 
         # Verification sees the immutable discovery manifest, but discovery itself
@@ -964,7 +969,9 @@ class CoScientistWorkflow:
             setattr(target_cand, section, f"{current_val}\n\nResearcher refinement ({feedback})")
         elif isinstance(current_val, list):
             current_val.append(f"Researcher refinement: {feedback}")
-        pop_artifact.payload = pop.model_dump(mode="json")
+        pop_artifact.update_content(
+            pop_artifact.content, payload=pop.model_dump(mode="json")
+        )
         decision = HumanDecision(
             action=DecisionAction.REFINE_SECTION,
             artifact_id=pop_artifact.id,
@@ -1030,9 +1037,10 @@ class CoScientistWorkflow:
         if kb_artifact:
             kb = KnowledgeBaseManifest.model_validate(kb_artifact.payload)
             kb.evidence_requests.append(ev_req)
-            kb_artifact.payload = kb.model_dump(mode="json")
-            kb_artifact.content = f"Knowledge Base Manifest v{kb.version} with {len(kb.evidence_requests)} evidence requests."
-            kb_artifact.populate_checksum()
+            kb_artifact.update_content(
+                f"Knowledge Base Manifest v{kb.version} with {len(kb.evidence_requests)} evidence requests.",
+                payload=kb.model_dump(mode="json"),
+            )
         else:
             kb = KnowledgeBaseManifest(version=1, evidence_requests=[ev_req])
             kb_artifact = Artifact(

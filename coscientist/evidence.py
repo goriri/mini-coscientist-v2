@@ -114,9 +114,24 @@ class GeminiDeepResearchTransport:
         from google import genai
 
         resolved_key = api_key or os.environ.get("GEMINI_API_KEY")
-        if not resolved_key:
-            raise RuntimeError("GEMINI_API_KEY is required for Gemini Deep Research.")
-        self._client = genai.Client(api_key=resolved_key)
+        if resolved_key:
+            self._client = genai.Client(api_key=resolved_key)
+        else:
+            project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
+            location = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
+            if not project_id:
+                try:
+                    import google.auth
+                    _, default_project = google.auth.default()
+                    project_id = default_project
+                except Exception:
+                    pass
+            if project_id:
+                self._client = genai.Client(
+                    vertexai=True, project=project_id, location=location
+                )
+            else:
+                self._client = genai.Client(vertexai=True)
 
     def start(self, *, prompt: str, pass_number: int, session_id: str) -> dict:
         interaction = self._client.interactions.create(

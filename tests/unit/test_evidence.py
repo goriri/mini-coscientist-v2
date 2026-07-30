@@ -212,3 +212,42 @@ def test_short_worker_steps_start_then_poll_without_duplicate_interaction():
     assert transport.starts == 1
     assert transport.polls == 1
     assert second.runs[0].status == "completed"
+
+
+def test_gemini_deep_research_transport_uses_adc_when_no_api_key(monkeypatch):
+    from coscientist.evidence import GeminiDeepResearchTransport
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project-adc")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    calls = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr("google.genai.Client", FakeClient)
+    transport = GeminiDeepResearchTransport()
+    assert len(calls) == 1
+    assert calls[0].get("vertexai") is True
+    assert calls[0].get("project") == "test-project-adc"
+    assert calls[0].get("location") == "us-central1"
+
+
+def test_orchestration_evidence_discovery_enables_when_vertexai(monkeypatch):
+    from coscientist.orchestration import CoScientistWorkflow
+    from coscientist.models import ApprovalProfile
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("ENABLE_DEEP_RESEARCH", "true")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project-adc")
+    calls = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr("google.genai.Client", FakeClient)
+    from coscientist.evidence import GeminiDeepResearchTransport
+    transport = GeminiDeepResearchTransport()
+    assert len(calls) == 1
+    assert calls[0].get("vertexai") is True
+

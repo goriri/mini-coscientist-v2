@@ -529,6 +529,16 @@ class Artifact(Contract):
         self.checksum = expected
         return self
 
+    def update_content(
+        self, new_content: str, *, payload: dict[str, Any] | None = None
+    ) -> None:
+        """Update artifact content and recalculate checksum immediately."""
+        self.content = new_content
+        if payload is not None:
+            self.payload = payload
+        self.checksum = hashlib.sha256(self.content.encode("utf-8")).hexdigest()
+
+
 
 class HumanDecision(Contract):
     id: str = Field(default_factory=lambda: new_id("decision"))

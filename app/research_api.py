@@ -583,8 +583,10 @@ def decide_research_session(
                 workflow.approve_artifact(artifact, actor=request.actor)
             elif request.action == "literature_only":
                 workflow.accept_literature_only(actor=request.actor)
+                _schedule_advance(session_id, background_tasks)
             elif request.action == "exploratory_evidence":
                 workflow.accept_exploratory_evidence(actor=request.actor)
+                _schedule_advance(session_id, background_tasks)
             elif request.action == "provide_input":
                 if not request.input_type or not request.input_reference:
                     raise ValueError("Input type and reference are required.")
