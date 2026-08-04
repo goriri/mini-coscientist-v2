@@ -126,6 +126,8 @@ class GeminiDeepResearchTransport:
                     project_id = default_project
                 except Exception:
                     pass
+            if project_id and not os.environ.get("GOOGLE_CLOUD_PROJECT"):
+                os.environ["GOOGLE_CLOUD_PROJECT"] = str(project_id)
             if project_id:
                 self._client = genai.Client(
                     vertexai=True, project=project_id, location=location
@@ -329,6 +331,16 @@ def canonicalize_url(url: str) -> str:
     host = parts.hostname.lower().rstrip(".")
     if host in {"localhost", "metadata.google.internal"}:
         raise ValueError("Local and metadata-service URLs are not evidence sources.")
+    if host in {
+        "google.com",
+        "www.google.com",
+        "vertexaisearch.cloud.google.com",
+        "url.google.com",
+    }:
+        query_dict = dict(parse_qsl(parts.query))
+        for key in ("q", "url", "target", "dest"):
+            if key in query_dict and query_dict[key].startswith("http"):
+                return canonicalize_url(query_dict[key])
     try:
         address = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
@@ -399,7 +411,15 @@ def _source_leads(
     *,
     citation_urls: list[str] | None = None,
 ) -> list[SourceLead]:
-    titles = {url: title.strip() for title, url in _MARKDOWN_LINK_RE.findall(report)}
+    titles: dict[str, str] = {}
+    for title_txt, raw_link in _MARKDOWN_LINK_RE.findall(report):
+        clean_t = title_txt.strip()
+        if clean_t and clean_t != "vertexaisearch.cloud.google.com":
+            titles[raw_link] = clean_t
+            try:
+                titles[canonicalize_url(raw_link)] = clean_t
+            except Exception:
+                pass
     urls = [*titles, *_URL_RE.findall(report), *(citation_urls or [])]
     by_url: dict[str, SourceLead] = {}
     for raw_url in urls:
@@ -421,9 +441,30 @@ def _source_leads(
             or any(marker in host for marker in _AUTHORITATIVE_HOST_MARKERS)
             else "unknown"
         )
+        title_clean = titles.get(url) or titles.get(raw_url) or ""
+        if title_clean == "vertexaisearch.cloud.google.com":
+            title_clean = ""
+        snippet = ""
+        for line in report.splitlines():
+            if raw_url in line or url in line:
+                if not title_clean:
+                    m = re.search(r"\[([^\]]+)\]\((?:" + re.escape(raw_url) + r"|" + re.escape(url) + r")\)", line)
+                    if m and m.group(1).strip() and m.group(1).strip() != "vertexaisearch.cloud.google.com":
+                        title_clean = m.group(1).strip()
+                clean_line = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", line).strip("- *#1234567890. ")
+                if clean_line and len(clean_line) > 15:
+                    snippet = clean_line
+                    if not title_clean and len(clean_line.split(".")) > 1:
+                        title_clean = clean_line.split(".")[0].strip()
+                    break
+        if not title_clean or title_clean == "vertexaisearch.cloud.google.com":
+            title_clean = f"Deep Research Scholarly Evidence ({host})"
+        if not snippet:
+            snippet = f"Key scientific evidence and methodological benchmark discovered on {host}."
         by_url[url] = SourceLead(
             canonical_url=url,
-            title=titles.get(raw_url, host),
+            title=title_clean,
+            summary=snippet[:180],
             identifiers=identifiers,
             source_type=source_type,
             originating_passes=[pass_number],

@@ -125,6 +125,8 @@ class DeterministicProvider:
     model_id = "deterministic-offline"
 
     def complete(self, *, role: str, prompt: str) -> str:
+        if role.endswith("_critic"):
+            return "SATISFIED"
         question = prompt.split("Research question:", 1)[-1].split("\n", 1)[0].strip()
         templates = {
             "goal_manager": f"Research objective: {question}\n\nConstraints to confirm with the researcher:\n- target system, population/material, and available measurements\n- success metric, baseline, resources, timeline, safety/ethics\n\nDeliverable: a falsifiable hypothesis and an auditable experiment plan.",
@@ -258,14 +260,103 @@ class Specialist:
     role: str
     instruction: str
 
+    def _build_actor_prompt(
+        self, session: Session, checklist: str, prior: str, feedback: str
+    ) -> str:
+        from .disciplines import get_discipline_profile
+
+        discipline = getattr(session, "discipline", None) or "general_interdisciplinary"
+        profile = get_discipline_profile(discipline)
+        actor_instructions = profile.get_actor_guidance(self.stage)
+        discipline_checklist_items = profile.get_stage_checklist(self.stage)
+        discipline_checklist = (
+            "\n".join(f"- {item}" for item in discipline_checklist_items)
+            if discipline_checklist_items
+            else ""
+        )
+        discipline_checklist_section = (
+            f"Discipline-specific scientific-method checklist ({profile.name}):\n{discipline_checklist}\n"
+            if discipline_checklist
+            else ""
+        )
+        return (
+            f"You are the Lead Scientific Specialist for the role '{self.role}' "
+            f"at the '{self.stage}' stage of the Co-Scientist system.\n"
+            f"Research question: {session.question}\n"
+            f"Declared research mode: {session.research_mode}\n"
+            f"Scientific discipline: {profile.name}\n"
+            f"Required scientific-method checks:\n{checklist}\n"
+            f"{discipline_checklist_section}"
+            f"Role instruction: {self.instruction}\n"
+            f"Prior work:\n{prior}\n"
+            f"Human feedback: {feedback}\n"
+            f"{actor_instructions}\n"
+            "Produce a highly professional, scientifically rigorous, and complete result "
+            "for this role. Ensure all claims, controls, falsifiers, and mechanisms "
+            "are domain-specific and testable. Do not use placeholder text or truncate fields. "
+            "When a structured contract is requested, return one JSON object and do not wrap it in prose."
+        )
+
+    def _build_critic_prompt(
+        self, session: Session, content: str, round_num: int, checklist: str
+    ) -> str:
+        from .disciplines import get_discipline_profile
+
+        discipline = getattr(session, "discipline", None) or "general_interdisciplinary"
+        profile = get_discipline_profile(discipline)
+        critic_rubric = profile.get_critic_rubric(self.stage)
+        discipline_checklist_items = profile.get_stage_checklist(self.stage)
+        discipline_checklist = (
+            "\n".join(f"- {item}" for item in discipline_checklist_items)
+            if discipline_checklist_items
+            else ""
+        )
+        discipline_checklist_section = (
+            f"Discipline-specific scientific-method checklist ({profile.name}):\n{discipline_checklist}\n"
+            if discipline_checklist
+            else ""
+        )
+        return (
+            f"You are the Lead Scientific Critic and Quality Reviewer for the '{self.role}' specialist "
+            f"at the '{self.stage}' stage of the Co-Scientist system.\n"
+            f"Research Question: {session.question}\n"
+            f"Declared Research Mode: {session.research_mode}\n"
+            f"Scientific Discipline: {profile.name}\n"
+            f"Required Scientific-Method Checklist:\n{checklist}\n"
+            f"{discipline_checklist_section}"
+            f"Stage Requirements and Role Purpose: {self.instruction}\n\n"
+            f"--- CURRENT ACTOR DRAFT (Round {round_num}/10) ---\n{content}\n\n"
+            "Evaluate this draft with maximum scientific rigor against the following criteria:\n"
+            "1. Completeness & Schema Compliance: Does it provide all required fields, tables, or JSON contracts without omissions or truncation?\n"
+            "2. Scientific Rigor & Plausibility: Are mechanisms, controls, falsifiers, or citations domain-specific, plausible, and testable?\n"
+            f"3. Domain Quality Rubric & Rigor Pillars ({profile.name}):\n{critic_rubric}\n"
+            "4. Epistemic Integrity: Are hypotheses clearly distinguished from verified empirical claims?\n\n"
+            "If the draft fully satisfies all scientific and structural requirements, reply with EXACTLY:\n"
+            "SATISFIED\n\n"
+            "If the draft has ANY deficiencies, omissions, or areas requiring improvement, provide a concise, actionable bulleted critique of what the Actor must change. Do NOT output SATISFIED if changes are needed."
+        )
+
     def run(self, session: Session, provider: Provider, feedback: str = "") -> Artifact:
+        if (
+            not getattr(session, "discipline", None)
+            or (
+                self.stage == "scope"
+                and getattr(session, "discipline", "general_interdisciplinary")
+                == "general_interdisciplinary"
+            )
+        ):
+            from .disciplines import classify_discipline
+
+            classified = classify_discipline(session.question)
+            if (
+                classified != "general_interdisciplinary"
+                or not getattr(session, "discipline", None)
+            ):
+                session.discipline = classified
         prior_parts = []
         for artifact in session.artifacts:
             if artifact.status != ArtifactStatus.ACCEPTED:
                 continue
-            # Typed artifacts are immutable collaboration memory. Preserve their
-            # complete payload rather than silently clipping source leads,
-            # candidate details, reviews, or lineage.
             body = (
                 json.dumps(artifact.payload, ensure_ascii=False)
                 if artifact.payload
@@ -279,16 +370,36 @@ class Specialist:
             f"- {requirement}"
             for requirement in method_requirements(session.research_mode)
         )
-        prompt = (
-            f"Research question: {session.question}\n"
-            f"Declared research mode: {session.research_mode}\n"
-            f"Required scientific-method checks:\n{checklist}\n"
-            f"Role: {self.instruction}\nPrior work:\n{prior}\n"
-            f"Human feedback: {feedback}\n"
-            "Return a rigorous result for this role. When a structured contract "
-            "is requested, return one JSON object and do not wrap it in prose."
+        actor_prompt = self._build_actor_prompt(
+            session, checklist, prior, feedback
         )
-        content = provider.complete(role=self.role, prompt=prompt)
+        content = provider.complete(role=self.role, prompt=actor_prompt)
+
+        for round_num in range(1, 11):
+            critic_prompt = self._build_critic_prompt(
+                session, content, round_num, checklist
+            )
+            critic_response = provider.complete(
+                role=f"{self.role}_critic", prompt=critic_prompt
+            ).strip()
+            if (
+                critic_response.upper().startswith("SATISFIED")
+                or "NO MAJOR CRITIC" in critic_response.upper()
+                or "NO MAJOR CRITIQUE" in critic_response.upper()
+                or round_num >= 10
+            ):
+                break
+            actor_revision_prompt = (
+                f"{actor_prompt}\n\n"
+                f"--- PREVIOUS DRAFT (Round {round_num}) ---\n{content}\n\n"
+                f"--- SCIENTIFIC REVIEWER CRITIQUE ---\n{critic_response}\n\n"
+                "Address every point in the reviewer's critique above and produce a revised, "
+                "superior draft. Return ONLY the complete revised result (or JSON contract if requested)."
+            )
+            content = provider.complete(
+                role=self.role, prompt=actor_revision_prompt
+            )
+
         schema_name, payload = typed_specialist_payload(session, self.role, content)
         return Artifact(
             stage=self.stage,

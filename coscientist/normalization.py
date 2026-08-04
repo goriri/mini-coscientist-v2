@@ -258,6 +258,20 @@ def normalize_specialist_output(
             raise NormalizationError(
                 f"Failed to normalize {role} response into ReviewSet."
             )
+        elif role == "meta_reviewer":
+            parsed_manifest = try_parse_contract(content, DossierManifest)
+            if parsed_manifest is not None:
+                payload_dict = parsed_manifest.model_dump(mode="json")
+                validate_no_template_leakage(payload_dict)
+                return "DossierManifest", payload_dict
+            from .parity import dossier_manifest
+            return "DossierManifest", dossier_manifest(session).model_dump(mode="json")
+        elif role == "evidence_discovery":
+            from .parity import evidence_packet
+            return "EvidencePacket", evidence_packet(session, content, verified=False).model_dump(mode="json")
+        elif role == "source_verification":
+            from .parity import evidence_packet
+            return "EvidencePacket", evidence_packet(session, content, verified=True).model_dump(mode="json")
 
     # For offline CI fixtures and V1 regression tests, delegate to deterministic parity functions
     from .parity import (

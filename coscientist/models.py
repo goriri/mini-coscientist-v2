@@ -31,6 +31,20 @@ RESEARCH_MODES = (
     "systematic_review",
     "measurement_field",
 )
+DISCIPLINES = (
+    "chemistry_materials",
+    "biology_medicine",
+    "physics_engineering",
+    "computer_science_ai",
+    "mathematics_statistics",
+    "earth_climate_sciences",
+    "neuroscience_cognitive",
+    "astronomy_astrophysics",
+    "social_science_economics",
+    "environmental_ecology",
+    "pharmacology_toxicology",
+    "general_interdisciplinary",
+)
 
 
 def utc_now() -> str:
@@ -222,6 +236,7 @@ class SourceLead(Contract):
     id: str = Field(default_factory=lambda: new_id("lead"))
     canonical_url: str
     title: str = ""
+    summary: str = ""
     authors: list[str] = Field(default_factory=list)
     year: int | None = None
     identifiers: dict[str, str] = Field(default_factory=dict)
@@ -281,6 +296,7 @@ class DiscoveryManifest(Contract):
     verification_handoff_source_ids: list[str] = Field(default_factory=list)
     stored_interaction_notice: bool = True
     estimated_cost_usd: float = Field(default=0.0, ge=0.0)
+    synthesis_report: str = ""
 
 
 class ResearchDirection(Contract):
@@ -362,6 +378,11 @@ class Candidate(Contract):
     risks: list[str] = Field(default_factory=list)
     go_no_go_tests: list[str] = Field(default_factory=list)
     workflow_diagram_mermaid: str = ""
+    score_novelty: int = 4
+    score_feasibility: int = 4
+    score_impact: int = 4
+    score_correctness: int = 4
+    score_verification: int = 4
 
 
 class CandidatePopulation(Contract):
@@ -567,6 +588,7 @@ class Session(Contract):
     id: str = Field(default_factory=lambda: new_id("session"))
     context_id: str = Field(default_factory=lambda: new_id("context"))
     research_mode: str = "experimental"
+    discipline: str = "general_interdisciplinary"
     approval_mode: ApprovalMode = ApprovalMode.HUMAN
     approval_profile: ApprovalProfile = ApprovalProfile.MILESTONE
     input_requirements: list[InputRequirement] = Field(default_factory=list)
@@ -583,6 +605,18 @@ class Session(Contract):
     version: int = 0
     created_at: str = Field(default_factory=utc_now)
     updated_at: str = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def populate_discipline_if_default(self) -> Session:
+        if self.discipline == "general_interdisciplinary" and self.question:
+            try:
+                from .disciplines import classify_discipline
+                classified = classify_discipline(self.question)
+                if classified != "general_interdisciplinary":
+                    self.discipline = classified
+            except ImportError:
+                pass
+        return self
 
     def artifact(self, stage: str, *, accepted_only: bool = True) -> Artifact | None:
         return next(
@@ -604,6 +638,7 @@ class Session(Contract):
         migrated = dict(data)
         migrated.setdefault("schema_version", SCHEMA_VERSION)
         migrated.setdefault("context_id", new_id("context"))
+        migrated.setdefault("discipline", "general_interdisciplinary")
         migrated.setdefault("approval_mode", ApprovalMode.HUMAN)
         if "approval_profile" not in migrated:
             migrated["approval_profile"] = (

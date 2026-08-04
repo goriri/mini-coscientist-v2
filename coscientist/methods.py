@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .models import RESEARCH_MODES
+from .disciplines import classify_discipline, DISCIPLINES, DISCIPLINE_TAXONOMY
 
 METHOD_REQUIREMENTS: dict[str, tuple[str, ...]] = {
     "experimental": (
