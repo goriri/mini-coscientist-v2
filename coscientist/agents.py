@@ -8,12 +8,32 @@ import uuid
 from dataclasses import dataclass
 from typing import Protocol
 
+from .citations import citation_rule
+from .contract_io import repair_prompt, schema_instruction
+from .debate import run_debate_tournament
+from .evidence import (
+    ANGLE_SOURCE_TARGET,
+    CORPUS_SOURCE_TARGET,
+    resolve_grounding_urls,
+)
 from .methods import method_requirements
+from .model_catalog import (
+    DEFAULT_MODEL,
+    MODEL_CHOICES,
+    model_choice,
+    session_language_clause,
+    specialist_agent_name,
+)
 from .models import Artifact, ArtifactStatus, Session
-from .parity import typed_specialist_payload
+from .parity import ROLE_CONTRACTS, typed_specialist_payload
 
-GEMINI_MODEL = "gemini-3.1-pro-preview"
-"""Current Vertex AI model ID for the reasoning-backed ADK workflow."""
+GEMINI_MODEL = DEFAULT_MODEL
+"""Default Vertex AI model ID for the reasoning-backed ADK workflow.
+
+Kept as a name of its own because it is the one every caller outside this
+package already imports. :data:`coscientist.model_catalog.DEFAULT_MODEL` is the
+definition; this is the alias.
+"""
 
 VERTEX_LOCATION = "global"
 
@@ -24,13 +44,51 @@ STRUCTURED_OUTPUT_INSTRUCTIONS = {
         "stopping_criteria, and governance_requirements."
     ),
     "evidence_discovery": (
-        "Use Google Search and return one EvidencePacket JSON object. Every source "
-        "and claim must remain discovered_unverified; include URLs and limitations."
+        "Use Google Search and return one EvidencePacket JSON object. Every "
+        "source and claim stays discovered_unverified. Each claim must be a "
+        "distinct finding that could turn out to be wrong -- a measured "
+        "quantity, a mechanism, a comparison, a null result -- never a "
+        "restatement of the research question, and it must take a side: set "
+        "relation to supports or contradicts unless the finding genuinely cuts "
+        "both ways. Include the strongest contradicting or null finding the "
+        "search returns; a packet that only agrees with the question has not "
+        "searched. Give each source the document's own title and, as its url, "
+        "the publisher's page or a resolvable identifier (doi.org, PubMed, "
+        "arXiv). Where the prompt ends with a resolved Grounding URLs list, "
+        "those are the documents your search actually opened -- cite from it "
+        "and match each source to the entry it came from. Never copy a "
+        "search-grounding redirect link: it expires, names no document, and is "
+        "not a citation, and never cite a bare domain, which names no document "
+        "either. When you have no locator better than a domain, say that in "
+        "limitations rather than inventing a title or a locator. A title is "
+        "the document's own title and nothing else: not a sentence from its "
+        "abstract, not the finding you took from it, not a volume-and-page "
+        "line. A reader scanning the reference list is matching those titles "
+        "against papers they already know, and a sentence in that column "
+        "matches nothing.\n"
+        f"Aim for at least {ANGLE_SOURCE_TARGET} distinct sources and one claim "
+        "per source; a pass of this stage is aiming for "
+        f"{CORPUS_SOURCE_TARGET} across all its searches. That is a target, not "
+        "a quota: if the literature you were asked for does not exist, return "
+        "what does and say so in limitations. A padded packet is worse than a "
+        "short one, because every entry in it is something a reviewer has to "
+        "check before discovering it was never there."
     ),
     "source_verification": (
         "Return one EvidencePacket JSON object. A verified claim requires a source "
         "ID, original URL, exact supporting or contradicting location, relation, "
-        "and correction/retraction status. Otherwise keep it unverified."
+        "and correction/retraction status. Otherwise keep it unverified.\n"
+        "Carry every source and every claim you were given into your packet. "
+        "This stage decides a status, never membership: a source you could not "
+        "reach is inaccessible, one whose document does not say what was "
+        "attributed to it is unverified, and one you could not find at all is "
+        "still a record of what the search returned. Omitting an entry deletes "
+        "that record, and the report then shows a smaller literature than the "
+        "run actually saw.\n"
+        "A locator that names only a website -- a bare domain, a publisher's "
+        "front page, a search redirect -- reaches no document, so nothing can "
+        "have been checked against it. Mark those inaccessible rather than "
+        "verified, whatever the title beside them says."
     ),
     "generation": (
         "Return one CandidatePopulation JSON object containing exactly eight "
@@ -45,7 +103,7 @@ STRUCTURED_OUTPUT_INSTRUCTIONS = {
     "novelty_review": "Return one ReviewSet JSON object with one novelty review per candidate.",
     "methods_statistics": "Return one ReviewSet JSON object with one methods_feasibility review per candidate.",
     "impact_review": "Return one ReviewSet JSON object with one impact_safety review per candidate.",
-    "ethics_safety_governance": "Return one ReviewSet JSON object with one impact_safety governance review per candidate.",
+    "ethics_safety_governance": "Return one ReviewSet JSON object with one safety_governance review per candidate.",
     "ranking": (
         "Return one TournamentState JSON object after three randomized Swiss "
         "rounds and a top-four round robin. Include every comparison, Elo before/"
@@ -62,6 +120,52 @@ STRUCTURED_OUTPUT_INSTRUCTIONS = {
         "unresolved fatal flaw from recommendation and state evidence that would change the decision."
     ),
 }
+
+
+RANKING_JUDGE_CONTRACT = (
+    "You judge exactly ONE pair of hypotheses per request. You do NOT produce a "
+    "tournament, a ranking, Elo ratings, a shortlist, or any JSON object; the "
+    "Supervisor plays the tournament and assembles those from your verdicts.\n\n"
+    "Follow the comparison or debate procedure in the request exactly. Write "
+    "prose. Emit no JSON, no code fence, and no serialized contract of any "
+    "kind. Never invent candidate identifiers: the two hypotheses are called "
+    "'hypothesis 1' and 'hypothesis 2' and have no other names.\n\n"
+    "For a simulated scientific debate, take the full 3 to 5 turns the request "
+    "asks for, labelling each one 'Turn N:'. End every response with your "
+    "rationale followed by the literal terminator: better idea: <1 or 2>."
+)
+"""Server-side contract for the live ranking specialist.
+
+This role no longer emits a ``TournamentState``. ``coscientist.debate`` plays
+the section 9.3 tournament match by match and builds the state client-side, so
+the specialist's job is a single verdict.
+
+Keeping the role name and leaving ``ROLE_CONTRACTS['ranking']`` as
+``TournamentState`` is deliberate: that mapping types the *artifact* the stage
+produces, which every downstream consumer reads and which the deterministic
+offline path still computes arithmetically. Only the prompt-side instruction
+changes. A new ``debate_judge`` A2A card was the alternative, but it would have
+left the published ``ranking`` card unreachable in live runs and required a
+matching server redeploy before the ranking stage could work at all.
+"""
+
+
+def output_contract(role: str) -> str:
+    """The role's prose brief plus the exact schema its answer is validated against.
+
+    The prose alone named fields the contracts do not have, so a specialist
+    could follow the instruction to the letter and still be rejected. Rendering
+    the schema from the Pydantic model makes that drift impossible.
+    """
+    brief = STRUCTURED_OUTPUT_INSTRUCTIONS.get(role, "")
+    model = ROLE_CONTRACTS.get(role)
+    if model is None:
+        return brief
+    return (
+        f"{brief}\n\n{schema_instruction(model)}"
+        if brief
+        else schema_instruction(model)
+    )
 
 
 def configure_vertex_ai_global_endpoint() -> None:
@@ -95,6 +199,23 @@ class Provider(Protocol):
     def complete(self, *, role: str, prompt: str) -> str: ...
 
 
+class ContractViolation(RuntimeError):
+    """A live specialist's output could not be validated against its contract.
+
+    Raised instead of substituting a template, so a run never presents generated
+    boilerplate as though a model had reasoned its way to it.
+    """
+
+    def __init__(self, role: str, error: str, content: str):
+        super().__init__(
+            f"The {role} specialist returned output that does not satisfy its "
+            f"contract after a repair attempt: {error}"
+        )
+        self.role = role
+        self.error = error
+        self.content = content
+
+
 class DeterministicProvider:
     """Offline provider used for a transparent demo and tests.
 
@@ -103,6 +224,10 @@ class DeterministicProvider:
     """
 
     model_id = "deterministic-offline"
+    # This provider *is* the deterministic path, so its payloads are computed by
+    # design rather than substituted for a failed model answer. Only a live
+    # provider's unparseable output is a contract violation.
+    deterministic = True
 
     def complete(self, *, role: str, prompt: str) -> str:
         question = prompt.split("Research question:", 1)[-1].split("\n", 1)[0].strip()
@@ -127,20 +252,33 @@ class DeterministicProvider:
 class A2AProvider:
     """Invoke independently published specialist services through the A2A SDK."""
 
-    model_id = GEMINI_MODEL
-
     def __init__(
-        self, base_url: str = "http://127.0.0.1:8000", *, timeout: float = 120
+        self,
+        base_url: str = "http://127.0.0.1:8000",
+        *,
+        timeout: float = 120,
+        model: str = DEFAULT_MODEL,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        # An instance attribute, where this used to be a class attribute set to
+        # the one supported model. Two providers pointed at different models
+        # would otherwise have shared it, and the second one constructed would
+        # have relabelled the first one's artifacts.
+        self.model_id = model
 
     async def _complete(self, *, role: str, prompt: str) -> str:
         import httpx
         from a2a.client import ClientConfig, ClientFactory
         from a2a.types import Message, Part, Role, TextPart
 
-        card_path = f"/a2a/specialists/{role}/.well-known/agent-card.json"
+        # The card is published per model, because an LlmAgent's model is fixed
+        # when the agent is constructed and the server builds one tree per
+        # allowed model at startup. Asking the wrong card would silently run the
+        # stage on a model the session did not choose, so the model is in the
+        # path rather than in the message.
+        name = specialist_agent_name(role, self.model_id)
+        card_path = f"/a2a/specialists/{name}/.well-known/agent-card.json"
         http_client = httpx.AsyncClient(timeout=httpx.Timeout(self.timeout))
         try:
             client = await ClientFactory.connect(
@@ -164,15 +302,17 @@ class A2AProvider:
                 if texts:
                     responses = texts
                 grounding_urls.extend(self._urls(dumped))
+            resolved = await resolve_grounding_urls(
+                dict.fromkeys(grounding_urls), client=http_client
+            )
         finally:
             await http_client.aclose()
         if not responses:
             raise RuntimeError(f"A2A specialist '{role}' returned no text artifact.")
         content = self._without_prompt_echo(responses, prompt)
-        if grounding_urls:
-            content += "\n\nGrounding URLs:\n" + "\n".join(
-                f"- {url}" for url in dict.fromkeys(grounding_urls)
-            )
+        if resolved:
+            content += "\n\nGrounding URLs (resolved to the document each one opens):\n"
+            content += "\n".join(f"- {url}" for url in resolved)
         return content
 
     @staticmethod
@@ -228,6 +368,20 @@ class A2AProvider:
         return asyncio.run(self._complete(role=role, prompt=prompt))
 
 
+def bind_provider_model(provider, model: str):
+    """Point a provider at the model the loaded session was configured with.
+
+    The web API and the CLI both have to build a provider before they can read
+    the session that says which model it should address, so the correction has
+    to happen somewhere. Only :class:`A2AProvider` is rebound: the offline
+    provider *is* its own model, and a test double's ``model_id`` is usually the
+    thing being asserted on, so neither should be quietly rewritten.
+    """
+    if isinstance(provider, A2AProvider):
+        provider.model_id = model
+    return provider
+
+
 @dataclass(frozen=True)
 class Specialist:
     stage: str
@@ -235,6 +389,11 @@ class Specialist:
     instruction: str
 
     def run(self, session: Session, provider: Provider, feedback: str = "") -> Artifact:
+        if self.role == "ranking" and not getattr(provider, "deterministic", False):
+            # Asking a model to report a tournament yields Elo numbers for
+            # matches nobody played. Play them instead: the ratings then follow
+            # from judgements that are each recorded with their own transcript.
+            return self._ranked_by_debate(session, provider, feedback)
         prior_parts = []
         for artifact in session.artifacts:
             if artifact.status != ArtifactStatus.ACCEPTED:
@@ -260,20 +419,70 @@ class Specialist:
             f"Declared research mode: {session.research_mode}\n"
             f"Required scientific-method checks:\n{checklist}\n"
             f"Role: {self.instruction}\nPrior work:\n{prior}\n"
+            f"{citation_rule(session)}\n"
             f"Human feedback: {feedback}\n"
-            "Return a rigorous result for this role. When a structured contract "
-            "is requested, return one JSON object and do not wrap it in prose."
+            "Return a rigorous result for this role.\n\n"
+            # Immediately above the contract, because what the language clause
+            # mostly does is carve out the parts of the contract it must not
+            # touch: the field names and the enumerated values. Put it at the
+            # top of the prompt instead and several hundred lines of prior work
+            # separate the exception from the rule it excepts.
+            f"{session_language_clause(session)}"
+            f"{output_contract(self.role)}"
         )
         content = provider.complete(role=self.role, prompt=prompt)
-        schema_name, payload = typed_specialist_payload(session, self.role, content)
+        typed = typed_specialist_payload(session, self.role, content)
+        model = ROLE_CONTRACTS.get(self.role)
+        live = not getattr(provider, "deterministic", False)
+        if typed.source == "deterministic_fallback" and model is not None and live:
+            # One targeted retry that names the exact validation failure. The
+            # alternative is discarding real reasoning for a template, which is
+            # far more expensive than a second call.
+            # The repair prompt carries the language clause too. Without it the
+            # retry is a bare English instruction to fix a payload, and the
+            # model reads that as a change of working language and rewrites the
+            # prose it had already produced correctly.
+            retry = provider.complete(
+                role=self.role,
+                prompt=session_language_clause(session)
+                + repair_prompt(model, content, typed.error),
+            )
+            retyped = typed_specialist_payload(session, self.role, retry)
+            if retyped.source == "deterministic_fallback":
+                raise ContractViolation(self.role, retyped.error or typed.error, retry)
+            content, typed = retry, retyped
         return Artifact(
             stage=self.stage,
             agent=self.role,
             content=content,
             feedback=feedback,
             producer_model=getattr(provider, "model_id", "unknown"),
-            schema_name=schema_name,
-            payload=payload,
+            schema_name=typed.schema_name,
+            payload=typed.payload,
+            payload_source=typed.source,
+            payload_repairs=typed.repairs,
+            payload_error=typed.error,
+        )
+
+    def _ranked_by_debate(
+        self, session: Session, provider: Provider, feedback: str
+    ) -> Artifact:
+        """Rank by running the section 9.3 tournament with the model as judge.
+
+        The state is constructed here rather than parsed, so it never passes
+        through ``parsed_tournament_state``'s fallback: there is nothing to fall
+        back to, because the tournament is the model's own work.
+        """
+        tournament, transcript = run_debate_tournament(session, provider)
+        return Artifact(
+            stage=self.stage,
+            agent=self.role,
+            content=transcript,
+            feedback=feedback,
+            producer_model=getattr(provider, "model_id", "unknown"),
+            schema_name="TournamentState",
+            payload=tournament.model_dump(mode="json"),
+            payload_source="specialist",
         )
 
 
@@ -289,9 +498,14 @@ SPECIALISTS = (
     Specialist(
         "evidence",
         "evidence_discovery",
-        "Perform targeted Google Search enrichment only for the unresolved gaps "
-        "listed by Deep Research. Use no more than six focused queries; preserve "
-        "all results as discovered_unverified and never repeat the broad search.",
+        "Discover literature with Google Search in whichever of two modes the "
+        "dispatch names. Enrichment mode: resolve only the unresolved gaps Deep "
+        "Research listed, at most six focused queries, and do not repeat the "
+        "broad search it already ran. Primary mode, used when the dispatch says "
+        "Deep Research was unavailable: nobody has searched yet, so run the "
+        "broad search yourself and cover supporting work, contradicting work, "
+        "and measurement standards. In both modes every source and claim stays "
+        "discovered_unverified -- reading a search result is not verification.",
     ),
     Specialist(
         "evidence",
@@ -329,7 +543,10 @@ SPECIALISTS = (
     Specialist(
         "rank",
         "ranking",
-        "Rank candidates by novelty, impact, feasibility, and risk; state uncertainty.",
+        "Judge one pair of hypotheses per request on novelty, impact, "
+        "feasibility, and risk -- by direct comparison, or by simulated "
+        "scientific debate when asked -- and name the better idea. The "
+        "Supervisor plays the tournament and computes Elo from these verdicts.",
     ),
     Specialist(
         "evolve",
@@ -355,12 +572,66 @@ SPECIALISTS_BY_STAGE = {
 }
 
 
+def _generation_config(choice, types):
+    """The sampling and thinking settings one model family needs.
+
+    Gemini and Claude disagree about how thinking is asked for, and the
+    disagreement is fatal rather than cosmetic: ADK's Anthropic adapter raises
+    outright on a ``ThinkingConfig`` that carries a level instead of a budget.
+    The ceilings differ too, and for a reason worth writing down -- Anthropic's
+    SDK refuses a non-streaming request whose token ceiling implies more than
+    ten minutes of work, which caps Claude far below what Gemini allows.
+    """
+    if choice.family == "claude":
+        return types.GenerateContentConfig(
+            # Anthropic ignores sampling parameters once thinking is on and ADK
+            # warns about it, so the temperature the Gemini agents carry is not
+            # repeated here. -1 is adaptive: the model picks its own depth,
+            # which is the closest equivalent to Gemini's HIGH level.
+            max_output_tokens=choice.max_output_tokens,
+            thinking_config=types.ThinkingConfig(thinking_budget=-1),
+        )
+    return types.GenerateContentConfig(
+        temperature=0.2,
+        # A full CandidatePopulation or TournamentState runs past 8k tokens; the
+        # old ceiling truncated payloads mid-string and the whole stage was lost.
+        max_output_tokens=choice.max_output_tokens,
+        thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.HIGH),
+    )
+
+
+def _adk_model(model_id: str):
+    """The value an ``LlmAgent`` wants for ``model=``.
+
+    A Gemini id is passed through as a string. A Claude id cannot be: ADK's
+    registry matches ``claude-3-.*`` and ``claude-.*-4.*``, so a Claude 5 id
+    resolves to nothing and the agent fails to construct. Handing over the
+    model object directly skips the registry, which is the documented escape
+    hatch for exactly this case.
+    """
+    if model_choice(model_id).family != "claude":
+        return model_id
+    try:
+        from google.adk.models.anthropic_llm import Claude
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise RuntimeError(
+            f"Serving {model_id} needs the anthropic package: pip install "
+            "'anthropic>=0.43.0'."
+        ) from exc
+    return Claude(model=model_id)
+
+
 def build_adk_workflow(model: str = GEMINI_MODEL):
-    """Build specialist agents for the A2A surface.
+    """Build specialist agents for the A2A surface, for one model.
 
     The code-level Supervisor remains outside this LLM delegation tree. This
     function intentionally does not use ``SequentialAgent`` because that would
     bypass the persisted approval state machine.
+
+    Called once per allowed model. An ``LlmAgent`` binds its model when it is
+    constructed, so a run cannot choose one later; what it chooses instead is
+    which of these trees to address, and the agent names carry the model so the
+    published A2A cards stay distinct.
     """
     try:
         from google.adk.agents import Agent, LlmAgent
@@ -370,38 +641,67 @@ def build_adk_workflow(model: str = GEMINI_MODEL):
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise RuntimeError("Install google-adk to create the live ADK graph.") from exc
     configure_vertex_ai_global_endpoint()
-    config = types.GenerateContentConfig(
-        temperature=0.2,
-        max_output_tokens=8192,
-        thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.HIGH),
+    choice = model_choice(model)
+    config = _generation_config(choice, types)
+    # Google Search grounding is a Gemini server-side feature, not a function
+    # any model could call, and ADK raises rather than degrading when a
+    # non-Gemini model is handed the tool. Evidence discovery is the one role
+    # that needs it, so on a Claude tree that role alone stays on the default
+    # Gemini model and its own config. The alternative -- dropping the tool --
+    # would leave discovery inventing sources, which is the single failure this
+    # system exists to prevent.
+    grounded_choice = choice if choice.search_grounded else model_choice(DEFAULT_MODEL)
+    grounded_config = (
+        config if choice.search_grounded else _generation_config(grounded_choice, types)
+    )
+    # Built once and shared. For Gemini this is just the id string, but for
+    # Claude it is a client-holding object, and one per specialist would open
+    # eleven of them per tree for no benefit.
+    chosen_model = _adk_model(model)
+    grounded_model = (
+        chosen_model if choice.search_grounded else _adk_model(grounded_choice.id)
     )
     agents = []
     for item in SPECIALISTS:
+        agent_model, agent_config = chosen_model, config
         if item.role == "evidence_discovery":
             tools = [google_search]
+            agent_model = grounded_model
+            agent_config = grounded_config
         elif item.role == "source_verification":
             tools = [load_web_page]
         else:
             tools = []
+        # The ranking specialist is a match judge, not a tournament reporter.
+        # It previously carried output_contract("ranking"), which orders a
+        # TournamentState; that system instruction beat the section 9.3 user
+        # prompt and the model returned a serialized tournament with invented
+        # candidate ids instead of debating. Fixing it here fixes the A2A card
+        # too, since the card is generated from this agent.
+        contract = (
+            RANKING_JUDGE_CONTRACT
+            if item.role == "ranking"
+            else output_contract(item.role)
+        )
         agents.append(
             LlmAgent(
-                name=item.role,
-                model=model,
+                name=specialist_agent_name(item.role, model),
+                model=agent_model,
                 instruction=(
                     f"{item.instruction}\n\n"
                     "Operate only within this responsibility. Distinguish verified "
                     "evidence, unverified leads, inference, and proposals. Never "
                     "invent sources, results, measurements, or tool output.\n\n"
-                    f"{STRUCTURED_OUTPUT_INSTRUCTIONS[item.role]}"
+                    f"{contract}"
                 ),
                 tools=tools,
-                generate_content_config=config,
+                generate_content_config=agent_config,
                 description=item.instruction,
             )
         )
     return Agent(
-        name="co_scientist_supervisor",
-        model=model,
+        name=specialist_agent_name("co_scientist_supervisor", model),
+        model=chosen_model,
         instruction=(
             "You are the conversational entry point to a rigor-first scientific "
             "workflow. Route the user's requested deliverable directly to the "
@@ -420,3 +720,15 @@ def build_adk_workflow(model: str = GEMINI_MODEL):
         sub_agents=agents,
         generate_content_config=config,
     )
+
+
+def build_adk_workflows() -> dict:
+    """One specialist tree per model on the allowlist, keyed by model id.
+
+    The server publishes every tree at startup so a session can pick its model
+    per run. Trees are cheap to build -- no network call, just agent objects --
+    but they are not free, so this is the only place that decides how many
+    exist, and it decides from :data:`MODEL_CHOICES` rather than from a second
+    list somebody has to remember to update.
+    """
+    return {choice.id: build_adk_workflow(model=choice.id) for choice in MODEL_CHOICES}

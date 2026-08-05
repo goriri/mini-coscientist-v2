@@ -1,7 +1,70 @@
 from __future__ import annotations
 
+from .governance import WithdrawalRefused, open_blockers
 from .models import ApprovalProfile
 from .orchestration import CoScientistWorkflow
+
+
+def _required(prompt: str) -> str:
+    """Read a value the record cannot be written without."""
+    while True:
+        value = input(prompt).strip()
+        if value:
+            return value
+        print("Required. A safety decision is not recorded without it.")
+
+
+def _adjudicate(workflow: CoScientistWorkflow) -> bool:
+    """Walk a human through every open governance finding.
+
+    Returns ``False`` when the operator stops instead of answering. Each finding
+    is presented and decided on its own: one blanket confirmation covering
+    several unrelated hazards would defeat the point of asking.
+    """
+    print(
+        "\nGOVERNANCE BLOCK. The safety and governance reviewer recorded a fatal\n"
+        "flaw. Nothing advances until you answer it. Your name and your reason\n"
+        "are recorded and reprinted in the dossier beside the flaw."
+    )
+    for blocker in list(open_blockers(workflow.session)):
+        print(f"\n{'-' * 72}\nHYPOTHESIS: {blocker.candidate_id}")
+        for flaw in blocker.review.fatal_flaws:
+            print(f"  FATAL: {flaw}")
+        for objection in blocker.review.objections:
+            print(f"  objection: {objection}")
+        while True:
+            action = (
+                input("\n[w]ithdraw hypothesis, [o]verride and accept, [s]top: ")
+                .strip()
+                .lower()
+            )
+            if action in {"s", "stop"}:
+                workflow.stop()
+                print("Session stopped; the finding remains unanswered on the record.")
+                return False
+            if action not in {"w", "withdraw", "o", "override"}:
+                print("Choose w, o, or s.")
+                continue
+            resolution = "withdraw" if action.startswith("w") else "override"
+            if resolution == "override":
+                print(
+                    "Overriding keeps a hypothesis that carries a fatal safety\n"
+                    "finding. It stays in the report, and so does this decision."
+                )
+            adjudicator = _required("Your name: ")
+            justification = _required("Reason (recorded verbatim): ")
+            try:
+                workflow.adjudicate_governance(
+                    blocker.review_id,
+                    resolution,
+                    adjudicator=adjudicator,
+                    justification=justification,
+                )
+            except WithdrawalRefused as refusal:
+                print(f"Refused: {refusal}")
+                continue
+            break
+    return True
 
 
 def run_tui(workflow: CoScientistWorkflow) -> None:
@@ -17,8 +80,19 @@ def run_tui(workflow: CoScientistWorkflow) -> None:
         f"evolution_rounds={budget.max_evolution_rounds}"
     )
     print("Every output is a draft. Verify evidence before research action.\n")
-    while not workflow.done and workflow.session.status == "active":
+    # A governance block is a state the loop has to stay awake for. It is set
+    # inside accept(), so a loop that only runs while "active" would fall out
+    # of the bottom and end the session without ever telling the operator that
+    # a safety finding was what stopped it.
+    while not workflow.done and workflow.session.status in {
+        "active",
+        "governance_blocked",
+    }:
         workflow.advance_to_human_gate()
+        if workflow.session.status == "governance_blocked":
+            if not _adjudicate(workflow):
+                return
+            continue
         if workflow.session.status == "evidence_required":
             print(
                 "\nEvidence verification is incomplete. Generation is blocked; "

@@ -11,6 +11,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .model_catalog import DEFAULT_LANGUAGE, DEFAULT_MODEL
+
 SCHEMA_VERSION = "1.0"
 STAGES = (
     "scope",
@@ -172,6 +174,24 @@ EVIDENCE_FACETS = (
     "corrections_retractions",
 )
 
+FACET_PHRASES: dict[str, str] = {
+    "supporting": "supporting evidence",
+    "contradictory": "evidence contradicting the leading direction",
+    "negative_null": "negative or null results",
+    "replication": "independent replication",
+    "methods": "methodological detail",
+    "safety_governance": "safety or governance evidence",
+    "corrections_retractions": "corrections or retractions affecting the sources used",
+}
+"""How each facet is named in prose a person reads.
+
+The facet tokens are an enum, and both the coverage gaps and the discovery prompt
+printed them with their underscores swapped for spaces. That is fine for
+``supporting`` and produces "No adequate corrections retractions evidence was
+discovered" for the facet that matters most to a reader deciding whether to trust
+a citation.
+"""
+
 
 class DeepResearchRun(Contract):
     id: str = Field(default_factory=lambda: new_id("deep_research"))
@@ -272,6 +292,14 @@ class EnrichmentRequest(Contract):
 class DiscoveryManifest(Contract):
     question: str
     runs: list[DeepResearchRun] = Field(default_factory=list, max_length=3)
+    discovery_angles: list[str] = Field(default_factory=list)
+    """Which sub-searches a decomposed grounded pass ran, in the order they ran.
+
+    Empty on a Deep Research pass, which is one search that iterates rather than
+    several that fan out. The appendix reads this to say how the literature was
+    found: "one set of queries" was true of the pass this replaced and would be a
+    false modesty about the pass that replaced it.
+    """
     narratives: list[DiscoveryNarrative] = Field(default_factory=list)
     source_leads: list[SourceLead] = Field(default_factory=list)
     coverage_history: list[DiscoveryCoverage] = Field(default_factory=list)
@@ -318,6 +346,10 @@ class CandidateReview(Contract):
         "novelty",
         "methods_feasibility",
         "impact_safety",
+        # Safety and governance decide whether work may proceed at all; impact
+        # decides whether it is worth proceeding. Sessions written before this
+        # split still carry "impact_safety" for both, so that value stays legal.
+        "safety_governance",
     ]
     findings: list[str] = Field(default_factory=list)
     fatal_flaws: list[str] = Field(default_factory=list)
@@ -347,6 +379,14 @@ class PairwiseComparison(Contract):
     elo_before: dict[str, float] = Field(default_factory=dict)
     elo_after: dict[str, float] = Field(default_factory=dict)
     rubric_version: str = "1"
+    # Turn-by-turn transcript when the match was decided by a simulated
+    # scientific debate rather than by arithmetic. Empty for computed matches,
+    # which is itself the signal that no reasoning backs the result.
+    debate_turns: list[str] = Field(default_factory=list)
+    # A single-turn comparison and a multi-turn debate are not equally strong
+    # evidence, so they are not recorded under one name. Only "llm_debate"
+    # means the two hypotheses were actually argued against each other.
+    judge: Literal["deterministic", "llm_comparison", "llm_debate"] = "deterministic"
 
 
 class TournamentState(Contract):
@@ -458,6 +498,14 @@ class Artifact(Contract):
     input_artifact_ids: list[str] = Field(default_factory=list)
     schema_name: str = "markdown"
     payload: dict[str, Any] = Field(default_factory=dict)
+    # Where the typed payload came from. A deterministic fallback discards the
+    # specialist's actual reasoning, so it must be recorded rather than silently
+    # substituted: a reader cannot otherwise tell a template from real work.
+    payload_source: Literal["specialist", "repaired", "deterministic_fallback"] = (
+        "specialist"
+    )
+    payload_repairs: list[str] = Field(default_factory=list)
+    payload_error: str = ""
     checksum: str = ""
 
     @model_validator(mode="after")
@@ -467,6 +515,18 @@ class Artifact(Contract):
             raise ValueError("Artifact checksum does not match its content.")
         self.checksum = expected
         return self
+
+    def revise(self, content: str, payload: dict[str, Any] | None = None) -> None:
+        """Replace this artifact's body and re-seal it.
+
+        Assigning to ``content`` directly leaves the checksum describing the old
+        text, so the artifact validates at write time and fails on the next load.
+        Every in-place update has to go through here.
+        """
+        self.content = content
+        if payload is not None:
+            self.payload = payload
+        self.checksum = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 class HumanDecision(Contract):
@@ -480,6 +540,42 @@ class HumanDecision(Contract):
     feedback: str = ""
     created_at: str = Field(default_factory=utc_now)
     session_version: int
+
+
+class GovernanceAdjudication(Contract):
+    """A named person's answer to a governance block.
+
+    A safety gate that can halt a run but offers no way to resolve one is a gate
+    operators eventually switch off, so both exits are recorded here rather than
+    left to whoever edits the session file. ``withdraw`` drops the hypothesis;
+    ``override`` keeps it and accepts the flaw. Neither is anonymous and neither
+    is silent: the system cannot judge whether a justification is a good one,
+    only that somebody signed it, so the dossier reprints it verbatim next to
+    the fatal flaw it answers and lets a reader judge.
+
+    ``fatal_flaws`` is copied rather than referenced because a later revision
+    can supersede the review, and an approval must stay attached to the exact
+    words it approved.
+    """
+
+    id: str = Field(default_factory=lambda: new_id("adjudication"))
+    review_id: str
+    candidate_id: str
+    resolution: Literal["withdraw", "override"]
+    adjudicator: str
+    justification: str
+    fatal_flaws: list[str] = Field(default_factory=list)
+    created_at: str = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def _require_attribution(self) -> GovernanceAdjudication:
+        if not self.adjudicator.strip():
+            raise ValueError("A governance adjudication must name its adjudicator.")
+        if not self.justification.strip():
+            raise ValueError(
+                "A governance adjudication must state a written justification."
+            )
+        return self
 
 
 class AuditEvent(Contract):
@@ -496,6 +592,18 @@ class Session(Contract):
     id: str = Field(default_factory=lambda: new_id("session"))
     context_id: str = Field(default_factory=lambda: new_id("context"))
     research_mode: str = "experimental"
+    # Configured once when the run is created and read back on every resume.
+    # A run that started on one model and finished on another would report a
+    # single producer_model per artifact and no way to tell which was which,
+    # so the choice lives with the session rather than with whichever provider
+    # object happens to be reconstructed to advance the next stage.
+    #
+    # Neither field is validated against the catalogue here on purpose: a saved
+    # session must still load after a model is retired from the allowlist, and
+    # a Session that refuses to deserialise is a dossier nobody can reprint.
+    # The CLI and the web API validate at the point the value is chosen.
+    model: str = DEFAULT_MODEL
+    language: str = DEFAULT_LANGUAGE
     approval_mode: ApprovalMode = ApprovalMode.HUMAN
     approval_profile: ApprovalProfile = ApprovalProfile.MILESTONE
     input_requirements: list[InputRequirement] = Field(default_factory=list)
@@ -506,6 +614,7 @@ class Session(Contract):
     artifacts: list[Artifact] = Field(default_factory=list)
     tasks: list[TaskRecord] = Field(default_factory=list)
     decisions: list[HumanDecision] = Field(default_factory=list)
+    governance_adjudications: list[GovernanceAdjudication] = Field(default_factory=list)
     events: list[AuditEvent] = Field(default_factory=list)
     current_stage: int = 0
     status: str = "active"
@@ -541,6 +650,11 @@ class Session(Contract):
                 else ApprovalProfile.STAGE
             )
         migrated.setdefault("input_requirements", [])
+        # A session saved before the choice existed was produced on the default
+        # model in English, so that is what it is recorded as rather than
+        # "unknown": the run really did happen that way.
+        migrated.setdefault("model", DEFAULT_MODEL)
+        migrated.setdefault("language", DEFAULT_LANGUAGE)
         migrated.setdefault("literature_only", False)
         migrated.setdefault("workflow_version", 1)
         migrated.setdefault("exploratory_evidence_accepted", False)
@@ -563,6 +677,9 @@ class Session(Contract):
             artifact.setdefault("input_artifact_ids", [])
             artifact.setdefault("schema_name", "markdown")
             artifact.setdefault("payload", {})
+            artifact.setdefault("payload_source", "specialist")
+            artifact.setdefault("payload_repairs", [])
+            artifact.setdefault("payload_error", "")
             artifact.setdefault(
                 "checksum",
                 hashlib.sha256(artifact.get("content", "").encode("utf-8")).hexdigest(),

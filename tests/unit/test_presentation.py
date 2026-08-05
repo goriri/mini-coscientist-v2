@@ -1,4 +1,10 @@
-from coscientist.models import ApprovalProfile
+from coscientist.models import (
+    ApprovalProfile,
+    Artifact,
+    DiscoveryManifest,
+    Session,
+    SourceLead,
+)
 from coscientist.orchestration import CoScientistWorkflow
 from coscientist.presentation import build_stage_presentation
 
@@ -51,3 +57,65 @@ def test_every_stage_has_a_structured_human_presentation():
     meta = presentations["meta_review"]
     assert meta is not None
     assert meta["recommendations"]
+
+
+def _evidence_view(manifest: DiscoveryManifest) -> dict:
+    session = Session(question=manifest.question)
+    session.artifacts.append(
+        Artifact(
+            stage="evidence",
+            agent="deep_research_discovery",
+            artifact_type="specialist_output",
+            content="discovery",
+            schema_name="DiscoveryManifest",
+            payload=manifest.model_dump(mode="json"),
+        )
+    )
+    view = build_stage_presentation(session, "evidence")
+    assert view is not None
+    return view
+
+
+def _labelled(view: dict, label: str):
+    return next(
+        (item["value"] for item in view["details"] if item["label"] == label), None
+    )
+
+
+def test_the_evidence_view_names_the_provider_that_found_the_leads():
+    """Calling a search hit "Deep Research" buys it credibility it did not earn."""
+    view = _evidence_view(
+        DiscoveryManifest(
+            question="Can a coating extend cycle life?",
+            source_leads=[
+                SourceLead(
+                    canonical_url="https://doi.org/10.1000/x", provider="google_search"
+                )
+            ],
+            stored_interaction_notice=False,
+        )
+    )
+
+    assert "google_search" in view["summary"]
+    assert "Deep Research" not in view["summary"]
+    assert _labelled(view, "Discovery provider") == ["google_search"]
+    assert _labelled(view, "Stored interaction notice") is None
+
+
+def test_the_evidence_view_keeps_the_notice_when_something_was_stored():
+    view = _evidence_view(
+        DiscoveryManifest(
+            question="Can a coating extend cycle life?",
+            source_leads=[SourceLead(canonical_url="https://doi.org/10.1000/x")],
+        )
+    )
+
+    assert "deep_research" in view["summary"]
+    assert _labelled(view, "Stored interaction notice")
+
+
+def test_the_evidence_view_does_not_pretend_an_empty_pass_found_a_landscape():
+    view = _evidence_view(DiscoveryManifest(question="Can a coating help?"))
+
+    assert "nothing was discovered" in view["summary"]
+    assert _labelled(view, "Discovery provider") == ["none"]

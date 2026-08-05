@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-import json
 import math
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from itertools import combinations
 from typing import TypeVar
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
+from .citations import latest_evidence_packet
+from .contract_io import ParseOutcome, parse_contract
 from .methods import method_requirements
 from .models import (
     Artifact,
@@ -34,6 +36,69 @@ from .models import (
 )
 
 T = TypeVar("T", bound=BaseModel)
+
+# The Co-Scientist supplementary material initialises every hypothesis at 1200
+# Elo; matching it keeps published rating ranges comparable with ours.
+DEFAULT_ELO = 1200.0
+ELO_K = 32.0
+
+# ``score_movement`` is a fraction of DEFAULT_ELO, and 1.0 is its "nothing was
+# measured" sentinel rather than a reading: a rating cannot move by 1200 points in
+# one round, since a K factor of 32 caps a single match at 32 and no round holds
+# thirty-seven matches. A live report multiplied the sentinel out and printed "the
+# final round moved one rating by 100.0 per cent of that, or about 1200 points",
+# then concluded from it that every position in the standings was provisional.
+UNMEASURED_MOVEMENT = 1.0
+TOP_FOUR = 4
+
+
+def stable_rounds(history: Sequence[Sequence[str]]) -> int:
+    """How many trailing rounds left the shortlist ordering unchanged."""
+    if not history:
+        return 0
+    stable = 1
+    for earlier, later in zip(
+        reversed(history[:-1]), reversed(history[1:]), strict=False
+    ):
+        if earlier[:TOP_FOUR] != later[:TOP_FOUR]:
+            break
+        stable += 1
+    return stable
+
+
+def score_movement(history: Sequence[Mapping[str, float]]) -> float:
+    """Largest fractional Elo change in the final round, relative to 1200.
+
+    Returns the sentinel where there is no earlier round to measure against, which
+    is not the same as a round that moved nothing: the caller has to say which.
+    """
+    if len(history) < 2 or not history[-1]:
+        return UNMEASURED_MOVEMENT
+    previous, current = history[-2], history[-1]
+    return round(
+        max(
+            abs(current[key] - previous.get(key, DEFAULT_ELO)) / DEFAULT_ELO
+            for key in current
+        ),
+        4,
+    )
+
+
+@dataclass(frozen=True)
+class TypedPayload:
+    """A validated specialist payload plus how it was obtained.
+
+    ``source`` distinguishes the specialist's own reasoning from a deterministic
+    template that stood in for it, so neither a report nor an operator has to
+    guess whether a stage reflects real model work.
+    """
+
+    schema_name: str
+    payload: dict
+    source: str = "specialist"
+    repairs: list[str] = field(default_factory=list)
+    error: str = ""
+
 
 _URL_RE = re.compile(r"https?://[^\s<>()\[\]\"']+")
 _PEPTIDE_SEQUENCE_RE = re.compile(
@@ -110,18 +175,66 @@ def unresolved_blockers(session: Session) -> list[InputRequirement]:
     ]
 
 
+REVIEW_CRITERIA: dict[str, tuple[str, str]] = {
+    "reflection": ("evidence_correctness", "Evidence and correctness"),
+    "novelty_review": ("novelty", "Novelty and prior art"),
+    "methods_statistics": ("methods_feasibility", "Methods and feasibility"),
+    "impact_review": ("impact_safety", "Impact and translational value"),
+    "ethics_safety_governance": ("safety_governance", "Safety and governance"),
+}
+
+
+ROLE_CONTRACTS: dict[str, type[BaseModel]] = {
+    "goal_manager": ResearchPlan,
+    "evidence_discovery": EvidencePacket,
+    "source_verification": EvidencePacket,
+    "generation": CandidatePopulation,
+    "reflection": ReviewSet,
+    "novelty_review": ReviewSet,
+    "methods_statistics": ReviewSet,
+    "impact_review": ReviewSet,
+    "ethics_safety_governance": ReviewSet,
+    "ranking": TournamentState,
+    "evolution": EvolutionCycle,
+    "proximity": ResearchLandscape,
+    "meta_reviewer": DossierManifest,
+}
+
+
+def contract_defaults(session: Session, role: str) -> dict[str, dict[str, object]]:
+    """Context a specialist may legitimately omit from its typed payload.
+
+    A reviewer restating the research question on every packet, or its own name
+    on every review, adds nothing; the supervisor already knows both. Supplying
+    them here keeps an otherwise complete answer from being thrown away.
+    """
+    defaults: dict[str, dict[str, object]] = {
+        "ResearchPlan": {
+            "question": session.question,
+            "research_mode": session.research_mode,
+        },
+        "EvidencePacket": {"question": session.question},
+        "DiscoveryManifest": {"question": session.question},
+        "DossierManifest": {
+            "title": f"Co-Scientist Research Dossier: {session.question}",
+            "sections": [{"key": "executive", "title": "Executive synthesis"}],
+        },
+    }
+    if role in REVIEW_CRITERIA:
+        defaults["CandidateReview"] = {
+            "reviewer": role,
+            "criterion": REVIEW_CRITERIA[role][0],
+        }
+    return defaults
+
+
+def _parse(session: Session, role: str, content: str, model: type[T]) -> ParseOutcome:
+    return parse_contract(content, model, defaults=contract_defaults(session, role))
+
+
 def _try_contract(content: str, model: type[T]) -> T | None:
-    """Parse the first JSON object in an LLM response and validate it."""
-    decoder = json.JSONDecoder()
-    for index, character in enumerate(content):
-        if character != "{":
-            continue
-        try:
-            payload, _ = decoder.raw_decode(content[index:])
-            return model.model_validate(payload)
-        except (json.JSONDecodeError, ValidationError):
-            continue
-    return None
+    """Parse an LLM response into ``model``, or return ``None``."""
+    return parse_contract(content, model).value
 
 
 def research_plan(session: Session) -> ResearchPlan:
@@ -160,21 +273,13 @@ def evidence_packet(
 ) -> EvidencePacket:
     parsed = _try_contract(content, EvidencePacket)
     if parsed is not None:
-        source_ids = {source.id for source in parsed.sources}
-        valid_claims = all(
-            claim.source_id in source_ids
-            and claim.exact_location
-            and claim.verification_status in {"verified", "corrected"}
-            for claim in parsed.claims
-        )
         if not verified:
             for source in parsed.sources:
                 source.verification_status = "discovered_unverified"
             for claim in parsed.claims:
                 claim.verification_status = "discovered_unverified"
             return parsed
-        if parsed.sources and parsed.claims and valid_claims:
-            return parsed
+        return _audited_verification(session, parsed)
     sources: list[SourceRecord] = []
     for url in dict.fromkeys(_URL_RE.findall(content)):
         sources.append(
@@ -190,16 +295,179 @@ def evidence_packet(
         limitations.append(
             "URLs without typed claim locations remain discovery leads, not verified evidence."
         )
-    return EvidencePacket(
+    scraped = EvidencePacket(
         question=session.question,
         sources=sources,
         limitations=limitations,
     )
+    if not verified:
+        return scraped
+    # A verification pass whose output could not be parsed at all is the worst
+    # case for upstream discovery, not the one case where deleting it is fine.
+    # Audit the scrape like any other verification packet so what was already
+    # discovered is carried forward as unreachable instead of vanishing.
+    return _audited_verification(session, scraped)
+
+
+# Vertex search grounding hands back redirector links. They resolve in a
+# browser today, expire, and name no document, so a reader cannot use one to
+# find what was read. Recording that is the difference between a citation and
+# the appearance of one.
+_OPAQUE_URL_MARKER = "grounding-api-redirect"
+
+
+def _audited_verification(session: Session, packet: EvidencePacket) -> EvidencePacket:
+    """Hold a verification packet to its own standard without discarding it.
+
+    The predicate this replaces required *every* claim to come back verified or
+    corrected, and rebuilt the packet from a URL regex otherwise. A live run
+    showed what that costs: the verifier returned six claims, each with a
+    source, an exact location, a relation and its own limitations -- two of them
+    contradicting the hypothesis -- and honestly marked them unverified because
+    the only URLs it had were opaque redirectors it could not open. All six were
+    thrown away and replaced by five titleless links. The rule rewarded a
+    verifier for stamping "verified" on work it had not done and punished one
+    that admitted the gap, which is precisely backwards for an evidence gate.
+
+    So the packet is kept and audited instead. An unsupported verification claim
+    is corrected downward, an upstream claim the pass forgot is carried forward
+    as unreachable, and both are said out loud in the limitations.
+    """
+    source_ids = {source.id for source in packet.sources}
+    for claim in packet.claims:
+        if claim.verification_status not in {"verified", "corrected"}:
+            continue
+        if claim.source_id in source_ids and claim.exact_location:
+            continue
+        # "Verified" is a statement about receipts, not about plausibility.
+        # With no resolvable source and no exact location there is nothing for
+        # a reader to check, so the status is corrected rather than believed.
+        claim.verification_status = "discovered_unverified"
+        claim.limitations.append(
+            "Downgraded to unverified: the packet claimed verification without "
+            "naming both a source in this packet and an exact location in it."
+        )
+
+    discovered = latest_evidence_packet(session)
+    upstream = {claim.id: claim for claim in (discovered.claims if discovered else [])}
+    for claim in packet.claims:
+        if claim.verification_status in {"verified", "corrected"}:
+            continue
+        original = upstream.get(claim.id)
+        if original is None:
+            continue
+        # A pass that confirmed nothing has no basis for overturning what
+        # discovery recorded. A live run watched one re-emit three findings --
+        # two of them contradicting the hypothesis, each with its location in
+        # the paper -- as three neutral claims located nowhere, and the report
+        # then described a literature that agreed with itself.
+        if claim.relation == "neutral" and original.relation != "neutral":
+            claim.relation = original.relation
+        if not claim.exact_location and original.exact_location:
+            claim.exact_location = original.exact_location
+        # Nor for rewriting the finding itself. A later run watched the pass
+        # return each discovered claim under its own id with the text replaced
+        # by a paraphrase of the source's title -- "atomic layer deposition can
+        # be used to apply surface coatings", still labelled contradicts. The
+        # stance no longer described the sentence it was attached to, and the
+        # measured result discovery had found was gone. An unverified pass may
+        # report what it could not confirm; it may not restate the claim.
+        # Nor for dropping the scope discovery recorded against the finding.
+        # "Specific to NCM811 cathodes and dry vs wet coating methods" is the
+        # only statement in the whole run of what a retention figure does not
+        # cover, and a live pass returned each claim under its own id carrying
+        # one line of its own boilerplate instead -- so all six scopes went out
+        # of the record, and the report printed the numbers unqualified.
+        claim.limitations.extend(
+            item for item in original.limitations if item not in claim.limitations
+        )
+        if original.claim and claim.claim != original.claim:
+            claim.claim = original.claim
+            claim.limitations.append(
+                "Restored to the discovered wording: the verification pass "
+                "restated this claim without confirming it."
+            )
+
+    returned = {claim.id for claim in packet.claims}
+    carried = [
+        claim.model_copy(deep=True)
+        for claim in (discovered.claims if discovered else [])
+        if claim.id not in returned
+    ]
+    # A carried claim whose source is not in this packet cites a document the
+    # report cannot name. Bring the source across too, marked unreachable.
+    wanted = {claim.source_id for claim in carried} - source_ids - {None}
+    for source in discovered.sources if discovered else []:
+        if source.id not in wanted:
+            continue
+        copied = source.model_copy(deep=True)
+        copied.verification_status = "inaccessible"
+        packet.sources.append(copied)
+        source_ids.add(copied.id)
+    for claim in carried:
+        # A claim the verifier could not reach and a claim nobody ever made
+        # look identical once one of them is deleted. Keep it, marked for what
+        # it is: discovered, and not confirmed by this pass.
+        claim.verification_status = "inaccessible"
+        claim.limitations.append(
+            "Discovered upstream but absent from the verification pass; "
+            "recorded as unreachable rather than dropped."
+        )
+    packet.claims.extend(carried)
+
+    if carried:
+        packet.limitations.append(
+            f"{len(carried)} discovered claim(s) were not returned by the "
+            "verification pass and are carried forward as unreachable."
+        )
+    if any(_OPAQUE_URL_MARKER in source.url for source in packet.sources):
+        packet.limitations.append(
+            "Some sources are search-grounding redirect links rather than "
+            "stable identifiers; they name no document a reader can cite and "
+            "cannot be opened for verification."
+        )
+    return packet
+
+
+MIN_ACCEPTABLE_CANDIDATES = 2
+"""Below this a population is too thin to rank, so the fallback is the better artifact."""
+
+
+def align_candidate_ids(
+    referenced: list[str], candidate_ids: list[str]
+) -> dict[str, str]:
+    """Map the ids a downstream specialist used onto the real candidate ids.
+
+    Specialists paraphrase identifiers -- ``cand_ef1`` for ``cand_ef_1``, or a
+    positional ``Candidate 3``. Discarding an entire review set over a cosmetic
+    id mismatch loses real analysis, so resolve what can be resolved and report
+    the rest to the caller by omission.
+    """
+    known = {candidate_id: candidate_id for candidate_id in candidate_ids}
+    normalized = {
+        re.sub(r"[^a-z0-9]", "", candidate_id.lower()): candidate_id
+        for candidate_id in candidate_ids
+    }
+    mapping: dict[str, str] = {}
+    for reference in referenced:
+        if reference in known:
+            mapping[reference] = reference
+            continue
+        simple = re.sub(r"[^a-z0-9]", "", reference.lower())
+        if simple in normalized:
+            mapping[reference] = normalized[simple]
+            continue
+        ordinal = re.search(r"(\d+)\s*$", reference)
+        if ordinal:
+            index = int(ordinal.group(1)) - 1
+            if 0 <= index < len(candidate_ids):
+                mapping[reference] = candidate_ids[index]
+    return mapping
 
 
 def candidate_population(session: Session, content: str) -> CandidatePopulation:
-    parsed = _try_contract(content, CandidatePopulation)
-    if parsed is not None and len(parsed.candidates) >= 8:
+    parsed = _parse(session, "generation", content, CandidatePopulation).value
+    if parsed is not None and len(parsed.candidates) >= MIN_ACCEPTABLE_CANDIDATES:
         return parsed
     strategies = (
         "evidence_first",
@@ -304,14 +572,7 @@ def population_from_artifacts(artifacts: Iterable[Artifact]) -> CandidatePopulat
 
 def review_set(session: Session, role: str) -> ReviewSet:
     population = population_from_artifacts(session.artifacts)
-    mapping = {
-        "reflection": ("evidence_correctness", "Evidence and correctness"),
-        "novelty_review": ("novelty", "Novelty and prior art"),
-        "methods_statistics": ("methods_feasibility", "Methods and feasibility"),
-        "impact_review": ("impact_safety", "Impact and translational value"),
-        "ethics_safety_governance": ("impact_safety", "Safety and governance"),
-    }
-    criterion, label = mapping[role]
+    criterion, label = REVIEW_CRITERIA[role]
     reviews = []
     unsafe_autonomy = role == "ethics_safety_governance" and any(
         phrase in session.question.lower()
@@ -362,8 +623,8 @@ def review_set(session: Session, role: str) -> ReviewSet:
     return ReviewSet(reviews=reviews)
 
 
-def parsed_review_set(session: Session, role: str, content: str) -> ReviewSet:
-    if role == "ethics_safety_governance" and any(
+def _unsafe_autonomy_request(session: Session) -> bool:
+    return any(
         phrase in session.question.lower()
         for phrase in (
             "hazardous laboratory",
@@ -371,20 +632,52 @@ def parsed_review_set(session: Session, role: str, content: str) -> ReviewSet:
             "execute the protocol",
             "without human safety review",
         )
-    ):
-        return review_set(session, role)
-    parsed = _try_contract(content, ReviewSet)
-    if parsed is None:
-        return review_set(session, role)
-    candidate_ids = {
+    )
+
+
+def parsed_review_set(
+    session: Session, role: str, parsed: ReviewSet | None, fallback: ReviewSet
+) -> ReviewSet:
+    """Keep every review a specialist actually wrote, covering the rest.
+
+    The governance override stays absolute: an unsafe-autonomy request is
+    answered deterministically so no model output can soften it. Otherwise the
+    specialist's reviews are aligned onto the real candidate ids and any
+    candidate it skipped is backfilled, rather than discarding the whole set
+    because one id or one reviewer name did not match. Returning ``fallback``
+    itself signals to the caller that no specialist review survived.
+    """
+    if role == "ethics_safety_governance" and _unsafe_autonomy_request(session):
+        return fallback
+    if parsed is None or not parsed.reviews:
+        return fallback
+    candidate_ids = [
         candidate.id
         for candidate in population_from_artifacts(session.artifacts).candidates
-    }
-    if {review.candidate_id for review in parsed.reviews} != candidate_ids or any(
-        review.reviewer != role for review in parsed.reviews
-    ):
-        return review_set(session, role)
-    return parsed
+    ]
+    mapping = align_candidate_ids(
+        [review.candidate_id for review in parsed.reviews], candidate_ids
+    )
+    criterion = REVIEW_CRITERIA[role][0]
+    aligned: dict[str, CandidateReview] = {}
+    for review in parsed.reviews:
+        resolved = mapping.get(review.candidate_id)
+        if resolved is None or resolved in aligned:
+            continue
+        aligned[resolved] = review.model_copy(
+            update={
+                "candidate_id": resolved,
+                "reviewer": role,
+                "criterion": review.criterion or criterion,
+            }
+        )
+    if not aligned:
+        return fallback
+    return ReviewSet(
+        reviews=[
+            aligned.get(review.candidate_id, review) for review in fallback.reviews
+        ]
+    )
 
 
 def _candidate_score(candidate: Candidate, reviews: list[CandidateReview]) -> float:
@@ -411,7 +704,7 @@ def tournament_state(session: Session) -> TournamentState:
         for review in ReviewSet.model_validate(artifact.payload).reviews
     ]
     candidates = population.candidates
-    ratings = {candidate.id: 1500.0 for candidate in candidates}
+    ratings = {candidate.id: DEFAULT_ELO for candidate in candidates}
     scores = {
         candidate.id: _candidate_score(candidate, reviews) for candidate in candidates
     }
@@ -426,7 +719,7 @@ def tournament_state(session: Session) -> TournamentState:
             winner = a.id if scores[a.id] > scores[b.id] else b.id
         actual_a = 1.0 if winner == a.id else 0.0
         expected_a = 1 / (1 + 10 ** ((ratings[b.id] - ratings[a.id]) / 400))
-        delta = 32 * (actual_a - expected_a)
+        delta = ELO_K * (actual_a - expected_a)
         ratings[a.id] += delta
         ratings[b.id] -= delta
         comparisons.append(
@@ -451,11 +744,28 @@ def tournament_state(session: Session) -> TournamentState:
         )
         played.add(frozenset((a.id, b.id)))
 
+    # The ratings and the standings as each round left them. Both were reported as
+    # placeholders before -- ranking_stable_rounds=1, score_movement=1.0 -- and the
+    # report read them as measurements, so a run whose leader in fact moved by
+    # thirteen points was printed as "the final round moved one rating by 100.0 per
+    # cent of that, or about 1200 points". The rounds are played here either way;
+    # nothing but the bookkeeping was missing.
+    def standings() -> list[str]:
+        return [
+            item.id
+            for item in sorted(
+                candidates, key=lambda item: (-ratings[item.id], item.id)
+            )
+        ]
+
+    rating_history: list[dict[str, float]] = [dict(ratings)]
+    standings_history: list[list[str]] = []
+
     for round_number in range(1, 4):
         ordered = sorted(candidates, key=lambda item: (-ratings[item.id], item.id))
         remaining = list(ordered)
         order = 0
-        while remaining:
+        while len(remaining) > 1:
             a = remaining.pop(0)
             partner_index = next(
                 (
@@ -468,25 +778,75 @@ def tournament_state(session: Session) -> TournamentState:
             b = remaining.pop(partner_index)
             compare(a, b, round_number, order)
             order += 1
+        # An odd field leaves one hypothesis unpaired. Swiss pairing gives it a
+        # bye: it sits the round out at its current rating rather than being
+        # awarded a win it did not play for. Populations were always even until
+        # a governance withdrawal removed one, at which point this loop tried to
+        # pair the last hypothesis with nobody.
+        rating_history.append(dict(ratings))
+        standings_history.append(standings())
 
-    top_four = sorted(candidates, key=lambda item: (-ratings[item.id], item.id))[:4]
+    ranked = {item.id: item for item in candidates}
+    top_four = [ranked[item] for item in standings()[:TOP_FOUR]]
+    finals = False
     for order, (a, b) in enumerate(combinations(top_four, 2)):
         if frozenset((a.id, b.id)) not in played:
             compare(a, b, 4, order)
-    shortlist = [
-        item.id
-        for item in sorted(candidates, key=lambda item: (-ratings[item.id], item.id))[
-            :4
-        ]
-    ]
+            finals = True
+    if finals:
+        rating_history.append(dict(ratings))
+        standings_history.append(standings())
+    stable = stable_rounds(standings_history)
+    movement = score_movement(rating_history)
     return TournamentState(
         ratings=ratings,
         comparisons=comparisons,
-        shortlist_ids=shortlist,
-        ranking_stable_rounds=1,
-        score_movement=1.0,
-        converged=False,
+        shortlist_ids=standings()[:TOP_FOUR],
+        ranking_stable_rounds=stable,
+        score_movement=movement,
+        # The same rule the debate tournament applies, so that a run judged
+        # deterministically and a run judged by a model are called converged on
+        # the same terms rather than one of them never being called it at all.
+        converged=stable >= 2 and movement < 0.05,
     )
+
+
+_REVISION_MARKER = ", under a preregistered discriminating design (revision "
+_ROBUSTNESS_PREDICTION = (
+    "The primary result survives the prespecified robustness analysis, "
+    "as prescribed by evolution round {number}."
+)
+
+
+def _revised_claim(claim: str, round_number: int) -> str:
+    """The parent's claim carrying one revision marker rather than one per round.
+
+    Each round copies the parent's claim forward, so appending a marker to
+    whatever the parent already held stacked three of them onto the end of a
+    sentence that had closed with a full stop two rounds earlier: "... at 1C
+    discharge rates. under preregistered discriminating design revision 1
+    under preregistered discriminating design revision 2 ...". Only the latest
+    revision is true of the candidate in hand, so the earlier marker is
+    replaced rather than followed.
+    """
+    base = claim.split(_REVISION_MARKER)[0].rstrip().rstrip(".")
+    return f"{base}{_REVISION_MARKER}{round_number})."
+
+
+def _revised_predictions(predictions: Sequence[str], round_number: int) -> list[str]:
+    """The parent's predictions with this round's robustness check, and only this one.
+
+    The check is the same check every round; carrying the parent's copy forward
+    as well left the third-round offspring predicting that its result survives
+    a robustness analysis in rounds one, two and three, which is one prediction
+    written three times.
+    """
+    kept = [
+        prediction
+        for prediction in predictions
+        if not prediction.startswith("The primary result survives the prespecified")
+    ]
+    return [*kept, _ROBUSTNESS_PREDICTION.format(number=round_number)]
 
 
 def evolution_cycle(session: Session) -> EvolutionCycle:
@@ -501,12 +861,15 @@ def evolution_cycle(session: Session) -> EvolutionCycle:
     rereviews: list[CandidateReview] = []
     ranking_history: list[TournamentState] = []
     current = [by_id[candidate_id] for candidate_id in tournament.shortlist_ids]
-    criteria = (
-        "evidence_correctness",
-        "novelty",
-        "methods_feasibility",
-        "impact_safety",
-    )
+    previous_ratings = dict(tournament.ratings)
+    previous_order: list[str] = list(tournament.shortlist_ids)
+    stable_rounds = 0
+    # Every offspring is renamed each round, so rank stability can only be
+    # compared through the lineage each candidate descends from.
+    roots = {candidate_id: candidate_id for candidate_id in tournament.shortlist_ids}
+    # Re-review has to cover the same axes the review stage did, or an
+    # offspring could clear evolution on axes its parent was never judged on.
+    criteria = tuple(criterion for criterion, _ in REVIEW_CRITERIA.values())
     for round_number in range(1, session.budget.max_evolution_rounds + 1):
         evolved_round = []
         for parent in current:
@@ -515,23 +878,25 @@ def evolution_cycle(session: Session) -> EvolutionCycle:
                     "id": f"{parent.id}_evolved_{round_number}",
                     "version": parent.version + 1,
                     "parent_ids": [parent.id],
-                    "claim": (
-                        f"{parent.claim} under preregistered discriminating "
-                        f"design revision {round_number}"
+                    "claim": _revised_claim(parent.claim, round_number),
+                    "predictions": _revised_predictions(
+                        parent.predictions, round_number
                     ),
-                    "predictions": [
-                        *parent.predictions,
-                        "The primary result survives the prespecified "
-                        f"robustness analysis in evolution round {round_number}.",
-                    ],
                 }
             )
             record = EvolutionRecord(
                 parent_ids=[parent.id],
                 candidate=evolved,
+                # Only the first round adds either of these; the rounds after it
+                # revise what is already on the candidate, and a change log that
+                # says "added" three times over reads as three separate designs.
                 changes=[
-                    "Added a preregistered discriminating design.",
-                    "Added a robustness prediction and explicit re-review requirement.",
+                    "Added a preregistered discriminating design."
+                    if round_number == 1
+                    else "Revised the preregistered discriminating design.",
+                    "Added a robustness prediction and explicit re-review requirement."
+                    if round_number == 1
+                    else "Restated the robustness prediction against the revised design.",
                 ],
                 critiques_addressed=[
                     "Unspecified effect size and external-validity assumptions."
@@ -559,13 +924,26 @@ def evolution_cycle(session: Session) -> EvolutionCycle:
                     )
                 )
 
-        ratings = {candidate.id: 1500.0 for candidate in evolved_round}
+        # An offspring inherits its parent's standing: the revision addressed a
+        # critique but produced no new evidence, so the prior tournament is the
+        # only defensible basis for ordering this round. Awarding the win to
+        # whichever candidate happened to be listed first would manufacture a
+        # ranking out of iteration order.
+        inherited = {
+            candidate.id: previous_ratings.get(candidate.parent_ids[0], DEFAULT_ELO)
+            for candidate in evolved_round
+        }
+        ratings = dict(inherited)
         comparisons = []
         for order, (a, b) in enumerate(combinations(evolved_round, 2)):
-            winner = a
+            if math.isclose(inherited[a.id], inherited[b.id]):
+                winner = a if a.id <= b.id else b
+            else:
+                winner = a if inherited[a.id] > inherited[b.id] else b
             before = {a.id: ratings[a.id], b.id: ratings[b.id]}
+            actual_a = 1.0 if winner.id == a.id else 0.0
             expected_a = 1 / (1 + 10 ** ((ratings[b.id] - ratings[a.id]) / 400))
-            delta = 24 * (1 - expected_a)
+            delta = ELO_K * (actual_a - expected_a)
             ratings[a.id] += delta
             ratings[b.id] -= delta
             comparisons.append(
@@ -575,7 +953,10 @@ def evolution_cycle(session: Session) -> EvolutionCycle:
                     candidate_b_id=b.id,
                     presented_first_id=a.id if order % 2 == 0 else b.id,
                     winner_id=winner.id,
-                    criterion_scores={a.id: 3.5, b.id: 3.4},
+                    criterion_scores={
+                        a.id: round(inherited[a.id], 1),
+                        b.id: round(inherited[b.id], 1),
+                    },
                     rationale=(
                         "Re-ranked after independent evidence, novelty, methods, "
                         "and impact/safety re-review."
@@ -591,8 +972,30 @@ def evolution_cycle(session: Session) -> EvolutionCycle:
                 evolved_round, key=lambda item: (-ratings[item.id], item.id)
             )
         ]
-        stable_rounds = max(0, round_number - 1)
-        movement = 1.0 if round_number == 1 else 0.04 if round_number == 2 else 0.03
+        # Convergence has to be measured, not asserted on a schedule: the loop
+        # stops when the order stops changing and ratings stop moving.
+        for candidate in evolved_round:
+            roots[candidate.id] = roots[candidate.parent_ids[0]]
+        lineage_order = [
+            roots[candidate.id]
+            for candidate in sorted(
+                evolved_round, key=lambda item: (-ratings[item.id], item.id)
+            )
+        ]
+        # Round one is compared against the pre-evolution shortlist, whose order
+        # the offspring inherit by construction, so it cannot evidence stability.
+        stable = round_number > 1 and lineage_order == previous_order
+        stable_rounds = stable_rounds + 1 if stable else 0
+        movement = max(
+            (
+                abs(ratings[candidate_id] - inherited[candidate_id])
+                / max(inherited[candidate_id], 1.0)
+                for candidate_id in ratings
+            ),
+            default=0.0,
+        )
+        previous_ratings = dict(ratings)
+        previous_order = lineage_order
         ranking_history.append(
             TournamentState(
                 ratings=ratings,
@@ -655,6 +1058,58 @@ def research_landscape(session: Session) -> ResearchLandscape:
     )
 
 
+def _low(text: str) -> str:
+    """A stated sentence folded into a longer one, with its notation left alone."""
+    cleaned = " ".join(text.split()).rstrip(".")
+    head, separator, tail = cleaned.partition(" ")
+    if head[:1].isupper() and (head[1:].islower() or not head[1:]):
+        head = head.lower()
+    return f"{head}{separator}{tail}."
+
+
+def _decisive_evidence(candidate: Candidate | None, *, flawed: bool) -> list[str]:
+    """The observations that would actually move this run's ranking.
+
+    The three the fallback used to return -- verified evidence contradicting the
+    mechanism, a failed prediction, an independent replication -- are the kinds of
+    thing that unseat any hypothesis whatever, so the report introduced them as "a
+    short list of specific evidence" and then named none. Section nine goes on to
+    say that obtaining any one of them beats another round of generation, which is
+    a claim about a measurement someone could go and take. Quote the leading
+    candidate's own falsifier, prediction and competing reading instead: those are
+    written against this question, and they are what the ranking rests on.
+    """
+    if candidate is None:
+        return []
+    decisive = []
+    if flawed:
+        # Where nothing is recommended, no measurement on the leading idea can move
+        # the decision until the finding that disqualified it is settled.
+        decisive.append(
+            "A safety finding that resolves the fatal flaw recorded against the "
+            "leading idea, which is what currently keeps every candidate off the "
+            "recommendation."
+        )
+    decisive.append(
+        "The outcome of the falsifying test the proposal names: "
+        f"{_low(candidate.falsifier)}"
+    )
+    if candidate.predictions:
+        decisive.append(
+            "A direct measurement of the prediction that separates it from the "
+            f"field: {_low(candidate.predictions[0])}"
+        )
+    if candidate.alternatives:
+        decisive.append(
+            "Evidence for the competing reading its ranking assumes away, which is "
+            f"that {_low(candidate.alternatives[0])}"
+        )
+    # Not the go/no-go tests: the same section ends by naming them as the immediate
+    # next step, and a reader who meets them twice in two paragraphs reads the second
+    # as a second piece of work.
+    return decisive
+
+
 def dossier_manifest(session: Session) -> DossierManifest:
     sections = []
     for key, title in (
@@ -715,56 +1170,142 @@ def dossier_manifest(session: Session) -> DossierManifest:
         sections=sections,
         recommendation_candidate_ids=recommendations[:3],
         unresolved_fatal_flaw_candidate_ids=fatal_ids,
-        evidence_that_would_change_decision=[
-            "Verified primary evidence contradicting the proposed mechanism.",
-            "A failed discriminating prediction or unacceptable safety signal.",
-            "Independent replication favoring a competing explanation.",
-        ],
+        # The evidence is decisive about one idea, so it is quoted from the idea the
+        # decision is about: the leading recommendation where there is one, and
+        # otherwise the top of the shortlist, which is what the report discusses when
+        # every candidate carries a flaw.
+        evidence_that_would_change_decision=_decisive_evidence(
+            next(
+                (
+                    candidate
+                    for candidate in population_from_artifacts(
+                        session.artifacts
+                    ).candidates
+                    if candidate.id
+                    == next(iter(recommendations + list(tournament.shortlist_ids)), "")
+                ),
+                None,
+            ),
+            flawed=not recommendations,
+        ),
     )
 
 
-def typed_specialist_payload(
-    session: Session, role: str, content: str
-) -> tuple[str, dict]:
-    """Validate every specialist boundary into its declared contract."""
-    if role == "goal_manager":
-        value: BaseModel = _try_contract(content, ResearchPlan) or research_plan(
-            session
+def parsed_tournament_state(
+    session: Session, parsed: TournamentState | None, fallback: TournamentState
+) -> TournamentState:
+    """Adopt the specialist's tournament when it ranked the real candidates.
+
+    The previous gate demanded that the rating map equal the candidate id set
+    exactly, which a model echoing eight opaque identifiers essentially never
+    satisfies -- so a genuine tournament with reasoned pairwise rationales was
+    replaced by an arithmetic one every time. Align the ids instead, and require
+    only that a majority of candidates were actually rated.
+    """
+    if parsed is None or not parsed.ratings:
+        return fallback
+    candidate_ids = [
+        candidate.id
+        for candidate in population_from_artifacts(session.artifacts).candidates
+    ]
+    mapping = align_candidate_ids(
+        [*parsed.ratings, *parsed.shortlist_ids], candidate_ids
+    )
+    ratings = {
+        mapping[reference]: rating
+        for reference, rating in parsed.ratings.items()
+        if reference in mapping
+    }
+    if len(ratings) * 2 < len(candidate_ids):
+        return fallback
+    for candidate_id in candidate_ids:
+        ratings.setdefault(candidate_id, DEFAULT_ELO)
+    shortlist = list(
+        dict.fromkeys(
+            mapping[reference]
+            for reference in parsed.shortlist_ids
+            if reference in mapping
         )
-    elif role == "evidence_discovery":
-        value = evidence_packet(session, content, verified=False)
-    elif role == "source_verification":
-        value = evidence_packet(session, content, verified=True)
-    elif role == "generation":
-        value = candidate_population(session, content)
-    elif role in {
-        "reflection",
-        "novelty_review",
-        "methods_statistics",
-        "impact_review",
-        "ethics_safety_governance",
-    }:
-        value = parsed_review_set(session, role, content)
-    elif role == "ranking":
-        parsed_tournament = _try_contract(content, TournamentState)
-        candidate_ids = {
-            candidate.id
-            for candidate in population_from_artifacts(session.artifacts).candidates
+    )
+    if not shortlist:
+        shortlist = sorted(ratings, key=lambda item: (-ratings[item], item))[:4]
+    comparisons = []
+    for comparison in parsed.comparisons:
+        left = mapping.get(comparison.candidate_a_id)
+        right = mapping.get(comparison.candidate_b_id)
+        if left is None or right is None:
+            continue
+        comparisons.append(
+            comparison.model_copy(
+                update={
+                    "candidate_a_id": left,
+                    "candidate_b_id": right,
+                    "presented_first_id": mapping.get(
+                        comparison.presented_first_id, left
+                    ),
+                    "winner_id": mapping.get(comparison.winner_id or ""),
+                }
+            )
+        )
+    return parsed.model_copy(
+        update={
+            "ratings": ratings,
+            "shortlist_ids": shortlist[:4],
+            "comparisons": comparisons,
         }
-        value = (
-            parsed_tournament
-            if parsed_tournament is not None
-            and set(parsed_tournament.ratings) == candidate_ids
-            and set(parsed_tournament.shortlist_ids).issubset(candidate_ids)
-            and len(parsed_tournament.shortlist_ids) in {3, 4, 5}
-            else tournament_state(session)
-        )
-    elif role == "evolution":
-        value = _try_contract(content, EvolutionCycle) or evolution_cycle(session)
-    elif role == "proximity":
-        value = _try_contract(content, ResearchLandscape) or research_landscape(session)
-    elif role == "meta_reviewer":
-        value = _try_contract(content, DossierManifest) or dossier_manifest(session)
-    else:
+    )
+
+
+def typed_specialist_payload(session: Session, role: str, content: str) -> TypedPayload:
+    """Validate every specialist boundary into its declared contract.
+
+    Returns the payload together with its provenance, so a report can state
+    plainly whether a stage reflects the specialist's own reasoning or a
+    deterministic template standing in for it.
+    """
+    model = ROLE_CONTRACTS.get(role)
+    if model is None:
         raise ValueError(f"No typed specialist contract for role: {role}")
-    return type(value).__name__, value.model_dump(mode="json")
+    outcome = _parse(session, role, content, model)
+    if role == "goal_manager":
+        fallback: BaseModel = research_plan(session)
+        value = outcome.value or fallback
+    elif role in {"evidence_discovery", "source_verification"}:
+        # The evidence packet is extracted from the specialist's own text rather
+        # than parsed from a contract, so it is never a template: whatever the
+        # specialist found is what the packet contains.
+        packet = evidence_packet(
+            session, content, verified=role == "source_verification"
+        )
+        return TypedPayload(
+            schema_name="EvidencePacket", payload=packet.model_dump(mode="json")
+        )
+    elif role == "generation":
+        fallback = candidate_population(session, content)
+        value = outcome.value or fallback
+    elif role in REVIEW_CRITERIA:
+        fallback = review_set(session, role)
+        value = parsed_review_set(session, role, outcome.value, fallback)
+    elif role == "ranking":
+        fallback = tournament_state(session)
+        value = parsed_tournament_state(session, outcome.value, fallback)
+    elif role == "evolution":
+        fallback = evolution_cycle(session)
+        value = outcome.value or fallback
+    elif role == "proximity":
+        fallback = research_landscape(session)
+        value = outcome.value or fallback
+    else:
+        fallback = dossier_manifest(session)
+        value = outcome.value or fallback
+    if value is fallback:
+        source = "deterministic_fallback"
+    else:
+        source = "repaired" if outcome.repairs else "specialist"
+    return TypedPayload(
+        schema_name=type(value).__name__,
+        payload=value.model_dump(mode="json"),
+        source=source,
+        repairs=list(outcome.repairs),
+        error=outcome.error,
+    )

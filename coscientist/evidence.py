@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import json
 import os
@@ -18,19 +19,24 @@ from pydantic import ValidationError
 
 from .models import (
     EVIDENCE_FACETS,
+    FACET_PHRASES,
     DeepResearchRun,
     DiscoveryCoverage,
     DiscoveryManifest,
     DiscoveryNarrative,
     DiscoveryStatement,
     EnrichmentRequest,
+    EvidenceClaim,
+    EvidencePacket,
     ResearchGap,
     ResearchPlan,
     Session,
     SourceLead,
+    SourceRecord,
 )
 
 DEEP_RESEARCH_AGENT = "deep-research-preview-04-2026"
+DEEP_RESEARCH_LOCATION = "global"
 MAX_DEEP_RESEARCH_PASSES = 3
 MIN_COVERAGE_IMPROVEMENT = 0.05
 SUFFICIENT_COVERAGE = 0.90
@@ -41,6 +47,33 @@ DEFAULT_PASS_TIMEOUT_SECONDS = 3900
 MAX_ENRICHMENT_REQUESTS = 6
 MAX_REGISTRY_REQUESTS = 30
 MAX_RETAINED_SOURCE_LEADS = 90
+
+GROUNDING_REDIRECT_MARKER = "grounding-api-redirect"
+"""What a Vertex search-grounding link looks like before it is followed."""
+
+MAX_DISCOVERY_ANGLES = 10
+"""How many sub-searches one decomposed discovery pass may fan out into.
+
+Seven of them are the evidence facets, which are fixed; the rest are the plan's
+own success criteria. The bus runs four at a time, so this is between two and
+three waves of grounded search -- minutes, against a stage that used to take one
+call and return one call's worth of literature.
+"""
+
+CORPUS_SOURCE_TARGET = 12
+"""Distinct sources a whole discovery pass aims for, stated to the specialists.
+
+Two live runs produced four. Nothing was wrong with them: one search was asked
+one question and answered it. A target is what makes the shortfall legible to
+the agent doing the searching, and it is deliberately a target rather than a
+schema minimum -- a contract that rejects a short packet does not produce a
+longer one, it produces an invented one.
+"""
+
+ANGLE_SOURCE_TARGET = 3
+"""Distinct sources one angle aims for, for the same reason and with the same
+caveat: an angle whose literature genuinely does not exist reports that instead.
+"""
 
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _URL_RE = re.compile(r"https?://[^\s<>()\[\]\"']+")
@@ -107,16 +140,75 @@ class EvidenceStillRunning(RuntimeError):
     """Signal that a short-lived worker should schedule another poll task."""
 
 
-class GeminiDeepResearchTransport:
-    """Small Interactions API adapter kept separate for deterministic tests."""
+def resolve_vertex_project() -> str | None:
+    """Resolve the Vertex AI project without requiring an API key.
 
-    def __init__(self, api_key: str | None = None):
+    This mirrors ``agents.configure_vertex_ai_global_endpoint``: an explicit
+    ``GOOGLE_CLOUD_PROJECT`` pins the billing project, and Application Default
+    Credentials supply it otherwise.  ``None`` means "Vertex is not reachable
+    here", which callers treat as a degraded mode rather than an error, so the
+    offline package never requires cloud credentials to import or run.
+    """
+    if project := os.environ.get("GOOGLE_CLOUD_PROJECT"):
+        return project
+    try:
+        import google.auth
+        from google.auth.exceptions import GoogleAuthError
+    except ImportError:
+        return None
+    try:
+        _, project_id = google.auth.default()
+    except (GoogleAuthError, OSError):
+        # No ADC, or the metadata server is unreachable; both are "unavailable".
+        return None
+    return project_id or None
+
+
+class GeminiDeepResearchTransport:
+    """Small Interactions API adapter kept separate for deterministic tests.
+
+    Deep Research is reachable through two backends.  Vertex AI with Application
+    Default Credentials is preferred because it needs no long-lived secret and
+    matches the credentials the rest of the workflow already uses; a Gemini API
+    key stays supported for deployers who only have one.  An explicitly passed
+    ``api_key`` always wins so a caller can override the machine's ADC.
+    """
+
+    backend: str
+    project: str | None = None
+    location: str | None = None
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        *,
+        project: str | None = None,
+        location: str = DEEP_RESEARCH_LOCATION,
+    ):
+        resolved_project = None if api_key else (project or resolve_vertex_project())
+        resolved_key = api_key or (
+            None if resolved_project else os.environ.get("GEMINI_API_KEY")
+        )
+        if not resolved_project and not resolved_key:
+            raise RuntimeError(
+                "Gemini Deep Research needs either Vertex AI access or an API key, "
+                "and neither is available: no Application Default Credentials with "
+                "a project (set GOOGLE_CLOUD_PROJECT, or run "
+                "`gcloud auth application-default login`) and no GEMINI_API_KEY."
+            )
+
         from google import genai
 
-        resolved_key = api_key or os.environ.get("GEMINI_API_KEY")
-        if not resolved_key:
-            raise RuntimeError("GEMINI_API_KEY is required for Gemini Deep Research.")
-        self._client = genai.Client(api_key=resolved_key)
+        if resolved_project:
+            self.backend = "vertex"
+            self.project = resolved_project
+            self.location = location
+            self._client = genai.Client(
+                vertexai=True, project=resolved_project, location=location
+            )
+        else:
+            self.backend = "api_key"
+            self._client = genai.Client(api_key=resolved_key)
 
     def start(self, *, prompt: str, pass_number: int, session_id: str) -> dict:
         interaction = self._client.interactions.create(
@@ -147,13 +239,22 @@ class GeminiEvidenceNormalizer:
 
     model_id = "gemini-3.1-pro-preview"
 
-    def __init__(self):
+    def __init__(self, project: str | None = None):
         from google import genai
 
+        # Application Default Credentials often carry the project without
+        # GOOGLE_CLOUD_PROJECT being exported, and passing project=None here
+        # raises inside google-genai instead of degrading gracefully.
+        resolved_project = project or resolve_vertex_project()
+        if not resolved_project:
+            raise RuntimeError(
+                "Evidence normalization needs a Vertex AI project: set "
+                "GOOGLE_CLOUD_PROJECT or configure Application Default Credentials."
+            )
         self._client = genai.Client(
             vertexai=True,
-            project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
-            location="global",
+            project=resolved_project,
+            location=DEEP_RESEARCH_LOCATION,
         )
 
     def __call__(self, prompt: str) -> str:
@@ -339,25 +440,370 @@ def canonicalize_url(url: str) -> str:
     )
 
 
+async def resolve_grounding_urls(urls, *, client, timeout: float = 10.0) -> list[str]:
+    """Follow search-grounding redirects to the documents they actually open.
+
+    Grounding metadata never names a source directly. It hands back an opaque
+    redirector, and a live run showed exactly what that costs downstream: told
+    not to cite a link that expires and names no document, the discovery agent
+    fell back to citing bare domains -- "researchgate.net" -- and the verifier
+    then marked every one of them inaccessible, because a domain is not a
+    document. Neither agent was wrong; they had nothing better to work with.
+
+    Following the redirect here is what gives them something better. One HEAD
+    per link, in parallel, and the publisher URL comes back. A redirect that
+    cannot be followed is dropped rather than passed on: offering a locator
+    that resolves to nothing is the failure this exists to prevent.
+    """
+    ordered = [url for url in urls]
+    if not ordered:
+        return []
+
+    async def _follow(url: str) -> str | None:
+        if GROUNDING_REDIRECT_MARKER not in url:
+            return url
+        try:
+            response = await client.head(url, follow_redirects=True, timeout=timeout)
+        except Exception:
+            return None
+        final = str(response.url)
+        return None if GROUNDING_REDIRECT_MARKER in final else final
+
+    followed = await asyncio.gather(*(_follow(url) for url in ordered))
+    return list(dict.fromkeys(url for url in followed if url))
+
+
+def names_a_document(url: str) -> bool:
+    """Whether a locator reaches a document rather than a site or a redirector.
+
+    A bare domain is the failure this catches. It looks like a citation, it
+    survives every schema check a URL field can impose, and it names nothing: a
+    reader given ``researchgate.net`` has been told which website to search, not
+    which paper to read. Discovery is asked in its contract not to emit one, and
+    a live run showed it doing so anyway when the grounding metadata gave it
+    nothing better, so the rule is enforced here rather than requested there.
+    """
+    if not url.startswith(("http://", "https://")):
+        return False
+    if GROUNDING_REDIRECT_MARKER in url:
+        return False
+    _, _, remainder = url.partition("://")
+    _, _, path = remainder.partition("/")
+    return bool(path.strip("/"))
+
+
+async def resolve_packet_locators(packet: EvidencePacket, *, client) -> EvidencePacket:
+    """Replace each redirector in a packet with the document it opens.
+
+    The redirect was already being followed, but a stage too late to matter: the
+    resolved list was appended to the specialist's answer as a trailing note,
+    after the specialist had finished writing the packet, so what each source
+    actually carried was still the redirector. A live run put twenty-seven of
+    those in a corpus of forty-one, and the guard below correctly refused every
+    one of them -- forty-one sources found, fourteen a reader could open.
+
+    Resolving here fixes the record rather than the report. Each link is followed
+    on its own, concurrently, because the bulk helper drops what it cannot follow
+    and a shortened list cannot be lined up with its input by position. A
+    redirect that will not follow is left exactly as it is: it is honestly what
+    the search returned, and the guard below will say so.
+    """
+    followed = await _followed_redirects(
+        (source.url for source in packet.sources), client=client
+    )
+    if not followed:
+        return packet
+    updated = packet.model_copy(deep=True)
+    for source in updated.sources:
+        replacement = followed.get(source.url)
+        if replacement:
+            source.url = replacement
+    return updated
+
+
+async def resolve_manifest_locators(
+    manifest: DiscoveryManifest, *, client
+) -> DiscoveryManifest:
+    """Replace each redirector among a manifest's leads with the document it opens.
+
+    Deep Research reports its sources through the same grounding redirector search
+    does, and the fix above was wired only into the search path. A live three-pass
+    run therefore discovered ninety leads of which not one named a document, the
+    corpus built from them carried nine redirectors, and the guard below downgraded
+    every one -- a paid run whose reference list said "no link to this source was
+    recorded" nine times. Resolving the manifest first is what fixes the corpus
+    too: the packet is written from these leads.
+    """
+    followed = await _followed_redirects(
+        (lead.canonical_url for lead in manifest.source_leads), client=client
+    )
+    if not followed:
+        return manifest
+    updated = manifest.model_copy(deep=True)
+    for lead in updated.source_leads:
+        replacement = followed.get(lead.canonical_url)
+        if replacement:
+            lead.canonical_url = replacement
+    return updated
+
+
+async def _followed_redirects(urls, *, client) -> dict[str, str]:
+    """Where each distinct redirector among ``urls`` leads, omitting those that do not.
+
+    Each link is followed on its own, concurrently, because the bulk helper drops
+    what it cannot follow and a shortened list cannot be lined up with its input by
+    position.
+    """
+    pending = list(
+        dict.fromkeys(url for url in urls if GROUNDING_REDIRECT_MARKER in url)
+    )
+    if not pending:
+        return {}
+
+    async def _one(url: str) -> tuple[str, str | None]:
+        opened = await resolve_grounding_urls([url], client=client)
+        return url, opened[0] if opened else None
+
+    return {
+        url: opened
+        for url, opened in await asyncio.gather(*map(_one, pending))
+        if opened
+    }
+
+
+def downgrade_unlocatable_sources(packet: EvidencePacket) -> EvidencePacket:
+    """Refuse a verified status to any source whose locator names no document.
+
+    Verification means someone opened the document and found the claim at the
+    location they recorded. That is not a thing anyone can have done with a
+    publisher's front page, so a packet asserting it is asserting something
+    impossible -- and nothing downstream can tell that entry from a real one,
+    because all the report reads is the status field.
+
+    Downgraded rather than dropped: the search did find something, and deleting
+    the record hides the gap instead of reporting it. The status becomes
+    ``inaccessible``, which is what it is, and the packet says why in its
+    limitations so the loss is visible in the report and not only in the diff.
+    """
+    unlocatable = {
+        source.id
+        for source in packet.sources
+        if not names_a_document(source.url)
+        and source.verification_status in {"verified", "corrected"}
+    }
+    if not unlocatable:
+        return packet
+    downgraded = packet.model_copy(deep=True)
+    for source in downgraded.sources:
+        if source.id in unlocatable:
+            source.verification_status = "inaccessible"
+    for claim in downgraded.claims:
+        # A claim is only as verified as the document it rests on. Leaving one
+        # verified under a source that is not would put the strongest wording in
+        # the report on the weakest footing in the corpus.
+        if claim.source_id in unlocatable and claim.verification_status in {
+            "verified",
+            "corrected",
+        }:
+            claim.verification_status = "inaccessible"
+    downgraded.limitations.append(
+        f"{len(unlocatable)} source"
+        + ("" if len(unlocatable) == 1 else "s")
+        + " reported as verified named a website rather than a document, so "
+        + ("it was" if len(unlocatable) == 1 else "they were")
+        + " recorded as inaccessible instead: a locator that reaches no document "
+        "cannot have been checked against one."
+    )
+    return downgraded
+
+
+@dataclass(frozen=True)
+class DiscoveryAngle:
+    """One sub-search of a decomposed discovery pass."""
+
+    key: str
+    brief: str
+
+
+def discovery_angles(plan: ResearchPlan) -> tuple[DiscoveryAngle, ...]:
+    """Break one research question into the searches that would answer it.
+
+    A single grounded search returns a single search's worth of literature, and
+    two live runs bear that out: the whole knowledge base was four sources and
+    six claims, every one of them supporting. That is not the model failing at
+    what it was asked. Nobody asked it for the contradicting study.
+
+    So the pass is decomposed. Each angle is a search a competent reviewer would
+    run before believing an answer, they are dispatched concurrently, and their
+    packets are merged. The facets come first because they are the axes coverage
+    is scored on, and the plan's own success criteria follow, because those are
+    what this particular question has to be able to show.
+    """
+    angles = [
+        DiscoveryAngle(
+            key=facet,
+            brief=f"Search specifically for {FACET_PHRASES[facet]}.",
+        )
+        for facet in EVIDENCE_FACETS
+    ]
+    angles.extend(
+        DiscoveryAngle(
+            key=f"criterion_{index}",
+            brief=(
+                "Search for the literature that would establish or refute this "
+                f"success criterion: {criterion}"
+            ),
+        )
+        for index, criterion in enumerate(plan.success_criteria[:3], start=1)
+    )
+    return tuple(angles[:MAX_DISCOVERY_ANGLES])
+
+
+def _unclaimed_id(preferred: str, used: set[str]) -> str:
+    """Keep the identifier the specialist chose unless another angle took it.
+
+    Renumbering everything would be simpler and worse. ``src_alumina`` says what
+    it is; ``src_003`` says where it landed in a merge, and the identifiers are
+    what a reader follows from a hypothesis back to the paper behind it. So the
+    original stands, and a collision -- two angles that each called something
+    ``src_1`` -- is the only thing that moves.
+    """
+    candidate, suffix = preferred, 2
+    while candidate in used:
+        candidate = f"{preferred}_{suffix}"
+        suffix += 1
+    used.add(candidate)
+    return candidate
+
+
+def merge_evidence_packets(
+    question: str, packets: list[EvidencePacket]
+) -> EvidencePacket:
+    """Fold the per-angle packets into the one corpus the stage hands on.
+
+    Two angles that find the same paper must not put it in the corpus twice, and
+    two that find different papers must not collide on an identifier: each
+    packet is written independently, so ``src_1`` in one has nothing to do with
+    ``src_1`` in the next. Sources are keyed on the canonical URL and the ids are
+    rewritten, with every claim's ``source_id`` following its source.
+    """
+    merged_sources: dict[str, SourceRecord] = {}
+    remapped: dict[tuple[int, str], str] = {}
+    used_ids: set[str] = set()
+    for index, packet in enumerate(packets):
+        for source in packet.sources:
+            try:
+                key = canonicalize_url(source.url)
+            except ValueError:
+                # An unusable locator is still a record of what the search saw.
+                # Keyed on its own text, so it neither collides nor merges.
+                key = source.url.strip().lower()
+            existing = merged_sources.get(key)
+            if existing is None:
+                copy = source.model_copy(deep=True)
+                copy.id = _unclaimed_id(source.id, used_ids)
+                copy.supports_claim_ids = []
+                merged_sources[key] = copy
+                remapped[(index, source.id)] = copy.id
+                continue
+            remapped[(index, source.id)] = existing.id
+            if not existing.title and source.title:
+                existing.title = source.title
+            if existing.source_type == "unknown":
+                existing.source_type = source.source_type
+
+    merged_claims: list[EvidenceClaim] = []
+    seen: set[str] = set()
+    for index, packet in enumerate(packets):
+        for claim in packet.claims:
+            fingerprint = " ".join(claim.claim.lower().split())
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            copy = claim.model_copy(deep=True)
+            copy.id = _unclaimed_id(claim.id, used_ids)
+            copy.source_id = remapped.get((index, claim.source_id or ""))
+            merged_claims.append(copy)
+
+    by_id = {source.id: source for source in merged_sources.values()}
+    for claim in merged_claims:
+        source = by_id.get(claim.source_id or "")
+        if source is not None:
+            source.supports_claim_ids.append(claim.id)
+
+    limitations: list[str] = []
+    for packet in packets:
+        limitations.extend(
+            item for item in packet.limitations if item not in limitations
+        )
+    return EvidencePacket(
+        question=question,
+        sources=list(merged_sources.values()),
+        claims=merged_claims,
+        limitations=limitations,
+    )
+
+
+def _content_text(value: Any) -> str:
+    """Flatten an Interactions content field into plain text.
+
+    Vertex returns ``steps[].content`` as a list of typed parts such as
+    ``{"type": "text", "text": ..., "annotations": [...]}`` while other shapes
+    return a bare string, so both are accepted rather than assumed.
+    """
+    if isinstance(value, str):
+        return value if value.strip() else ""
+    if isinstance(value, dict):
+        text = value.get("text")
+        return text if isinstance(text, str) and text.strip() else ""
+    if isinstance(value, list):
+        parts = [_content_text(item) for item in value]
+        return "\n".join(part for part in parts if part)
+    return ""
+
+
 def _extract_report(payload: dict) -> str:
-    if output := payload.get("output_text"):
-        return str(output)
+    """Return the final Deep Research report from either backend's payload."""
+    if text := _content_text(payload.get("output_text")):
+        return text
     for step in reversed(payload.get("steps") or []):
         if not isinstance(step, dict):
             continue
+        if step.get("type") in {"thought", "user_input"}:
+            # Reasoning summaries and the echoed prompt are not the report.
+            continue
         for key in ("content", "output", "result"):
-            value = step.get(key)
-            if isinstance(value, str) and value.strip():
-                return value
-            if isinstance(value, list):
-                texts = [
-                    str(item.get("text", ""))
-                    for item in value
-                    if isinstance(item, dict) and item.get("text")
-                ]
-                if texts:
-                    return "\n".join(texts)
+            if text := _content_text(step.get(key)):
+                return text
     return ""
+
+
+def _citation_titles(value: Any) -> dict[str, str]:
+    """Collect ``url_citation`` annotation titles keyed by their raw URL.
+
+    Vertex Deep Research cites with ``[cite: n]`` markers instead of inline
+    Markdown links, so the annotation list is the only place a cited locator
+    carries a human-readable title.  Without this, every Vertex-discovered lead
+    would be titled with the grounding-redirect hostname.
+    """
+    titles: dict[str, str] = {}
+    if isinstance(value, dict):
+        url = value.get("url") or value.get("uri")
+        title = value.get("title")
+        if (
+            value.get("type") == "url_citation"
+            and isinstance(url, str)
+            and url.startswith(("http://", "https://"))
+            and isinstance(title, str)
+            and title.strip()
+        ):
+            titles[url] = " ".join(title.split())[:300]
+        for child in value.values():
+            titles.update(_citation_titles(child))
+    elif isinstance(value, list):
+        for child in value:
+            titles.update(_citation_titles(child))
+    return titles
 
 
 def _payload_urls(value: Any) -> list[str]:
@@ -383,8 +829,12 @@ def _source_leads(
     raw_reference: str,
     *,
     citation_urls: list[str] | None = None,
+    citation_titles: dict[str, str] | None = None,
 ) -> list[SourceLead]:
-    titles = {url: title.strip() for title, url in _MARKDOWN_LINK_RE.findall(report)}
+    titles = dict(citation_titles or {})
+    titles.update(
+        {url: title.strip() for title, url in _MARKDOWN_LINK_RE.findall(report)}
+    )
     urls = [*titles, *_URL_RE.findall(report), *(citation_urls or [])]
     by_url: dict[str, SourceLead] = {}
     for raw_url in urls:
@@ -578,7 +1028,10 @@ def audit_coverage(
         ResearchGap(
             direction="Evidence landscape",
             facet=facet,
-            description=f"No adequate {facet.replace('_', ' ')} evidence was discovered.",
+            description=(
+                "The discovery pass found no adequate "
+                f"{FACET_PHRASES.get(facet, facet.replace('_', ' '))}."
+            ),
             decision_impact=(
                 "high"
                 if facet in {"contradictory", "negative_null", "methods"}
@@ -636,7 +1089,10 @@ def build_research_prompt(
     previous_manifest: DiscoveryManifest | None = None,
 ) -> str:
     coverage_requirements = "\n".join(
-        f"- {facet.replace('_', ' ')}" for facet in EVIDENCE_FACETS
+        # The facet token is what a statement must be tagged with, so it is given
+        # exactly as the contract spells it and glossed rather than prettified.
+        f"- {facet}: {FACET_PHRASES[facet]}"
+        for facet in EVIDENCE_FACETS
     )
     if pass_number == 1 or previous_manifest is None:
         focus = (
@@ -826,6 +1282,7 @@ class IterativeEvidenceDiscovery:
                 pass_number,
                 run.raw_artifact_reference,
                 citation_urls=_payload_urls(payload.get("steps") or []),
+                citation_titles=_citation_titles(payload.get("steps") or []),
             )
             statement_ids_by_url: dict[str, list[str]] = {}
             for statement in narrative.statements:

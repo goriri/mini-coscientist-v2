@@ -8,11 +8,14 @@ import os
 import re
 from pathlib import Path
 
+import httpx
+
 from .agents import (
     SPECIALISTS,
     SPECIALISTS_BY_STAGE,
     DeterministicProvider,
     Provider,
+    bind_provider_model,
 )
 from .collaboration import LocalA2ATaskBus
 from .dossier import compile_dossier
@@ -23,9 +26,22 @@ from .evidence import (
     GeminiEvidenceNormalizer,
     IterativeEvidenceDiscovery,
     RegistryMetadataEnricher,
+    discovery_angles,
+    downgrade_unlocatable_sources,
+    merge_evidence_packets,
+    merge_leads,
+    resolve_manifest_locators,
+    resolve_packet_locators,
+)
+from .governance import (
+    adjudicated_review_ids,
+    open_blockers,
+    record_adjudication,
+    withdraw_candidate,
 )
 from .ledger import ResearchLedger
 from .methods import classify_research_mode, method_requirements
+from .model_catalog import DEFAULT_LANGUAGE, DEFAULT_MODEL
 from .models import (
     STAGES,
     ApprovalMode,
@@ -37,10 +53,12 @@ from .models import (
     DeepResearchRun,
     DiscoveryManifest,
     EvidencePacket,
+    GovernanceAdjudication,
     HumanDecision,
     ResearchPlan,
-    ReviewSet,
     Session,
+    SourceLead,
+    utc_now,
 )
 from .parity import detect_input_requirements, unresolved_blockers
 
@@ -49,6 +67,27 @@ WORKFLOW_STAGES_V1 = tuple(
 )
 WORKFLOW_STAGES = tuple(stage for stage in STAGES if stage != "report")
 MILESTONE_STAGES = frozenset({"scope", "rank", "evolve", "meta_review"})
+
+
+def _deep_research_enabled() -> bool:
+    """Whether this process may start a live Deep Research interaction.
+
+    Opt-in, not opt-out. A pass costs roughly three dollars, runs for minutes,
+    and cannot be cancelled -- Vertex answers ``interactions.cancel()`` with
+    501 UNIMPLEMENTED and refuses to delete an unfinished one. Application
+    Default Credentials are ambient on developer machines, in CI, and on Cloud
+    Run, so a default of "on" means any script that merely imports and runs the
+    workflow spends money before anyone reads its output. Defaulting off makes
+    the worst accident a missing evidence packet, which the discovery manifest
+    reports as ``deep_research_unavailable`` and the evidence gate refuses to
+    pass silently.
+    """
+    return os.environ.get("COSCIENTIST_DEEP_RESEARCH", "off").lower() in {
+        "on",
+        "true",
+        "1",
+        "yes",
+    }
 
 
 class CoScientistWorkflow:
@@ -67,6 +106,8 @@ class CoScientistWorkflow:
         approval_mode: ApprovalMode | str | None = None,
         approval_profile: ApprovalProfile | str | None = None,
         research_mode: str | None = None,
+        model: str | None = None,
+        language: str | None = None,
         workflow_version: int = 2,
         ledger: ResearchLedger | None = None,
         evidence_discovery: IterativeEvidenceDiscovery | None = None,
@@ -95,14 +136,35 @@ class CoScientistWorkflow:
                 approval_mode=resolved_mode,
                 approval_profile=resolved_profile,
                 research_mode=research_mode or classify_research_mode(question),
+                model=model or DEFAULT_MODEL,
+                language=language or DEFAULT_LANGUAGE,
                 workflow_version=workflow_version,
                 input_requirements=detect_input_requirements(question),
             )
         else:
             self.session = session
+            # A resumed run keeps the model and language it was configured with.
+            # Overriding them here would let a caller finish on one model a run
+            # that was three stages into another, and the dossier would report a
+            # single configuration for both halves.
+            if model is not None and model != self.session.model:
+                raise ValueError(
+                    f"This session already runs on {self.session.model}; it "
+                    f"cannot be resumed on {model}."
+                )
+            if language is not None and language != self.session.language:
+                raise ValueError(
+                    f"This session already reports in {self.session.language}; "
+                    f"it cannot be resumed in {language}."
+                )
         if not self.session.question:
             raise ValueError("A research question is required.")
         method_requirements(self.session.research_mode)
+        # The session is the authority on which model this run uses. A caller
+        # resuming one has to construct a provider before it can read the
+        # session that answers the question, so the answer is applied here
+        # rather than left to every call site to remember.
+        bind_provider_model(self.provider, self.session.model)
         self.task_bus = LocalA2ATaskBus(SPECIALISTS, self.provider)
         if session is None:
             event = self._event(
@@ -205,6 +267,11 @@ class CoScientistWorkflow:
             payload=payload or {},
         )
         self.session.events.append(event)
+        # Nothing had ever written this field after the session was constructed, so a
+        # dossier's "Last updated" was its start time to the microsecond -- on a run
+        # that took twelve minutes -- and anyone sorting saved sessions by it was
+        # sorting them by when they began.
+        self.session.updated_at = event.created_at
         return event
 
     def _persist(self, event: AuditEvent | None = None) -> None:
@@ -302,7 +369,23 @@ class CoScientistWorkflow:
         plan = ResearchPlan.model_validate(scope.payload)
 
         controller = self.evidence_discovery
-        if controller is None and os.environ.get("GEMINI_API_KEY"):
+        transport: GeminiDeepResearchTransport | None = None
+        transport_error = ""
+        if controller is None and _deep_research_enabled():
+            # Deep Research runs on Vertex AI with Application Default Credentials
+            # or on an API key; the transport decides which. Construction failure
+            # is a degraded mode, never a crashed run, so the workflow can still
+            # reach the evidence gate and report why nothing was discovered.
+            try:
+                transport = GeminiDeepResearchTransport()
+            except Exception as exc:  # any client failure degrades, never crashes
+                transport_error = str(exc)
+        elif controller is None:
+            transport_error = (
+                "Deep Research is off. It is billable and cannot be cancelled "
+                "once started, so it is opt-in: set COSCIENTIST_DEEP_RESEARCH=on."
+            )
+        if controller is None and transport is not None:
             repeat_enabled = (
                 os.environ.get("EVIDENCE_REPEAT_PASSES", "false").lower() == "true"
             )
@@ -310,7 +393,7 @@ class CoScientistWorkflow:
                 os.environ.get("EVIDENCE_ENABLE_PASS_3", "false").lower() == "true"
             )
             controller = IterativeEvidenceDiscovery(
-                GeminiDeepResearchTransport(),
+                transport,
                 EvidenceArtifactStore(),
                 max_passes=(
                     3
@@ -328,28 +411,12 @@ class CoScientistWorkflow:
                 ),
             )
         if controller is None:
-            manifest = DiscoveryManifest(
-                question=self.session.question,
-                runs=[
-                    DeepResearchRun(
-                        pass_number=1,
-                        status="failed",
-                        error="GEMINI_API_KEY is not configured for Deep Research.",
-                    )
-                ],
-                convergence_reason="deep_research_unavailable",
-            )
-            discovery = Artifact(
-                stage="evidence",
-                agent="deep_research_discovery",
-                artifact_type="specialist_output",
-                content=self._evidence_summary(manifest),
+            manifest, discovery = await self._search_grounded_discovery(
+                plan,
+                transport_error,
                 feedback=feedback,
-                producer_model="unavailable",
-                schema_name="DiscoveryManifest",
-                payload=manifest.model_dump(mode="json"),
+                revision=revision,
             )
-            self.session.artifacts.append(discovery)
         else:
             discovery = next(
                 (
@@ -382,20 +449,27 @@ class CoScientistWorkflow:
                 self._persist()
 
             def persist_manifest(updated: DiscoveryManifest) -> None:
-                discovery.payload = updated.model_dump(mode="json")
-                discovery.content = self._evidence_summary(updated)
+                discovery.revise(
+                    self._evidence_summary(updated), updated.model_dump(mode="json")
+                )
                 self._persist()
+
+            normalizer = None
+            if isinstance(controller.transport, GeminiDeepResearchTransport):
+                try:
+                    normalizer = GeminiEvidenceNormalizer()
+                except Exception:
+                    # Deterministic paragraph extraction is the documented
+                    # fallback; losing the model normalizer must not discard a
+                    # report that Deep Research already paid to produce.
+                    normalizer = None
 
             manifest = await asyncio.to_thread(
                 controller.run,
                 self.session,
                 plan,
                 manifest=existing_manifest,
-                normalizer=(
-                    GeminiEvidenceNormalizer()
-                    if isinstance(controller.transport, GeminiDeepResearchTransport)
-                    else None
-                ),
+                normalizer=normalizer,
                 manifest_callback=persist_manifest,
             )
             if any(
@@ -405,10 +479,13 @@ class CoScientistWorkflow:
                 raise EvidenceStillRunning(
                     "Deep Research interaction is still running."
                 )
+            # Deep Research names its sources with the same grounding redirector
+            # search uses. They are followed here, before the manifest is
+            # recorded, so the corpus written from these leads names documents.
+            manifest = await self._resolved_lead_locators(manifest)
 
         summary = self._evidence_summary(manifest)
-        discovery.content = summary
-        discovery.payload = manifest.model_dump(mode="json")
+        discovery.revise(summary, manifest.model_dump(mode="json"))
         output_ids = [discovery.id]
 
         # Verification sees the immutable discovery manifest, but discovery itself
@@ -418,6 +495,18 @@ class CoScientistWorkflow:
             item for item in temporary.artifacts if item.id == discovery.id
         )
         temp_discovery.status = ArtifactStatus.ACCEPTED
+        # The manifest names the sources; the corpus carries what discovery said
+        # about them. A verifier shown only the manifest has titles and URLs and
+        # no claim to check, which is how a stage that discovered fifty-three
+        # leads handed on a packet of five.
+        for item in temporary.artifacts:
+            if (
+                item.stage == "evidence"
+                and item.agent == "evidence_discovery"
+                and item.schema_name == "EvidencePacket"
+                and item.status == ArtifactStatus.DRAFT
+            ):
+                item.status = ArtifactStatus.ACCEPTED
         if manifest.enrichment_requests:
             enrichment_definition = tuple(
                 item
@@ -458,6 +547,17 @@ class CoScientistWorkflow:
         )
         for result in results:
             self.session.tasks.append(result.task)
+            if result.artifact.schema_name == "EvidencePacket" and (
+                result.artifact.payload
+            ):
+                # A status is a claim about an act, and "verified" claims someone
+                # opened the document. Nobody can have opened a bare domain, so
+                # the assertion is corrected here rather than trusted: the report
+                # downstream reads the status and nothing else.
+                checked = downgrade_unlocatable_sources(
+                    EvidencePacket.model_validate(result.artifact.payload)
+                )
+                result.artifact.payload = checked.model_dump(mode="json")
             self.session.artifacts.append(result.artifact)
             output_ids.append(result.artifact.id)
 
@@ -488,22 +588,249 @@ class CoScientistWorkflow:
         )
         return draft
 
+    async def _search_grounded_discovery(
+        self,
+        plan: ResearchPlan,
+        transport_error: str,
+        *,
+        feedback: str,
+        revision: int,
+    ) -> tuple[DiscoveryManifest, Artifact]:
+        """Discover sources with grounded search when Deep Research is off.
+
+        Deep Research is billable and opt-in, so most runs never have it. The
+        branch this replaces answered that by writing an empty manifest, and the
+        entire evidence stage then collapsed: nothing discovered, nothing to
+        verify, and -- correctly, but uselessly -- not one hypothesis downstream
+        able to cite anything. The grounded-search discovery specialist is
+        already built and wired for gap enrichment, and DeepMind's own system
+        searches the literature rather than commissioning a research report, so
+        it does the broad pass instead of leaving the stage empty.
+
+        What it returns is weaker than a Deep Research report, and the manifest
+        says so: the attempted pass is recorded with the reason it did not run,
+        every lead carries ``provider="google_search"``, coverage is unscored,
+        and nothing is verified here. Verification runs next, against material
+        that now exists.
+        """
+        existing = next(
+            (
+                item
+                for item in reversed(self.session.artifacts)
+                if item.stage == "evidence"
+                and item.agent == "deep_research_discovery"
+                and item.schema_name == "DiscoveryManifest"
+                and item.status == ArtifactStatus.DRAFT
+                and item.payload
+            ),
+            None,
+        )
+        if existing is not None:
+            manifest = DiscoveryManifest.model_validate(existing.payload)
+            if manifest.source_leads:
+                # Discovery that already happened -- a paid Deep Research pass
+                # earlier in this session, or a previous revision of this stage
+                # -- must not be deleted just because the switch is off now.
+                return manifest, existing
+
+        definition = tuple(
+            item
+            for item in SPECIALISTS_BY_STAGE["evidence"]
+            if item.role == "evidence_discovery"
+        )
+        directions = "\n".join(f"- {item}" for item in plan.success_criteria)
+        angles = discovery_angles(plan)
+        shared = (
+            "PRIMARY DISCOVERY PASS. Deep Research is unavailable for this "
+            "session, so nothing has searched the literature yet and you are "
+            "not enriching anyone's gaps. Return a typed EvidencePacket whose "
+            "claims each name the source they came from. Everything stays "
+            "discovered_unverified: you have read search results, not sources. "
+            "A verification specialist runs next.\n\n"
+            f"Research question: {self.session.question}\n"
+            f"What the plan must be able to show:\n{directions}"
+        )
+        # One search per angle, dispatched together. The single broad query this
+        # replaces asked for the mechanism, the studies for and against it,
+        # replications, negative results, retractions and the measurement
+        # standards all at once, and a live run answered it with four sources,
+        # every one of them supporting. Asked one at a time, each of those is a
+        # search that returns its own literature.
+        dispatched = await asyncio.gather(
+            *(
+                self.task_bus.dispatch_stage(
+                    self.session,
+                    definition,
+                    feedback=(
+                        f"{shared}\n\nSearch angle {index} of {len(angles)} "
+                        f"({angle.key}). {angle.brief} Stay on this angle: the "
+                        "other angles of this question are being searched in "
+                        "parallel, and duplicating them costs the pass its "
+                        f"breadth.\n\n{feedback}"
+                    ).strip(),
+                    revision=revision,
+                )
+                for index, angle in enumerate(angles, start=1)
+            )
+        )
+        results = [result for batch in dispatched for result in batch]
+        packets: list[EvidencePacket] = []
+        leads: list[SourceLead] = []
+        for result in results:
+            self.session.tasks.append(result.task)
+            if not result.artifact.payload:
+                self.session.artifacts.append(result.artifact)
+                continue
+            packet = EvidencePacket.model_validate(result.artifact.payload)
+            # Search grounding hands back a redirector, never a document. It is
+            # followed here, before the packet is recorded, so the artifact and
+            # every lead drawn from it name the paper rather than the link that
+            # points at it.
+            packet = await self._resolved_locators(packet)
+            result.artifact.payload = packet.model_dump(mode="json")
+            self.session.artifacts.append(result.artifact)
+            packets.append(packet)
+            leads = merge_leads(
+                leads,
+                [
+                    SourceLead(
+                        canonical_url=source.url,
+                        title=source.title,
+                        source_type=source.source_type,
+                        provider="google_search",
+                        originating_passes=[1],
+                        originating_statement_ids=list(source.supports_claim_ids),
+                        raw_artifact_reference=result.artifact.id,
+                    )
+                    for source in packet.sources
+                ],
+            )
+        corpus = self._merged_discovery_corpus(packets, results, feedback=feedback)
+        manifest = DiscoveryManifest(
+            discovery_angles=[angle.key for angle in angles],
+            question=self.session.question,
+            runs=[
+                DeepResearchRun(
+                    pass_number=1,
+                    status="failed",
+                    error=(
+                        transport_error
+                        or "Deep Research is not configured for this session."
+                    ),
+                    completed_at=utc_now(),
+                )
+            ],
+            source_leads=leads,
+            convergence_reason=(
+                "search_grounded_fallback" if leads else "deep_research_unavailable"
+            ),
+            verification_handoff_source_ids=[lead.id for lead in leads],
+            stored_interaction_notice=False,
+        )
+        discovery = Artifact(
+            stage="evidence",
+            agent="deep_research_discovery",
+            artifact_type="specialist_output",
+            content=self._evidence_summary(manifest),
+            feedback=feedback,
+            producer_model="google_search_grounding" if leads else "unavailable",
+            schema_name="DiscoveryManifest",
+            payload=manifest.model_dump(mode="json"),
+            input_artifact_ids=[result.artifact.id for result in results]
+            + ([corpus.id] if corpus is not None else []),
+        )
+        self.session.artifacts.append(discovery)
+        return manifest, discovery
+
+    async def _resolved_locators(self, packet: EvidencePacket) -> EvidencePacket:
+        """Follow the packet's redirectors, and carry on if the network will not.
+
+        A discovery pass that found real literature must not be lost because the
+        links to it could not be dereferenced. What cannot be followed stays a
+        redirector, and the verification stage records it as inaccessible.
+        """
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                return await resolve_packet_locators(packet, client=client)
+        except Exception:
+            return packet
+
+    async def _resolved_lead_locators(
+        self, manifest: DiscoveryManifest
+    ) -> DiscoveryManifest:
+        """The same for a Deep Research manifest, degrading the same way."""
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                return await resolve_manifest_locators(manifest, client=client)
+        except Exception:
+            return manifest
+
+    def _merged_discovery_corpus(
+        self,
+        packets: list[EvidencePacket],
+        results: list,
+        *,
+        feedback: str,
+    ) -> Artifact | None:
+        """Fold the per-angle packets into the one artifact verification reads.
+
+        Without this the angles are ten drafts with colliding identifiers, and
+        the verifier is handed the manifest instead -- a list of titles and URLs
+        with every claim discovery found stripped out of it. That is what the
+        stage used to do with its single packet, and it is why the verifier
+        re-invented a handful of claims rather than checking the ones the search
+        actually returned.
+
+        The angle artifacts are superseded rather than deleted: they are the
+        record of which search found what, and the appendix cites them.
+        """
+        if not packets:
+            return None
+        merged = merge_evidence_packets(self.session.question, packets)
+        corpus = Artifact(
+            stage="evidence",
+            agent="evidence_discovery",
+            artifact_type="specialist_output",
+            content=(
+                f"### Discovered corpus\n\n{len(merged.sources)} distinct sources "
+                f"and {len(merged.claims)} claims, merged from "
+                f"{len(packets)} search angles. Nothing here is verified."
+            ),
+            feedback=feedback,
+            producer_model=getattr(self.provider, "model_id", "unknown"),
+            schema_name="EvidencePacket",
+            payload=merged.model_dump(mode="json"),
+            input_artifact_ids=[result.artifact.id for result in results],
+        )
+        for result in results:
+            result.artifact.status = ArtifactStatus.SUPERSEDED
+        self.session.artifacts.append(corpus)
+        return corpus
+
     @staticmethod
     def _evidence_summary(manifest: DiscoveryManifest) -> str:
         latest = manifest.coverage_history[-1] if manifest.coverage_history else None
         coverage = f"{latest.weighted_score:.0%}" if latest else "not available"
         gaps = latest.gaps if latest else []
+        completed = len([run for run in manifest.runs if run.status == "completed"])
+        providers = sorted({lead.provider for lead in manifest.source_leads})
         lines = [
             "### Evidence Discovery",
             "",
-            f"- Deep Research passes: {len(manifest.runs)} of 3",
+            f"- Deep Research passes: {completed} completed of "
+            f"{len(manifest.runs)} attempted (limit 3)",
+            f"- Discovery provider: {', '.join(providers) or 'none'}",
             f"- Coverage: {coverage}",
             f"- Source leads: {len(manifest.source_leads)}",
             f"- Estimated cost: ${manifest.estimated_cost_usd:.2f}",
             f"- Stop reason: {manifest.convergence_reason or 'in progress'}",
             "- Status: discovered, not yet verified",
-            "- Stored interaction notice: Deep Research uses stored Gemini interactions.",
         ]
+        if manifest.stored_interaction_notice:
+            lines.append(
+                "- Stored interaction notice: Deep Research uses stored Gemini "
+                "interactions."
+            )
         if gaps:
             lines.extend(["", "#### Unresolved gaps"])
             lines.extend(f"- {gap.description}" for gap in gaps)
@@ -605,22 +932,24 @@ class CoScientistWorkflow:
                 "Every specialist artifact must be approved before the stage bundle."
             )
         if artifact.stage == "reflect":
-            governance_blockers = [
-                review
-                for item in self.session.artifacts
-                if item.id in artifact.input_artifact_ids
-                and item.agent == "ethics_safety_governance"
-                and item.schema_name == "ReviewSet"
-                for review in ReviewSet.model_validate(item.payload).reviews
-                if review.fatal_flaws
+            # Only findings nobody has answered still block. An adjudicated one
+            # has been withdrawn or explicitly accepted by a named person, and
+            # re-raising it would make the gate impossible to clear.
+            unanswered = [
+                blocker
+                for blocker in open_blockers(self.session)
+                if blocker.artifact_id in artifact.input_artifact_ids
             ]
-            if governance_blockers:
+            if unanswered:
                 self.session.status = "governance_blocked"
                 event = self._event(
                     "governance_blocked",
                     "supervisor",
                     payload={
-                        "review_ids": [review.id for review in governance_blockers]
+                        "review_ids": [blocker.review_id for blocker in unanswered],
+                        "candidate_ids": [
+                            blocker.candidate_id for blocker in unanswered
+                        ],
                     },
                 )
                 self._persist(event)
@@ -750,6 +1079,81 @@ class CoScientistWorkflow:
             )
         )
 
+    def adjudicate_governance(
+        self,
+        review_id: str,
+        resolution: str,
+        *,
+        adjudicator: str,
+        justification: str,
+    ) -> GovernanceAdjudication:
+        """Answer one fatal governance finding so the session can move again.
+
+        Deliberately one finding at a time. A single command that cleared every
+        block at once would let one sentence of justification stand for several
+        unrelated hazards, and the point of the record is that each flaw was
+        read by somebody who then said what they were doing about it.
+        """
+        if self.session.status != "governance_blocked":
+            raise ValueError(
+                "Governance adjudication applies only to a blocked session."
+            )
+        if resolution not in {"withdraw", "override"}:
+            raise ValueError(
+                f"Unknown governance resolution: {resolution!r}. "
+                "Use 'withdraw' to drop the hypothesis or 'override' to accept "
+                "the flaw on the record."
+            )
+        blocker = next(
+            (
+                item
+                for item in open_blockers(self.session)
+                if item.review_id == review_id
+            ),
+            None,
+        )
+        if blocker is None:
+            if review_id in adjudicated_review_ids(self.session):
+                raise ValueError(f"Review {review_id} has already been adjudicated.")
+            open_ids = ", ".join(item.review_id for item in open_blockers(self.session))
+            raise ValueError(
+                f"Review {review_id} is not an open governance blocker. "
+                f"Open blockers: {open_ids or 'none'}."
+            )
+
+        replacement = None
+        if resolution == "withdraw":
+            # Raised out of withdraw_candidate before anything is recorded, so a
+            # refused withdrawal leaves the session exactly as it was.
+            replacement = withdraw_candidate(self.session, blocker.candidate_id)
+        adjudication = record_adjudication(
+            self.session,
+            blocker,
+            resolution=resolution,
+            adjudicator=adjudicator,
+            justification=justification,
+        )
+
+        remaining = open_blockers(self.session)
+        if not remaining:
+            self.session.status = "active"
+        event = self._event(
+            "governance_adjudicated",
+            adjudicator,
+            payload={
+                "review_id": review_id,
+                "candidate_id": blocker.candidate_id,
+                "resolution": resolution,
+                "justification": justification,
+                "revised_population_artifact_id": (
+                    replacement.id if replacement else None
+                ),
+                "remaining_blocker_ids": [item.review_id for item in remaining],
+            },
+        )
+        self._persist(event)
+        return adjudication
+
     def retry_evidence(self, *, actor: str = "researcher") -> None:
         if self.stage != "evidence":
             raise ValueError("Evidence retry is available only at Evidence.")
@@ -862,9 +1266,25 @@ class CoScientistWorkflow:
         self._persist(event)
         return edited
 
+    STOPPABLE_STATUSES = frozenset(
+        {"active", "input_required", "evidence_required", "governance_blocked"}
+    )
+    """States a human can still walk away from, as opposed to end states."""
+
     def stop(self, *, actor: str = "researcher") -> None:
-        if self.session.status != "active":
+        """Record that a human ended the session, including at a gate.
+
+        This returned silently unless the session was active, so the two states
+        an operator is most likely to walk away from -- an unmet evidence gate,
+        an open fatal safety finding -- recorded nothing at all: no decision, no
+        audit event, and a saved status still reading as though the run were
+        waiting for an answer. The terminal said "session stopped" and the file
+        disagreed. What was left unanswered is now part of the record.
+        """
+        if self.session.status not in self.STOPPABLE_STATUSES:
             return
+        halted_at = self.session.status
+        unanswered = [blocker.review_id for blocker in open_blockers(self.session)]
         decision = HumanDecision(
             action=DecisionAction.STOP,
             stage=self.stage,
@@ -874,7 +1294,13 @@ class CoScientistWorkflow:
         self.session.decisions.append(decision)
         self.session.status = "stopped_by_researcher"
         event = self._event(
-            "session_stopped", actor, payload={"decision_id": decision.id}
+            "session_stopped",
+            actor,
+            payload={
+                "decision_id": decision.id,
+                "halted_at": halted_at,
+                "unanswered_governance_findings": unanswered,
+            },
         )
         self._persist(event)
 

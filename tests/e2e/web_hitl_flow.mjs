@@ -31,6 +31,10 @@ if (startServer) {
         ...process.env,
         APP_URL: baseUrl,
         INTEGRATION_TEST: "TRUE",
+        // Subprocess: no pytest fixture strips its credentials, so the Deep
+        // Research switch has to be thrown here or a browser test bills a
+        // real research pass.
+        COSCIENTIST_DEEP_RESEARCH: "off",
         COSCIENTIST_STATE_DIR: join(profile, "state"),
         UV_CACHE_DIR: "/tmp/coscientist-uv-cache",
       },
@@ -71,7 +75,9 @@ async function waitForServer() {
 async function waitForDebugging() {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     try {
-      const response = await fetch(`http://127.0.0.1:${debuggingPort}/json/version`);
+      const response = await fetch(
+        `http://127.0.0.1:${debuggingPort}/json/version`,
+      );
       if (response.ok) return;
     } catch {
       // Chrome is still starting.
@@ -120,13 +126,21 @@ class Cdp {
       returnByValue: true,
     });
     if (result.exceptionDetails) {
-      throw new Error(result.exceptionDetails.text || "Browser evaluation failed.");
+      throw new Error(
+        result.exceptionDetails.text || "Browser evaluation failed.",
+      );
     }
     return result.result.value;
   }
 }
 
+// Against the deployed service every stage is a real model call rather than
+// the integration stub, so the local budgets are an order of magnitude short.
+// The waits scale together; the assertions they guard do not change.
+const timeoutScale = Number(process.env.COSCIENTIST_E2E_TIMEOUT_SCALE || "1");
+
 async function waitFor(cdp, expression, message, timeout = 15000) {
+  timeout *= timeoutScale;
   const started = Date.now();
   while (Date.now() - started < timeout) {
     if (await cdp.evaluate(expression)) return;
@@ -186,7 +200,10 @@ try {
       return document.querySelector("#promptInput").value;
     });
   })()`);
-  assert(samplePrompts.length === 3, "Exactly three drug-research samples are required.");
+  assert(
+    samplePrompts.length === 3,
+    "Exactly three drug-research samples are required.",
+  );
   assert(
     samplePrompts[0].includes("KRAS inhibitors") &&
       samplePrompts[1].includes("GLP-1-based") &&
@@ -226,7 +243,10 @@ try {
       afterTop: area.scrollTop,
     };
   })()`);
-  assert(stablePolling.sameNode, "Polling replaced the Specialists working card.");
+  assert(
+    stablePolling.sameNode,
+    "Polling replaced the Specialists working card.",
+  );
   assert(
     stablePolling.value === "draft question preserved during polling" &&
       stablePolling.focused &&
@@ -314,7 +334,10 @@ try {
         technicalClosed: !document.querySelector('[data-presentation-stage="rank"] .technical-details').open,
         rawJsonVisible: document.querySelector('[data-presentation-stage="rank"] .message-copy pre:not([hidden])') !== null,
       }))()`);
-      assert(rankingPresentation.rankingRows === 8, "Rank must show all candidates.");
+      assert(
+        rankingPresentation.rankingRows === 8,
+        "Rank must show all candidates.",
+      );
       assert(
         rankingPresentation.candidateCards === 8 &&
           rankingPresentation.shortlistCards === 4,
@@ -370,7 +393,9 @@ try {
   assert(
     reportExports[0].signature[0] === 80 &&
       reportExports[0].signature[1] === 75 &&
-      reportExports[1].signature.map((item) => String.fromCharCode(item)).join("") === "%PDF-" &&
+      reportExports[1].signature
+        .map((item) => String.fromCharCode(item))
+        .join("") === "%PDF-" &&
       reportExports[2].type.includes("text/markdown"),
     "DOCX, PDF, or Markdown export signatures were invalid.",
   );
@@ -396,13 +421,22 @@ try {
       jumpVisible: !document.querySelector("#jumpLatest").hidden,
     };
   })()`);
-  assert(scrollMetrics.top === 0, "The conversation could not scroll to the top.");
-  assert(scrollMetrics.bottom > 0, "The conversation could not scroll to the bottom.");
+  assert(
+    scrollMetrics.top === 0,
+    "The conversation could not scroll to the top.",
+  );
+  assert(
+    scrollMetrics.bottom > 0,
+    "The conversation could not scroll to the bottom.",
+  );
   assert(
     Math.abs(scrollMetrics.bottom - scrollMetrics.max) <= 2,
     "The conversation did not reach its actual bottom.",
   );
-  assert(scrollMetrics.jumpVisible, "The Latest update affordance should appear.");
+  assert(
+    scrollMetrics.jumpVisible,
+    "The Latest update affordance should appear.",
+  );
 
   await cdp.evaluate("document.querySelector('#jumpLatest').click()");
   await waitFor(
@@ -470,9 +504,18 @@ try {
     composerDisabled: document.querySelector("#promptInput").disabled,
     scopeViewing: document.querySelector('.stage-nav li[data-stage="scope"]').classList.contains("viewing"),
   }))()`);
-  assert(previewState.title.includes("Scope"), "The stage preview has the wrong title.");
-  assert(previewState.composerDisabled, "Historical output must not be editable.");
-  assert(previewState.scopeViewing, "The previewed stage must be visually distinct.");
+  assert(
+    previewState.title.includes("Scope"),
+    "The stage preview has the wrong title.",
+  );
+  assert(
+    previewState.composerDisabled,
+    "Historical output must not be editable.",
+  );
+  assert(
+    previewState.scopeViewing,
+    "The previewed stage must be visually distinct.",
+  );
   await cdp.evaluate("document.querySelector('[data-return-current]').click()");
   await waitFor(
     cdp,
@@ -516,7 +559,10 @@ try {
     Math.abs(mobileLayout.workspace - mobileLayout.viewport) <= 1,
     "The mobile workspace must remain bounded to the dynamic viewport.",
   );
-  assert(mobileLayout.scrollable, "The conversation must remain scrollable on mobile.");
+  assert(
+    mobileLayout.scrollable,
+    "The conversation must remain scrollable on mobile.",
+  );
   assert(
     mobileLayout.pageScroll === 0 && Math.abs(mobileLayout.topbarTop) <= 1,
     "The mobile page shell must not scroll away from its fixed workspace.",
@@ -537,21 +583,30 @@ try {
       viewport: innerWidth,
     };
   })()`);
-  assert(mobileHistory.cards === 2, "The mobile drawer lost browser session history.");
   assert(
-    mobileHistory.left >= 0 && mobileHistory.right <= mobileHistory.viewport + 1,
+    mobileHistory.cards === 2,
+    "The mobile drawer lost browser session history.",
+  );
+  assert(
+    mobileHistory.left >= 0 &&
+      mobileHistory.right <= mobileHistory.viewport + 1,
     "The mobile history drawer must fit inside the viewport.",
   );
   await cdp.evaluate("document.querySelector('#closeHistory').click()");
 
-  await cdp.call("Page.captureScreenshot", {
-    format: "png",
-    fromSurface: true,
-    captureBeyondViewport: false,
-  }).then(async ({ data }) => {
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile("/tmp/coscientist-hitl-e2e.png", Buffer.from(data, "base64"));
-  });
+  await cdp
+    .call("Page.captureScreenshot", {
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: false,
+    })
+    .then(async ({ data }) => {
+      const { writeFile } = await import("node:fs/promises");
+      await writeFile(
+        "/tmp/coscientist-hitl-e2e.png",
+        Buffer.from(data, "base64"),
+      );
+    });
 
   await cdp.evaluate(`(() => {
     window.confirm = () => true;

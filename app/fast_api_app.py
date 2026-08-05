@@ -46,8 +46,8 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    from app.agent import MODEL_TREES, root_agent
     from app.agent import app as adk_app
-    from app.agent import root_agent
 
     runner = Runner(
         app=adk_app,
@@ -67,23 +67,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     # Each purpose-specific child also publishes a narrow Agent Card/A2A skill.
     # The route attachment itself remains the generated agents-cli transport.
+    #
+    # Every model on the allowlist gets its own set of cards, because a run
+    # selects its model by choosing which card to call. The agent name already
+    # carries the model for every tree but the default one, so the paths cannot
+    # collide and the default model's paths are exactly what they were before
+    # the choice existed.
     specialist_runners = {}
-    for specialist in root_agent.sub_agents:
-        specialist_runner = Runner(
-            agent=specialist,
-            app_name=f"specialist_{specialist.name}",
-            session_service=services.get_session_service(),
-            artifact_service=services.get_artifact_service(),
-            auto_create_session=True,
-        )
-        specialist_runners[specialist.name] = specialist_runner
-        await attach_a2a_routes(
-            app,
-            agent=specialist,
-            runner=specialist_runner,
-            task_store=task_store,
-            rpc_path=f"/a2a/specialists/{specialist.name}",
-        )
+    for tree in MODEL_TREES.values():
+        for specialist in tree.sub_agents:
+            specialist_runner = Runner(
+                agent=specialist,
+                app_name=f"specialist_{specialist.name}",
+                session_service=services.get_session_service(),
+                artifact_service=services.get_artifact_service(),
+                auto_create_session=True,
+            )
+            specialist_runners[specialist.name] = specialist_runner
+            await attach_a2a_routes(
+                app,
+                agent=specialist,
+                runner=specialist_runner,
+                task_store=task_store,
+                rpc_path=f"/a2a/specialists/{specialist.name}",
+            )
     app.state.specialist_runners = specialist_runners
     yield
 

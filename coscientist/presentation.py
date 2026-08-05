@@ -5,6 +5,11 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from .citations import (
+    CandidateCitations,
+    latest_evidence_packet,
+    resolve_candidate,
+)
 from .models import (
     Candidate,
     CandidatePopulation,
@@ -18,6 +23,7 @@ from .models import (
     Session,
     TournamentState,
 )
+from .parity import DEFAULT_ELO, UNMEASURED_MOVEMENT
 
 PRESENTATION_SCHEMA_VERSION = "1"
 
@@ -59,6 +65,7 @@ def _candidate_card(
     rank: int | None = None,
     elo: float | None = None,
     shortlisted: bool = False,
+    citations: CandidateCitations | None = None,
 ) -> dict[str, Any]:
     fatal_flaws = [
         flaw for review in reviews or [] for flaw in review.get("fatal_flaws", [])
@@ -76,6 +83,10 @@ def _candidate_card(
         "risks": candidate.risks,
         "go_no_go_tests": candidate.go_no_go_tests,
         "evidence_ids": candidate.evidence_ids,
+        # A citation nobody can resolve is worse than no citation, so the
+        # support verdict travels beside the raw ids everywhere they are shown.
+        "evidence_support": citations.support if citations else "unknown",
+        "unresolved_evidence_ids": citations.unresolved if citations else [],
         "reviews": reviews or [],
         "fatal_flaws": fatal_flaws,
         "rank": rank,
@@ -141,10 +152,16 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
             return None
         manifest = DiscoveryManifest.model_validate(payload)
         latest = manifest.coverage_history[-1] if manifest.coverage_history else None
+        providers = sorted({lead.provider for lead in manifest.source_leads})
         result = _base(
             stage,
             "evidence",
-            "Deep Research knowledge landscape — discovered, not yet verified",
+            # Naming the wrong provider is worse than naming none: a reader who
+            # sees "Deep Research" trusts the leads further than search hits earn.
+            f"Knowledge landscape from {', '.join(providers)} — discovered, not "
+            "yet verified"
+            if providers
+            else "Knowledge landscape — nothing was discovered",
         )
         result["metrics"] = [
             {"label": "Deep Research passes", "value": len(manifest.runs)},
@@ -161,13 +178,7 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
             },
         ]
         result["details"] = [
-            {
-                "label": "Stored interaction notice",
-                "value": (
-                    "Deep Research uses stored Gemini interactions so background "
-                    "research can complete asynchronously."
-                ),
-            },
+            {"label": "Discovery provider", "value": providers or ["none"]},
             {
                 "label": "Passes",
                 "value": [
@@ -211,6 +222,17 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
             },
             {"label": "Stop reason", "value": manifest.convergence_reason},
         ]
+        if manifest.stored_interaction_notice:
+            result["details"].insert(
+                1,
+                {
+                    "label": "Stored interaction notice",
+                    "value": (
+                        "Deep Research uses stored Gemini interactions so "
+                        "background research can complete asynchronously."
+                    ),
+                },
+            )
         return result
 
     population = _population(session)
@@ -237,8 +259,13 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
                 ),
             },
         ]
+        packet = latest_evidence_packet(session)
         result["candidates"] = [
-            _candidate_card(candidate, labels[candidate.id])
+            _candidate_card(
+                candidate,
+                labels[candidate.id],
+                citations=resolve_candidate(candidate, packet),
+            )
             for candidate in population.candidates
         ]
         evidence_payloads = [
@@ -281,11 +308,13 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
             "reviews",
             "Independent evidence, novelty, methods, impact, and governance review",
         )
+        packet = latest_evidence_packet(session)
         result["candidates"] = [
             _candidate_card(
                 candidate,
                 labels[candidate.id],
                 reviews=reviews_by_id.get(candidate.id, []),
+                citations=resolve_candidate(candidate, packet),
             )
             for candidate in population.candidates
         ]
@@ -330,6 +359,7 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
             }
             for index, candidate_id in enumerate(ordered, 1)
         ]
+        packet = latest_evidence_packet(session)
         result["candidates"] = [
             _candidate_card(
                 by_id[candidate_id],
@@ -338,6 +368,7 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
                 rank=index,
                 elo=tournament.ratings[candidate_id],
                 shortlisted=candidate_id in tournament.shortlist_ids,
+                citations=resolve_candidate(by_id[candidate_id], packet),
             )
             for index, candidate_id in enumerate(ordered, 1)
             if candidate_id in by_id
@@ -358,7 +389,19 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
         result["metrics"] = [
             {"label": "Pairwise comparisons", "value": len(tournament.comparisons)},
             {"label": "Stable rounds", "value": tournament.ranking_stable_rounds},
-            {"label": "Score movement", "value": tournament.score_movement},
+            # Labelled "Score movement" against a bare 0.0381 this read as a rating
+            # that had all but stopped moving; it is a fraction of the 1200 start,
+            # which on that run was forty-six points in the final round.
+            {
+                "label": "Final-round rating movement",
+                # The sentinel is not a fraction, and multiplied out it reported
+                # "1200 points" -- a rating falling to zero in one round.
+                "value": (
+                    f"{round(tournament.score_movement * DEFAULT_ELO)} points"
+                    if tournament.score_movement < UNMEASURED_MOVEMENT
+                    else "not recorded"
+                ),
+            },
             {"label": "Converged", "value": tournament.converged},
         ]
         return result
@@ -380,6 +423,9 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
                 "candidate": _candidate_card(
                     record.candidate,
                     f"Evolved candidate {index}",
+                    citations=resolve_candidate(
+                        record.candidate, latest_evidence_packet(session)
+                    ),
                 ),
                 "changes": record.changes,
                 "critiques_addressed": record.critiques_addressed,

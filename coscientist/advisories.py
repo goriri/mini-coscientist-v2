@@ -1,0 +1,351 @@
+"""Every run-level warning and standing limit the report carries, in one chapter.
+
+These paragraphs used to sit where the thing they qualify is discussed: the waived
+evidence gate above the evidence, the automatic approvals in the goal section, the
+templated stages under each section they touched. Each placement was defensible on
+its own and the sum was not. A reader opening the overview met three paragraphs of
+warning before the first sentence about the science, and prose written to be
+unmissable becomes skimmable when it is the first thing on every page.
+
+So the warnings are collected here and printed once, as the report's first appendix,
+and the body carries a single line saying how many there are and how many of them
+block. What is deliberately *not* here is anything specific to one hypothesis -- a
+fatal flaw a reviewer recorded, or an idea's grounding verdict. Those are findings
+about that idea, they belong under it, and a reader comparing two ideas has to be
+able to see which one carries them.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .narrative import (
+    _AGENT_NAMES,
+    IdeaBrief,
+    ResearchOverview,
+    ResearchRecord,
+    _actor_words,
+    _joined_titles,
+    _listed,
+    _number_word,
+    _plural,
+    _stage_words,
+)
+
+ADVISORY_CHAPTER = "Warnings and Limitations"
+"""The appendix heading, and the name the body points at."""
+
+
+def _capitalised(text: str) -> str:
+    """Open a sentence with a phrase that was written to sit inside one.
+
+    Every count in this module comes back from ``_plural`` in lower case, because
+    each of these paragraphs used to begin with the word "Warning:". Without the
+    prefix they open the sentence themselves.
+    """
+    return f"{text[:1].upper()}{text[1:]}"
+
+
+@dataclass(frozen=True)
+class Advisory:
+    """One warning, with the heading it is filed under."""
+
+    title: str
+    body: str
+    blocking: bool = False
+    """Whether this one says work should not proceed, rather than qualifying it.
+
+    The count of these is what the body's pointer leads with. A reader who is told
+    only that "eight limitations apply" has no reason to turn to the appendix; a
+    reader told that two of them block has every reason to.
+    """
+
+
+def run_advisories(
+    record: ResearchRecord,
+    *,
+    overview: ResearchOverview | None = None,
+    briefs: tuple[IdeaBrief, ...] = (),
+) -> list[Advisory]:
+    """Everything that qualifies this report as a whole, worst first.
+
+    Ordered by consequence rather than by the stage that raised it, because the
+    appendix is read top-down by someone deciding whether to act on the report.
+    """
+    advisories = [
+        *_governance_advisory(record),
+        *_broken_grounding_advisory(briefs),
+        *_waived_gate_advisory(record),
+        *_templated_stage_advisory(record),
+        *_mechanical_overview_advisory(overview),
+        *_automatic_approval_advisory(record),
+        _standing_limits_advisory(record),
+    ]
+    return advisories
+
+
+def advisory_pointer(advisories: list[Advisory]) -> str:
+    """The one line the body carries in place of the paragraphs moved out of it.
+
+    It leads with the count of blocking items rather than the total, because the
+    total is the same on a clean run as on a halted one and gives a reader no reason
+    to turn the page.
+    """
+    blocking = [item for item in advisories if item.blocking]
+    opening = (
+        _capitalised(_plural(len(advisories), "limitation"))
+        + (" applies" if len(advisories) == 1 else " apply")
+        if advisories
+        else "No limitation applies"
+    )
+    if not blocking:
+        return (
+            f"{opening} to this report as a whole, and "
+            + ("it does not block" if len(advisories) == 1 else "none of them blocks")
+            + " the work proposed below. "
+            + ("It is" if len(advisories) == 1 else "They are")
+            + f" set out under {ADVISORY_CHAPTER} at the end."
+        )
+    return (
+        f"{opening} to this report as a whole, of which "
+        + (
+            "one says the work should not proceed on the material it names"
+            if len(blocking) == 1
+            else f"{_number_word(len(blocking)).lower()} say the work should not "
+            "proceed on the material they name"
+        )
+        + f": {_listed([item.title.lower() for item in blocking])}. "
+        f"All are set out under {ADVISORY_CHAPTER} at the end, and nothing here "
+        "should be acted on without reading them."
+    )
+
+
+# ---------------------------------------------------------------------------
+# The individual advisories
+# ---------------------------------------------------------------------------
+
+
+def _governance_advisory(record: ResearchRecord) -> list[Advisory]:
+    if not record.open_governance_blocks:
+        return []
+    return [
+        Advisory(
+            title="Unanswered fatal governance findings",
+            blocking=True,
+            body=(
+                _capitalised(
+                    _plural(
+                        len(record.open_governance_blocks), "fatal governance finding"
+                    )
+                )
+                + " in this run "
+                f"{'has' if len(record.open_governance_blocks) == 1 else 'have'} not "
+                "been answered by anyone, covering "
+                + _joined_titles(
+                    sorted({item.title for item in record.open_governance_blocks}),
+                    fallback="no idea",
+                )
+                + ". The affected work is blocked, not approved, and this report "
+                "should not be used to justify starting it."
+            ),
+        )
+    ]
+
+
+def _broken_grounding_advisory(briefs: tuple[IdeaBrief, ...]) -> list[Advisory]:
+    broken = [brief for brief in briefs if brief.support_is_alarming]
+    if not broken:
+        return []
+    return [
+        Advisory(
+            title="Ideas citing evidence that is absent or retracted",
+            blocking=True,
+            body=(
+                f"{_capitalised(_plural(len(broken), 'idea'))} in this report "
+                f"{'cites' if len(broken) == 1 else 'cite'} evidence that does not "
+                "exist in this session or that has been retracted, namely "
+                + _joined_titles([brief.title for brief in broken], fallback="none")
+                + ". Those citations were written by the generator and resolve to no "
+                "record, so the ideas carrying them are unsupported rather than "
+                "evidence-backed, whatever their rank says. Nothing in this group "
+                "should be acted on until its grounding is rebuilt."
+            ),
+        )
+    ]
+
+
+def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
+    if not record.session.exploratory_evidence_accepted:
+        return []
+    # "The operator explicitly accepted limited exploratory evidence" once sat two
+    # paragraphs below a warning that every gate in the run, this one included, had
+    # been approved automatically with nobody reading the artifact. Both are true of
+    # different acts -- the waiver was requested, the acceptance was granted by the
+    # profile -- but stated side by side without that distinction they read as one
+    # claim contradicting itself. The actor is on the event, so it is named rather
+    # than characterised.
+    waiver = next(
+        (
+            event
+            for event in reversed(record.session.events)
+            if event.event_type == "limited_exploratory_evidence_accepted"
+        ),
+        None,
+    )
+    return [
+        Advisory(
+            title="A waived evidence gate",
+            blocking=True,
+            body=(
+                "The evidence gate for this run was waived, so the literature under "
+                "Knowledge Base was admitted without meeting the verification "
+                "standard the goal declared. "
+                + (
+                    f"The waiver is recorded against {_actor_words(waiver.actor)}. "
+                    if waiver
+                    else "No actor is recorded against the waiver. "
+                )
+                + "Waiving the gate is a distinct act from accepting the stage's "
+                "output, and whichever approval regime this run used applies to the "
+                "second of those, not the first. Those statements are exploratory "
+                "leads and are not verified findings; nothing among them should be "
+                "cited as established, and the gate should be re-run before any idea "
+                "grounded on it is acted upon."
+            ),
+        )
+    ]
+
+
+def _templated_stage_advisory(record: ResearchRecord) -> list[Advisory]:
+    stages = record.fallback_stages
+    if not stages:
+        return []
+    # "the reflection agent output" and "failed contract validation" are the run's
+    # own words for itself. The reader is being told not to trust a page of the
+    # report, which is the last place to make them decode an agent id.
+    named = sorted(
+        {_AGENT_NAMES.get(note.agent, note.agent.replace("_", " ")) for note in stages}
+    )
+    agents = _listed(named, fallback="one specialist").rstrip(".")
+    # Only the verb used to agree with the count, so three stages that fell back at
+    # once were "the clustering by mechanism, evolution of the shortlist, and
+    # meta-review are a fixed template, not the specialist's own reasoning" -- one
+    # template and one specialist between three named stages.
+    one = len(named) == 1
+    return [
+        Advisory(
+            title="Stages that produced a template rather than reasoning",
+            body=(
+                f"The {agents} in this report "
+                + (
+                    "is a fixed template, not the specialist's own reasoning. The "
+                    "specialist's answer came back incomplete or malformed and was "
+                    "replaced"
+                    if one
+                    else "are fixed templates, not the specialists' own reasoning. "
+                    "Their answers came back incomplete or malformed and were "
+                    "replaced"
+                )
+                + ", so what "
+                + ("it" if one else "they")
+                + " contributed to this report states what the workflow requires "
+                "rather than what a model concluded. Treat it as a placeholder and "
+                "re-run the "
+                + ("stage" if one else "stages")
+                + " before relying on it. What each stage produced is itemised under "
+                "Provenance."
+            ),
+        )
+    ]
+
+
+def _mechanical_overview_advisory(
+    overview: ResearchOverview | None,
+) -> list[Advisory]:
+    if overview is None or overview.source != "deterministic_fallback":
+        return []
+    return [
+        Advisory(
+            title="A mechanically assembled overview",
+            # "the report compiler", "a synthesis specialist" and "a recorded field"
+            # are three names for parts of this system, and a reader has met none of
+            # them. What the warning has to convey is simpler and does not need them:
+            # a program wrote it, so nothing in it is a judgement formed by reading
+            # the run.
+            body=(
+                "Research Overview was assembled mechanically from what each stage of "
+                "the run recorded. Every sentence in it restates one of those "
+                "records, and no model was asked to read the run as a whole, so where "
+                "two stages disagree the disagreement is reported rather than "
+                "resolved."
+            ),
+        )
+    ]
+
+
+def _automatic_approval_advisory(record: ResearchRecord) -> list[Advisory]:
+    session = record.session
+    automatic = [decision for decision in session.decisions if decision.automatic]
+    if not automatic:
+        return []
+    return [
+        Advisory(
+            title="Stage gates approved without a human",
+            body=(
+                f"{_capitalised(_plural(len(automatic), 'stage gate'))} in this run "
+                f"{'was' if len(automatic) == 1 else 'were'} approved automatically "
+                f"under the {session.approval_profile} approval profile, covering "
+                + _listed(
+                    _stage_words(decision.stage for decision in automatic),
+                    fallback="no stage",
+                )
+                # "No human inspected the artifact" and "the payload satisfied its
+                # contract" are three words of implementation vocabulary in two
+                # sentences, in the one warning a reader most needs to act on.
+                + ". Nobody read what "
+                + ("that stage" if len(automatic) == 1 else "those stages")
+                + " produced before it was accepted. An acceptance recorded here "
+                "means only that the work was complete "
+                "and well-formed, not that a person agreed with it. Auto approval is "
+                "a workflow convenience and never constitutes scientific, safety, "
+                "ethics, or institutional approval."
+            ),
+        )
+    ]
+
+
+def _standing_limits_advisory(record: ResearchRecord) -> Advisory:
+    """True of every run, and therefore the one advisory that is never absent.
+
+    It reads as boilerplate because it is boilerplate, which is exactly the argument
+    for having it here rather than in the opening paragraph of the overview, where it
+    was the fourth sentence a reader ever read.
+    """
+    session = record.session
+    return Advisory(
+        title="What this report is and is not",
+        body=(
+            "Nothing in this document is a finding. The ideas are proposals that have "
+            "been reviewed, ranked and stress-tested against each other, and each "
+            "still requires independent verification before it is acted upon. A "
+            "source satisfies an evidence gate only when its original content has "
+            "been inspected and mapped to the exact claim.\n\n"
+            + (
+                "The run was executed as a literature-only analysis. "
+                if session.literature_only
+                else ""
+            )
+            + "No experiment was performed in this run, no dataset was accessed and "
+            "no measurement was taken. Every stage of it is desk work: a literature "
+            "search, a set of proposals written by models, and reviews of those "
+            "proposals by other models. So every quantitative statement in the report "
+            "is an expectation recorded by whichever specialist proposed it, and the "
+            "research mode named on the cover"
+            + (
+                f", {session.research_mode.replace('_', ' ')},"
+                if session.research_mode
+                else ""
+            )
+            + " describes the work being proposed rather than any work that was done."
+        ),
+    )

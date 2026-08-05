@@ -16,6 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from app.app_utils.a2a import default_app_url
 from app.evidence_tasks import configured as evidence_tasks_configured
 from app.evidence_tasks import enqueue_evidence_step
 from coscientist.agents import A2AProvider, DeterministicProvider
@@ -25,6 +26,14 @@ from coscientist.ledger import (
     ConcurrentSessionUpdate,
     PostgresResearchLedger,
     ResearchLedger,
+)
+from coscientist.model_catalog import (
+    DEFAULT_LANGUAGE,
+    DEFAULT_MODEL,
+    LANGUAGE_CHOICES,
+    LANGUAGE_CODES,
+    MODEL_CHOICES,
+    MODEL_IDS,
 )
 from coscientist.models import ApprovalProfile, Artifact, ArtifactStatus
 from coscientist.orchestration import CoScientistWorkflow
@@ -45,6 +54,12 @@ class CreateResearchSession(BaseModel):
     question: str = Field(min_length=3, max_length=12000)
     approval_profile: ApprovalProfile = ApprovalProfile.MILESTONE
     research_mode: str | None = None
+    # Validated here rather than on the Session, because this is the point at
+    # which the value is chosen. An id nobody built a specialist tree for is a
+    # 404 partway through a stage, which is a much worse way to learn about a
+    # typo than a 422 on the request that made it.
+    model: Literal[MODEL_IDS] = DEFAULT_MODEL  # type: ignore[valid-type]
+    language: Literal[LANGUAGE_CODES] = DEFAULT_LANGUAGE  # type: ignore[valid-type]
 
 
 class ResearchDecision(BaseModel):
@@ -82,10 +97,12 @@ def _ledger() -> ResearchLedger | PostgresResearchLedger:
     return ResearchLedger(_STATE_DIR / "research_workflows.db")
 
 
-def _provider():
+def _provider(model: str = DEFAULT_MODEL):
     if os.getenv("INTEGRATION_TEST", "").upper() == "TRUE":
         return DeterministicProvider()
-    return A2AProvider(os.environ.get("APP_URL", "http://127.0.0.1:8080"))
+    # Same base URL the specialist cards advertise, so the self-call and the
+    # published card can never drift onto different ports.
+    return A2AProvider(default_app_url(), model=model)
 
 
 def _lock_for(session_id: str) -> threading.Lock:
@@ -205,6 +222,8 @@ def _snapshot(workflow: CoScientistWorkflow) -> dict:
         "stage_number": min(session.current_stage + 1, len(workflow.workflow_stages)),
         "stage_count": len(workflow.workflow_stages),
         "approval_profile": session.approval_profile,
+        "model": session.model,
+        "language": session.language,
         "requires_human_approval": workflow.requires_human_approval,
         "literature_only": session.literature_only,
         "pending_draft": _artifact_summary(workflow.pending_draft, workflow),
@@ -254,6 +273,9 @@ def _snapshot(workflow: CoScientistWorkflow) -> dict:
 
 
 def _load(session_id: str) -> CoScientistWorkflow:
+    # The provider has to exist before the session that names its model can be
+    # read, so it is built on the default and the workflow rebinds it from the
+    # loaded session. See ``bind_provider_model`` in coscientist.agents.
     try:
         return CoScientistWorkflow.load_from_ledger(
             session_id, _ledger(), provider=_provider()
@@ -385,19 +407,58 @@ def _schedule_advance(
     )
 
 
+@router.get("/options")
+def research_options() -> dict:
+    """What a new run may be configured with.
+
+    The form reads its choices from here rather than hard-coding them, so the
+    allowlist the server validates against and the list a researcher picks from
+    cannot disagree -- a browser cache would otherwise keep offering a model the
+    server has since retired.
+    """
+    return {
+        "models": [
+            {
+                "id": choice.id,
+                "label": choice.label,
+                "note": choice.note,
+                "default": choice.id == DEFAULT_MODEL,
+            }
+            for choice in MODEL_CHOICES
+        ],
+        "languages": [
+            {
+                "code": choice.code,
+                "label": choice.label,
+                "endonym": choice.endonym,
+                "default": choice.code == DEFAULT_LANGUAGE,
+            }
+            for choice in LANGUAGE_CHOICES
+        ],
+    }
+
+
 @router.post("/sessions", status_code=201)
 def create_research_session(
     request: CreateResearchSession, background_tasks: BackgroundTasks
 ) -> dict:
     """Create and draft the first governed research stage."""
-    workflow = CoScientistWorkflow(
-        request.question,
-        provider=_provider(),
-        approval_profile=request.approval_profile,
-        research_mode=request.research_mode,
-        workflow_version=int(os.environ.get("EVIDENCE_PIPELINE_VERSION", "2")),
-        ledger=_ledger(),
-    )
+    try:
+        workflow = CoScientistWorkflow(
+            request.question,
+            provider=_provider(request.model),
+            approval_profile=request.approval_profile,
+            research_mode=request.research_mode,
+            model=request.model,
+            language=request.language,
+            workflow_version=int(os.environ.get("EVIDENCE_PIPELINE_VERSION", "2")),
+            ledger=_ledger(),
+        )
+    except ValueError as error:
+        # An unsupported research mode, model, or language is a rejected request,
+        # not a server fault. It used to surface as a bare 500 with the reason
+        # visible only in the Cloud Run log.
+        raise HTTPException(status_code=400, detail=str(error)) from error
     kind = "auto" if workflow.approval_profile == ApprovalProfile.AUTO else "initial"
     deletion_token = secrets.token_urlsafe(32)
     _ledger().set_delete_token_hash(

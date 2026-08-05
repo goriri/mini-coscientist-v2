@@ -100,7 +100,17 @@ class LocalA2ATaskBus:
             specialist.role: SpecialistService(specialist, provider)
             for specialist in specialists
         }
-        self._semaphore = asyncio.Semaphore(max_concurrency)
+        self.max_concurrency = max_concurrency
+        """How many specialists of one stage may be in flight at once.
+
+        Held as a number rather than as a ``Semaphore`` because the workflow
+        drives each stage through its own ``asyncio.run``, and a semaphore binds
+        itself to the first loop that has to make a waiter on it. That binding is
+        lazy: an uncontended one never makes a waiter and never notices, so a bus
+        that had only ever dispatched four-at-a-time worked for the life of the
+        process. Discovery now fans out to ten, the fifth caller waits, and the
+        stage after that one died on "bound to a different event loop".
+        """
 
     @property
     def agent_cards(self) -> tuple[AgentCard, ...]:
@@ -114,8 +124,13 @@ class LocalA2ATaskBus:
         feedback: str = "",
         revision: int = 1,
     ) -> list[TaskResult]:
+        # One per dispatch, so it belongs to the loop that is about to use it.
+        # The bound is on a single stage's fan-out and the bus runs one stage at
+        # a time, so nothing is lost by scoping it to the call.
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+
         async def dispatch(specialist: Specialist) -> TaskResult:
-            async with self._semaphore:
+            async with semaphore:
                 key = (
                     f"{session.id}:{specialist.stage}:{specialist.role}:"
                     f"{revision}:{feedback}"

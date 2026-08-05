@@ -77,6 +77,10 @@ def start_server() -> subprocess.Popen[str]:
     env = os.environ.copy()
     env["INTEGRATION_TEST"] = "TRUE"
     env["APP_URL"] = BASE_URL
+    # Off is already the default; stated anyway because this subprocess is out
+    # of reach of tests/conftest.py, and a test suite must never depend on a
+    # default to avoid spending money.
+    env["COSCIENTIST_DEEP_RESEARCH"] = "off"
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -258,6 +262,24 @@ def test_public_research_workspace(server_fixture: subprocess.Popen[str]) -> Non
     )
 
 
+def test_unsupported_research_mode_is_rejected(
+    server_fixture: subprocess.Popen[str],
+) -> None:
+    """A bad research mode is a rejected request, not a server fault."""
+    response = requests.post(
+        f"{BASE_URL}/api/research/sessions",
+        headers=HEADERS,
+        json={
+            "question": "Does a coating improve cycle life against a control?",
+            "approval_profile": "milestone",
+            "research_mode": "guided",
+        },
+        timeout=30,
+    )
+    assert response.status_code == 400
+    assert "Unsupported research mode" in response.json()["detail"]
+
+
 def test_guided_hitl_workflow_end_to_end(
     server_fixture: subprocess.Popen[str],
 ) -> None:
@@ -400,7 +422,11 @@ def test_guided_hitl_workflow_end_to_end(
         timeout=30,
     )
     assert markdown.status_code == 200
-    assert markdown.content.startswith(b"# Co-Scientist Research Dossier")
+    # The document opens on the goal it answers rather than on a generic product
+    # name, and the served bytes are the rendered report rather than a payload dump.
+    assert markdown.content.startswith(b"# ")
+    assert b"\n# Research Goal Details\n" in markdown.content
+    assert b"\n# Research Overview\n" in markdown.content
     assert markdown.headers["content-disposition"].endswith('.md"')
 
     pdf = requests.get(

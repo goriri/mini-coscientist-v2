@@ -49,6 +49,21 @@ _ADK_AGENT_EXECUTOR_EXTENSION_URI = (
 )
 
 
+def default_app_url() -> str:
+    """Base URL to advertise on agent cards.
+
+    A card's ``url`` is what every A2A client dials, including this service
+    calling its own specialists. ``0.0.0.0`` is a bind address, not a
+    destination -- httpx refuses to connect to it -- so the fallback is
+    loopback on the port we are actually serving. Cloud Run injects ``PORT``;
+    set ``APP_URL`` explicitly to publish a card reachable from outside the
+    container.
+    """
+    if app_url := os.getenv("APP_URL"):
+        return app_url.rstrip("/")
+    return f"http://127.0.0.1:{os.getenv('PORT', '8080')}"
+
+
 def _default_capabilities() -> AgentCapabilities:
     """Returns the default A2A capabilities used by scaffolded projects."""
     return AgentCapabilities(
@@ -79,10 +94,10 @@ async def attach_a2a_routes(
     The ``runner`` should share the session/artifact/memory services with the
     standard ADK path. ``capabilities``, ``agent_version``, and ``app_url``
     override their defaults (streaming + ADK extension, ``AGENT_VERSION``,
-    ``APP_URL``). Call once per app — typically in a FastAPI ``lifespan``, since
+    :func:`default_app_url`). Call once per app — typically in a FastAPI ``lifespan``, since
     the card is built asynchronously; repeated calls register duplicate routes.
     """
-    resolved_app_url = app_url or os.getenv("APP_URL", "http://0.0.0.0:8000")
+    resolved_app_url = app_url or default_app_url()
     resolved_agent_version = agent_version or os.getenv("AGENT_VERSION", "0.1.0")
     resolved_capabilities = capabilities or _default_capabilities()
 

@@ -6,11 +6,62 @@ import pytest
 
 from coscientist.evidence import (
     EvidenceArtifactStore,
+    GeminiDeepResearchTransport,
     IterativeEvidenceDiscovery,
+    _extract_report,
     canonicalize_url,
     normalize_report,
 )
 from coscientist.models import ResearchPlan, Session
+
+# Shape recorded from a completed Vertex AI Deep Research interaction
+# (agent deep-research-preview-04-2026, project cellular-cider-495602-r9). Vertex
+# returns the report in output_text and repeats it as a typed model_output step
+# whose annotations carry the cited URLs and their titles.
+VERTEX_COMPLETED_PAYLOAD = {
+    "object": "interaction",
+    "id": "ChAyODc1NjAyMGViMDg2MTM4EAgaATAqBG1haW4",
+    "agent": "deep-research-preview-04-2026",
+    "status": "completed",
+    "output_text": (
+        "# Report\n\nSupporting evidence was demonstrated [cite: 1].\n"
+        "See also https://pubs.acs.org/doi/10.1021/example\n"
+    ),
+    "steps": [
+        {
+            "type": "model_output",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "# Report\n\nSupporting evidence was demonstrated.",
+                    "annotations": [
+                        {
+                            "type": "url_citation",
+                            "start_index": 5331,
+                            "end_index": 5347,
+                            "title": "Development of ArgTag for Scalable Synthesis\nacs.org",
+                            "url": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQE",
+                        }
+                    ],
+                }
+            ],
+        }
+    ],
+    "usage": {
+        "total_input_tokens": 642026,
+        "total_output_tokens": 42929,
+        "total_tokens": 1153471,
+        "grounding_tool_count": [{"type": "google_search", "count": 132}],
+    },
+}
+
+
+class _FakeGenaiClient:
+    """Record how the transport asked google-genai to authenticate."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.interactions = None
 
 
 class FakeTransport:
@@ -34,6 +85,156 @@ class FakeTransport:
 
 def _plan(session: Session) -> ResearchPlan:
     return ResearchPlan(question=session.question, intended_claim="testable claim")
+
+
+@pytest.fixture
+def fake_genai_client(monkeypatch: pytest.MonkeyPatch) -> list[_FakeGenaiClient]:
+    from google import genai
+
+    created: list[_FakeGenaiClient] = []
+
+    def factory(**kwargs):
+        client = _FakeGenaiClient(**kwargs)
+        created.append(client)
+        return client
+
+    monkeypatch.setattr(genai, "Client", factory)
+    return created
+
+
+def test_transport_uses_vertex_adc_without_any_api_key(
+    monkeypatch: pytest.MonkeyPatch, fake_genai_client: list[_FakeGenaiClient]
+):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "coscientist.evidence.resolve_vertex_project", lambda: "project-from-adc"
+    )
+
+    transport = GeminiDeepResearchTransport()
+
+    assert transport.backend == "vertex"
+    assert transport.project == "project-from-adc"
+    assert fake_genai_client[0].kwargs == {
+        "vertexai": True,
+        "project": "project-from-adc",
+        "location": "global",
+    }
+
+
+def test_transport_falls_back_to_api_key_when_vertex_is_unreachable(
+    monkeypatch: pytest.MonkeyPatch, fake_genai_client: list[_FakeGenaiClient]
+):
+    monkeypatch.setenv("GEMINI_API_KEY", "key-123")
+
+    transport = GeminiDeepResearchTransport()
+
+    assert transport.backend == "api_key"
+    assert fake_genai_client[0].kwargs == {"api_key": "key-123"}
+
+
+def test_transport_error_names_both_missing_credentials():
+    with pytest.raises(RuntimeError) as error:
+        GeminiDeepResearchTransport()
+
+    message = str(error.value)
+    assert "GOOGLE_CLOUD_PROJECT" in message
+    assert "GEMINI_API_KEY" in message
+
+
+def test_extract_report_reads_the_vertex_interaction_shape():
+    report = _extract_report(VERTEX_COMPLETED_PAYLOAD)
+    assert report.startswith("# Report")
+
+    step_only = dict(VERTEX_COMPLETED_PAYLOAD)
+    step_only.pop("output_text")
+    assert "Supporting evidence" in _extract_report(step_only)
+
+
+def test_vertex_citation_annotations_become_titled_source_leads():
+    class VertexTransport:
+        def start(self, **_):
+            return dict(VERTEX_COMPLETED_PAYLOAD)
+
+        def get(self, interaction_id: str):  # pragma: no cover - never polled
+            raise AssertionError("Completed interactions must not be polled.")
+
+    session = Session(question="Vertex shaped research")
+    manifest = IterativeEvidenceDiscovery(
+        VertexTransport(),
+        EvidenceArtifactStore(bucket_name=""),
+        poll_interval_seconds=0,
+        max_passes=1,
+    ).run(session, _plan(session))
+
+    leads = {lead.canonical_url: lead for lead in manifest.source_leads}
+    grounded = next(
+        lead for url, lead in leads.items() if "grounding-api-redirect" in url
+    )
+    assert grounded.title.startswith("Development of ArgTag")
+    assert manifest.runs[0].usage["total_tokens"] == 1153471
+    assert manifest.estimated_cost_usd > 0
+    assert manifest.stored_interaction_notice is True
+
+
+def test_deep_research_never_starts_unless_someone_asked_for_it(monkeypatch):
+    """The switch protecting a billable, uncancellable call must default shut.
+
+    ADC is ambient on developer machines, CI, and Cloud Run, so an opt-out
+    default means importing and running the workflow spends money before
+    anyone has read a line of output. That happened once; this pins it.
+    """
+    from coscientist.orchestration import _deep_research_enabled
+
+    monkeypatch.delenv("COSCIENTIST_DEEP_RESEARCH", raising=False)
+    assert _deep_research_enabled() is False
+    for value in ("on", "ON", "true", "1", "yes"):
+        monkeypatch.setenv("COSCIENTIST_DEEP_RESEARCH", value)
+        assert _deep_research_enabled() is True, value
+    # Anything that is not an explicit yes is a no, including typos: a
+    # misspelled opt-in must fail closed rather than bill.
+    for value in ("off", "false", "0", "no", "onn", ""):
+        monkeypatch.setenv("COSCIENTIST_DEEP_RESEARCH", value)
+        assert _deep_research_enabled() is False, value
+
+
+def test_discovery_is_attempted_whenever_vertex_adc_is_reachable(
+    monkeypatch: pytest.MonkeyPatch, fake_genai_client: list[_FakeGenaiClient]
+):
+    """No GEMINI_API_KEY must no longer mean "deep_research_unavailable"."""
+    from coscientist import orchestration
+    from coscientist.agents import DeterministicProvider
+    from coscientist.models import DiscoveryManifest
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    # Deep Research is opt-in because it is billable and uncancellable, so a
+    # test about building its transport has to say so out loud. The recording
+    # double below is what keeps this from costing anything.
+    monkeypatch.setenv("COSCIENTIST_DEEP_RESEARCH", "on")
+    monkeypatch.setattr(
+        "coscientist.evidence.resolve_vertex_project", lambda: "adc-project"
+    )
+    built: list[GeminiDeepResearchTransport] = []
+
+    class RecordingDiscovery:
+        def __init__(self, transport, artifact_store, **kwargs):
+            self.transport = transport
+            built.append(transport)
+
+        def run(self, session, plan, *, manifest=None, **kwargs):
+            manifest = manifest or DiscoveryManifest(question=session.question)
+            manifest.convergence_reason = "coverage_sufficient"
+            return manifest
+
+    monkeypatch.setattr(orchestration, "IterativeEvidenceDiscovery", RecordingDiscovery)
+    flow = orchestration.CoScientistWorkflow(
+        "Can a coating improve cycle life?", DeterministicProvider()
+    )
+    flow.accept(flow.preview(), actor="test_researcher")
+    assert flow.stage == "evidence"
+    flow.preview()
+
+    assert [transport.backend for transport in built] == ["vertex"]
+    assert built[0].project == "adc-project"
 
 
 def test_sufficient_first_pass_does_not_repeat():

@@ -39,9 +39,15 @@ def test_human_mode_requires_current_explicit_acceptance(tmp_path: Path):
     while not flow.done:
         flow.accept(flow.preview(), actor="test_researcher")
     report = flow.render_report()
-    assert "## Meta Review" in report
-    assert "**Approval policy:** human" in report
-    assert "Research-integrity notice" in report
+    # The report has to end on a recommendation, state which approval regime
+    # produced it, and carry the integrity caveat that nothing in it is a finding.
+    # The caveat is in the warnings chapter now; every gate here was answered by a
+    # person, so the auto-approval warning is correctly absent from this one.
+    assert "#### 9. Recommendations and Next Steps" in report
+    assert "Approval profile:" in report
+    assert "# Warnings and Limitations" in report
+    assert "Nothing in this document is a finding" in report
+    assert "Auto approval is a workflow convenience" not in report
     assert len(
         [
             artifact

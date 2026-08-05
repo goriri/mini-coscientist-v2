@@ -7,7 +7,13 @@ from coscientist.models import (
     ReviewSet,
     TournamentState,
 )
+from coscientist.narrative import derive_idea_title
 from coscientist.orchestration import MILESTONE_STAGES, CoScientistWorkflow
+from coscientist.parity import (
+    REVIEW_CRITERIA,
+    dossier_manifest,
+    population_from_artifacts,
+)
 
 
 def _complete(flow: CoScientistWorkflow) -> None:
@@ -87,11 +93,16 @@ def test_typed_candidate_review_tournament_and_dossier_pipeline():
         for review in ReviewSet.model_validate(artifact.payload).reviews
     ]
     assert len(reviews) == 40
+    # Five reviewers, five distinct axes. Safety and governance decide whether
+    # work may proceed; impact decides whether it is worth proceeding. Folding
+    # them together once made an ethics review indistinguishable from a
+    # commercial-viability review in the dossier.
     assert {review.criterion for review in reviews} == {
         "evidence_correctness",
         "novelty",
         "methods_feasibility",
         "impact_safety",
+        "safety_governance",
     }
 
     tournament_artifact = next(
@@ -108,14 +119,25 @@ def test_typed_candidate_review_tournament_and_dossier_pipeline():
     evolution = EvolutionCycle.model_validate(evolution_artifact.payload)
     assert evolution.converged is True
     assert len(evolution.records) == 12
-    assert len(evolution.rereviews) == 48
+    # Every offspring is re-reviewed on every axis the parents were judged on,
+    # so this count follows from the criteria rather than standing alone.
+    assert len(evolution.rereviews) == len(evolution.records) * len(REVIEW_CRITERIA)
     assert len(evolution.ranking_history) == 3
 
     dossier = flow.render_report()
-    assert "## Executive synthesis" in dossier
-    assert "## Complete artifact appendix" in dossier
-    assert "## Decision and task audit" in dossier
-    assert population.candidates[0].id in dossier
+    # The report leads with a synthesis rather than with artifacts: the numbered
+    # narrative has to open the document, before any per-idea deep dive.
+    assert "# Research Overview" in dossier
+    assert "#### 1. Research Goal" in dossier
+    assert dossier.index("#### 1. Research Goal") < dossier.index("## Idea Proposal")
+    # Every payload's origin stays auditable, so a template can never pass as
+    # reasoning even though the raw JSON is no longer printed.
+    assert "## What each stage produced" in dossier
+    assert "## Evidence integrity" in dossier
+    # Candidates are named, not identified: the opaque id is what the narrative
+    # layer exists to replace, so the derived title is the thing to find.
+    assert derive_idea_title(population.candidates[0].claim) in dossier
+    assert population.candidates[0].id not in dossier
 
 
 def test_milestone_profile_pauses_only_at_declared_gates():
@@ -160,6 +182,83 @@ def test_artifact_profile_requires_each_specialist_decision():
         if not decision.automatic and decision.artifact_id in specialist_ids
     }
     assert human_artifact_decisions == specialist_ids
+
+
+def test_a_thrice_evolved_claim_carries_one_revision_marker_not_three():
+    # Each round copies its parent's claim forward, so a marker appended to
+    # whatever the parent held accumulated: the round-three offspring read
+    # "... at 1C discharge rates. under preregistered discriminating design
+    # revision 1 under preregistered discriminating design revision 2 ..."
+    # in the finished report. The same held for the robustness prediction,
+    # which the offspring ended up making once per round it had lived through.
+    flow = CoScientistWorkflow(
+        "Can a coating improve cycle life?",
+        approval_profile=ApprovalProfile.AUTO,
+        workflow_version=1,
+    )
+    _complete(flow)
+    evolution = EvolutionCycle.model_validate(
+        next(
+            item
+            for item in flow.session.artifacts
+            if item.schema_name == "EvolutionCycle"
+        ).payload
+    )
+    last_round = [record for record in evolution.records if record.round_number == 3]
+    assert last_round
+    for record in last_round:
+        claim = record.candidate.claim
+        assert claim.count("preregistered discriminating design") == 1
+        assert "(revision 3)." in claim
+        assert ". under" not in claim
+        robustness = [
+            prediction
+            for prediction in record.candidate.predictions
+            if "robustness analysis" in prediction
+        ]
+        assert len(robustness) == 1
+        assert "evolution round 3" in robustness[0]
+    assert {change for record in last_round for change in record.changes} == {
+        "Revised the preregistered discriminating design.",
+        "Restated the robustness prediction against the revised design.",
+    }
+
+
+def test_the_decision_changing_evidence_is_quoted_from_the_run(
+    rich_session,
+):
+    """ "A short list of specific evidence" has to name evidence about this question.
+
+    The fallback returned three sentences -- verified evidence contradicting the
+    mechanism, a failed prediction, an independent replication -- that would unseat
+    any hypothesis whatever, and the report introduced them as specific and then
+    told the reader that obtaining any one of them beats another round of
+    generation. Nothing there is a measurement anyone could go and take.
+    """
+    manifest = dossier_manifest(rich_session)
+    decisive = manifest.evidence_that_would_change_decision
+    tournament = next(
+        TournamentState.model_validate(artifact.payload)
+        for artifact in reversed(rich_session.artifacts)
+        if artifact.schema_name == "TournamentState"
+    )
+    target = next(
+        iter(manifest.recommendation_candidate_ids + list(tournament.shortlist_ids))
+    )
+    leader = next(
+        candidate
+        for candidate in population_from_artifacts(rich_session.artifacts).candidates
+        if candidate.id == target
+    )
+    joined = " ".join(decisive).lower()
+
+    assert decisive
+    assert "contradicting the proposed mechanism" not in joined
+    assert leader.falsifier.rstrip(".").lower()[:60] in joined
+    assert leader.predictions[0].rstrip(".").lower()[:60] in joined
+    # Section nine ends by naming the go/no-go work as the immediate next step, so
+    # listing it here as well reads as a second piece of work.
+    assert leader.go_no_go_tests[0].rstrip(".").lower()[:40] not in joined
 
 
 def test_auto_profile_cannot_waive_governance_block():

@@ -21,6 +21,12 @@ function loadSessionHistory() {
   }
 }
 
+const NOTIFY_KEY = "coscientist.stageAlerts";
+// Below this, the stage finished while the researcher was still looking at the
+// tab they switched to, and a notification is an interruption rather than a
+// recall. Deep Research and the tournament both run far longer than this.
+const LONG_STAGE_MILLISECONDS = 30000;
+
 const state = {
   userId: localStorage.getItem("coscientist.userId") || crypto.randomUUID(),
   sessionId: null,
@@ -34,6 +40,11 @@ const state = {
   inquiry: Number(localStorage.getItem("coscientist.inquiry") || "1"),
   viewingStage: null,
   recentSessions: loadSessionHistory(),
+  notifyStageAlerts: localStorage.getItem(NOTIFY_KEY) !== "off",
+  operationStartedAt: null,
+  notifiedGateKey: null,
+  pendingAttention: false,
+  optionsReady: null,
 };
 
 localStorage.setItem("coscientist.userId", state.userId);
@@ -54,6 +65,8 @@ const elements = {
   conversation: document.querySelector(".conversation"),
   jumpLatest: document.querySelector("#jumpLatest"),
   approvalProfile: document.querySelector("#approvalProfile"),
+  modelChoice: document.querySelector("#modelChoice"),
+  languageChoice: document.querySelector("#languageChoice"),
   approvalIndicator: document.querySelector("#approvalIndicator"),
   currentSessionCard: document.querySelector("#currentSessionCard"),
   currentSessionName: document.querySelector("#currentSessionName"),
@@ -62,7 +75,14 @@ const elements = {
   sessionCount: document.querySelector("#sessionCount"),
   historyButton: document.querySelector("#historyButton"),
   closeHistory: document.querySelector("#closeHistory"),
+  runtimeModel: document.querySelector("#runtimeModel"),
+  runtimeDetail: document.querySelector("#runtimeDetail"),
+  notifySection: document.querySelector("#notifySection"),
+  notifyEnabled: document.querySelector("#notifyEnabled"),
+  notifyDetail: document.querySelector("#notifyDetail"),
 };
+
+const DOCUMENT_TITLE = document.title;
 
 const agentLabels = {
   co_scientist_supervisor: "Co-Scientist",
@@ -124,7 +144,10 @@ function formatPlainText(value) {
         .trim()
         .split(/\n{2,}/)
         .filter(Boolean)
-        .map((paragraph) => `<p>${formatInline(paragraph).replaceAll("\n", "<br>")}</p>`)
+        .map(
+          (paragraph) =>
+            `<p>${formatInline(paragraph).replaceAll("\n", "<br>")}</p>`,
+        )
         .join("");
     })
     .join("");
@@ -157,14 +180,17 @@ function formatStructuredValue(value) {
       .join("")}</dl>`;
   }
   if (typeof value === "boolean") return `<p>${value ? "Yes" : "No"}</p>`;
-  if (value === null || value === "") return '<p class="empty-value">Not specified</p>';
+  if (value === null || value === "")
+    return '<p class="empty-value">Not specified</p>';
   return `<p>${formatInline(String(value))}</p>`;
 }
 
 function formatArtifactSection(section) {
   const headingMatch = section.match(/^###\s+([^\n]+)\n*/);
   const heading = headingMatch ? headingMatch[1].trim() : "";
-  const body = headingMatch ? section.slice(headingMatch[0].length).trim() : section.trim();
+  const body = headingMatch
+    ? section.slice(headingMatch[0].length).trim()
+    : section.trim();
   let structured = null;
   let remainder = "";
 
@@ -195,7 +221,10 @@ function formatArtifactSection(section) {
 }
 
 function formatText(value) {
-  const sections = value.trim().split(/(?=^###\s+)/m).filter(Boolean);
+  const sections = value
+    .trim()
+    .split(/(?=^###\s+)/m)
+    .filter(Boolean);
   return sections.map(formatArtifactSection).join("");
 }
 
@@ -215,7 +244,8 @@ function renderDisplayValue(value) {
       .join("")}</dl>`;
   }
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (value === null || value === undefined || value === "") return "Not specified";
+  if (value === null || value === undefined || value === "")
+    return "Not specified";
   return formatInline(String(value));
 }
 
@@ -399,7 +429,8 @@ function appendMessage(role, text, author = "", presentation = null) {
   ensureConversation();
   const article = document.createElement("article");
   article.className = `message ${role}`;
-  const label = role === "user" ? "Researcher" : agentLabels[author] || "Co-Scientist";
+  const label =
+    role === "user" ? "Researcher" : agentLabels[author] || "Co-Scientist";
   article.innerHTML = `
     <div class="message-avatar">${role === "user" ? "You" : initials(author)}</div>
     <div>
@@ -477,14 +508,10 @@ function nearConversationBottom() {
   return remaining < 120;
 }
 
-function setActiveAgent(author) {
-  document
-    .querySelectorAll("#specialistList > div")
-    .forEach((item) => item.classList.toggle("active", item.dataset.agent === author));
-}
-
 function deriveSessionName(question, maxLength = 52) {
-  const normalized = String(question || "").replace(/\s+/g, " ").trim();
+  const normalized = String(question || "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!normalized) return "Untitled inquiry";
   const clause =
     normalized
@@ -494,7 +521,10 @@ function deriveSessionName(question, maxLength = 52) {
   if (clause.length <= maxLength) return clause;
   const candidate = clause.slice(0, maxLength - 1);
   const boundary = candidate.lastIndexOf(" ");
-  const clipped = boundary >= Math.floor(maxLength * 0.55) ? candidate.slice(0, boundary) : candidate;
+  const clipped =
+    boundary >= Math.floor(maxLength * 0.55)
+      ? candidate.slice(0, boundary)
+      : candidate;
   return `${clipped.trim()}…`;
 }
 
@@ -510,14 +540,18 @@ function relativeTime(value) {
   if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
   if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
   if (seconds < 604800) return `${Math.round(seconds / 86400)}d ago`;
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
-    new Date(timestamp),
-  );
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(timestamp));
 }
 
 function saveSessionHistory() {
   state.recentSessions = state.recentSessions.slice(0, 20);
-  localStorage.setItem(SESSION_HISTORY_KEY, JSON.stringify(state.recentSessions));
+  localStorage.setItem(
+    SESSION_HISTORY_KEY,
+    JSON.stringify(state.recentSessions),
+  );
 }
 
 function upsertRecentSession(workflow, touch = false) {
@@ -528,18 +562,25 @@ function upsertRecentSession(workflow, touch = false) {
     query: workflow.question,
     status: workflow.status,
     stage: workflow.stage,
-    createdAt: workflow.created_at || existing?.createdAt || new Date().toISOString(),
-    updatedAt: workflow.updated_at || existing?.updatedAt || new Date().toISOString(),
+    createdAt:
+      workflow.created_at || existing?.createdAt || new Date().toISOString(),
+    updatedAt:
+      workflow.updated_at || existing?.updatedAt || new Date().toISOString(),
     lastOpenedAt: touch
       ? new Date().toISOString()
-      : existing?.lastOpenedAt || workflow.updated_at || new Date().toISOString(),
+      : existing?.lastOpenedAt ||
+        workflow.updated_at ||
+        new Date().toISOString(),
     unavailable: false,
     deleteToken: workflow.deletion_token || existing?.deleteToken || null,
   };
   state.recentSessions = [
     entry,
     ...state.recentSessions.filter((item) => item.id !== workflow.id),
-  ].sort((left, right) => Date.parse(right.lastOpenedAt) - Date.parse(left.lastOpenedAt));
+  ].sort(
+    (left, right) =>
+      Date.parse(right.lastOpenedAt) - Date.parse(left.lastOpenedAt),
+  );
   saveSessionHistory();
   renderSessionHistory();
 }
@@ -552,7 +593,9 @@ function markSessionUnavailable(sessionId) {
 }
 
 function removeRecentSession(sessionId) {
-  state.recentSessions = state.recentSessions.filter((item) => item.id !== sessionId);
+  state.recentSessions = state.recentSessions.filter(
+    (item) => item.id !== sessionId,
+  );
   saveSessionHistory();
   if (localStorage.getItem(CURRENT_WORKFLOW_KEY) === sessionId) {
     localStorage.removeItem(CURRENT_WORKFLOW_KEY);
@@ -637,7 +680,10 @@ function updateSessionIdentity(workflow) {
   elements.currentSessionCard.hidden = false;
   elements.currentSessionName.textContent = title;
   elements.currentSessionName.title = workflow.question;
-  elements.currentSessionName.setAttribute("aria-label", `Current query: ${workflow.question}`);
+  elements.currentSessionName.setAttribute(
+    "aria-label",
+    `Current query: ${workflow.question}`,
+  );
   elements.currentSessionState.textContent = `${stageLabel(workflow.stage)} · ${workflowStatusCopy(workflow)}`;
 }
 
@@ -650,7 +696,9 @@ function updateStageNavigation(workflow = null) {
     const button = item.querySelector("button");
     const report = stage === "report";
     const metadata = previews.get(stage);
-    const available = report ? Boolean(workflow?.report_available) : Boolean(metadata?.available);
+    const available = report
+      ? Boolean(workflow?.report_available)
+      : Boolean(metadata?.available);
     item.hidden = report && !available;
     button.disabled = !available;
     item.classList.toggle("active", !report && workflow?.stage === stage);
@@ -714,9 +762,12 @@ async function streamResearch(prompt, pending) {
 
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`Research service returned ${response.status}: ${detail.slice(0, 180)}`);
+    throw new Error(
+      `Research service returned ${response.status}: ${detail.slice(0, 180)}`,
+    );
   }
-  if (!response.body) throw new Error("Streaming is unavailable in this browser.");
+  if (!response.body)
+    throw new Error("Streaming is unavailable in this browser.");
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -737,10 +788,7 @@ async function streamResearch(prompt, pending) {
       if (!payload) continue;
       try {
         const event = JSON.parse(payload);
-        if (event.author) {
-          activeAuthor = event.author;
-          setActiveAgent(activeAuthor);
-        }
+        if (event.author) activeAuthor = event.author;
         const text = extractEventText(event);
         if (text) {
           accumulated += text;
@@ -779,11 +827,194 @@ async function researchApi(path, options = {}) {
   return response.json();
 }
 
+async function loadResearchOptions() {
+  // Both selects stay empty until this resolves. Seeding them with a guess and
+  // correcting it later would let a fast typist submit a model the server does
+  // not serve, and the run would fail three stages in rather than at the form.
+  let options;
+  try {
+    options = await researchApi("/options");
+  } catch {
+    setConnection("error", "Could not load model and language options");
+    return;
+  }
+  fillChoices(elements.modelChoice, options.models, (item) => ({
+    value: item.id,
+    text: item.label,
+    title: item.note,
+    selected: item.default,
+  }));
+  fillChoices(elements.languageChoice, options.languages, (item) => ({
+    // The endonym alongside the English name, because the person choosing to
+    // run in Chinese is the person most likely to be reading for the Chinese.
+    value: item.code,
+    text:
+      item.label === item.endonym
+        ? item.label
+        : `${item.label} · ${item.endonym}`,
+    title: "",
+    selected: item.default,
+  }));
+  updateRuntimeCard(state.workflow);
+}
+
+function selectedLabel(select) {
+  return select.selectedOptions[0]?.textContent?.trim() || "";
+}
+
+function updateRuntimeCard(workflow = null) {
+  // A restored run keeps whatever it was started with, so the workflow wins
+  // over the composer: changing the dropdown afterwards changes the next run,
+  // not the one on screen.
+  const model =
+    workflow?.model ||
+    selectedLabel(elements.modelChoice) ||
+    elements.modelChoice.value;
+  const languageOption = workflow?.language
+    ? elements.languageChoice.querySelector(
+        `option[value="${workflow.language}"]`,
+      )
+    : elements.languageChoice.selectedOptions[0];
+  const language = languageOption?.textContent?.trim() || "";
+  elements.runtimeModel.textContent = model || "Selecting…";
+  elements.runtimeModel.title = model || "";
+  elements.runtimeDetail.textContent = language
+    ? `${language} · global endpoint`
+    : "Global endpoint";
+}
+
+function notificationsAvailable() {
+  return typeof Notification !== "undefined" && window.isSecureContext;
+}
+
+function renderNotifyControl() {
+  if (!notificationsAvailable()) return;
+  elements.notifySection.hidden = false;
+  const denied = Notification.permission === "denied";
+  elements.notifyEnabled.disabled = denied;
+  elements.notifyEnabled.checked = !denied && state.notifyStageAlerts;
+  elements.notifyDetail.textContent = denied
+    ? "Blocked for this site. Re-enable notifications in your browser's site settings."
+    : "A browser notification when a long stage finishes while this tab is in the background.";
+}
+
+async function requestStageAlerts() {
+  // Asked from inside the submit gesture rather than at page load: a prompt
+  // that arrives before the visitor has started anything is the one people
+  // dismiss permanently, and a denial here cannot be taken back from script.
+  if (!notificationsAvailable()) return;
+  if (!state.notifyStageAlerts) return;
+  if (Notification.permission !== "default") return;
+  try {
+    await Notification.requestPermission();
+  } catch {
+    // Older Safari rejects rather than resolving "denied".
+  }
+  renderNotifyControl();
+}
+
+function setAttention(pending) {
+  state.pendingAttention = pending;
+  document.title = pending ? `● ${DOCUMENT_TITLE}` : DOCUMENT_TITLE;
+}
+
+function researcherIsWatching() {
+  return document.visibilityState === "visible" && document.hasFocus();
+}
+
+function raiseStageAlert(workflow, headline) {
+  setAttention(true);
+  if (!state.notifyStageAlerts) return;
+  if (!notificationsAvailable() || Notification.permission !== "granted")
+    return;
+  const notification = new Notification(headline, {
+    body: `${stageLabel(workflow.stage)} · ${deriveSessionName(workflow.question)}`,
+    // One live notification per run: a poll that fires twice must replace its
+    // own banner rather than stack a second one behind it.
+    tag: `coscientist:${workflow.id}`,
+    icon: "/assets/favicon.svg",
+    requireInteraction: false,
+  });
+  notification.addEventListener("click", () => {
+    window.focus();
+    notification.close();
+  });
+}
+
+function trackStageAlerts(workflow, operationActive) {
+  if (operationActive) {
+    if (state.operationStartedAt === null)
+      state.operationStartedAt = Date.now();
+    return;
+  }
+  const elapsed =
+    state.operationStartedAt === null
+      ? 0
+      : Date.now() - state.operationStartedAt;
+  state.operationStartedAt = null;
+
+  const finished = workflow.status === "ready_for_report";
+  const waiting =
+    workflow.requires_human_approval ||
+    ["input_required", "evidence_required", "governance_blocked"].includes(
+      workflow.status,
+    );
+  if (!finished && !waiting) return;
+  // The dossier is the payoff and is always worth an alert; an intermediate
+  // gate is only worth one if the researcher had time to walk away from it.
+  if (!finished && elapsed < LONG_STAGE_MILLISECONDS) return;
+  if (researcherIsWatching()) return;
+
+  const gateKey = `${workflow.id}:${workflow.stage}:${workflow.status}:${
+    workflow.pending_draft?.id || ""
+  }`;
+  if (state.notifiedGateKey === gateKey) return;
+  state.notifiedGateKey = gateKey;
+  raiseStageAlert(
+    workflow,
+    finished
+      ? "Your research dossier is ready"
+      : `Co-Scientist needs you · ${workflowStatusCopy(workflow)}`,
+  );
+}
+
+function fillChoices(select, items, describe) {
+  select.replaceChildren(
+    ...items.map((item) => {
+      const described = describe(item);
+      const option = document.createElement("option");
+      option.value = described.value;
+      option.textContent = described.text;
+      if (described.title) option.title = described.title;
+      option.selected = described.selected;
+      return option;
+    }),
+  );
+}
+
+function runConfigCopy(workflow) {
+  // Appended to the gate line rather than given a row of its own: on a resumed
+  // session these two are the only way to tell which configuration produced
+  // what is on screen, and they never change once the run has started.
+  const parts = [];
+  if (workflow.model) parts.push(escapeHtml(workflow.model));
+  const language = (
+    elements.languageChoice.querySelector(
+      `option[value="${workflow.language}"]`,
+    ) || {}
+  ).textContent;
+  if (language && workflow.language !== "en") parts.push(escapeHtml(language));
+  return parts.length ? ` · ${parts.join(" · ")}` : "";
+}
+
 function workflowStatusCopy(workflow) {
   if (workflow.status === "input_required") return "Scientific input required";
-  if (workflow.status === "evidence_required") return "Verified evidence required";
-  if (workflow.status === "governance_blocked") return "Governance review blocked";
-  if (workflow.status === "stopped_by_researcher") return "Stopped by researcher";
+  if (workflow.status === "evidence_required")
+    return "Verified evidence required";
+  if (workflow.status === "governance_blocked")
+    return "Governance review blocked";
+  if (workflow.status === "stopped_by_researcher")
+    return "Stopped by researcher";
   if (workflow.status === "ready_for_report") return "Dossier ready";
   if (workflow.requires_human_approval) return "Human decision required";
   return "Workflow active";
@@ -812,7 +1043,8 @@ function updateApprovalIndicator() {
 
 function unresolvedRequirements(workflow) {
   return workflow.input_requirements.filter(
-    (item) => item.blocking && !["provided", "fallback_accepted"].includes(item.status),
+    (item) =>
+      item.blocking && !["provided", "fallback_accepted"].includes(item.status),
   );
 }
 
@@ -874,8 +1106,8 @@ function renderApprovalCard(workflow) {
   card.innerHTML = `
     <div class="approval-card-head">
       <div>
-        <p class="eyebrow">Supervisor gate · ${escapeHtml(workflow.approval_profile)}</p>
-        <h3>${escapeHtml(workflow.stage.replaceAll("_", " "))} · ${
+        <p class="eyebrow">Supervisor gate · ${escapeHtml(workflow.approval_profile)}${runConfigCopy(workflow)}</p>
+        <h3>${escapeHtml(stageLabel(workflow.stage))} · ${
           operationActive
             ? "Specialists working"
             : operationFailed
@@ -885,7 +1117,11 @@ function renderApprovalCard(workflow) {
         <p class="approval-stage-progress">Stage ${workflow.stage_number} of ${workflow.stage_count} · ${workflow.task_summary.completed}/${workflow.task_summary.total} specialist tasks complete</p>
       </div>
       <span class="approval-badge">${
-        operationActive ? "In progress" : decisionRequired ? "Your decision" : "Integrity gate"
+        operationActive
+          ? "In progress"
+          : decisionRequired
+            ? "Your decision"
+            : "Integrity gate"
       }</span>
     </div>
     ${
@@ -989,7 +1225,7 @@ function stopWorkflowPolling() {
   state.pollTimer = null;
 }
 
-function pollWorkflow() {
+function pollWorkflow(wait = 1400) {
   stopWorkflowPolling();
   state.pollTimer = window.setTimeout(async () => {
     if (!state.workflowId) return;
@@ -998,11 +1234,18 @@ function pollWorkflow() {
         `/sessions/${encodeURIComponent(state.workflowId)}`,
       );
       renderWorkflow(workflow);
-    } catch (error) {
-      setConnection("error", "Could not refresh workflow progress");
-      toast(error instanceof Error ? error.message : "Progress check failed");
+    } catch {
+      // Only renderWorkflow re-arms this timer, so a single dropped poll used
+      // to end progress reporting for the whole run: the card sat on
+      // "Specialists working" until the page was reloaded. A stage against the
+      // deployed service runs for minutes at roughly one poll a second, which
+      // makes an occasional failure ordinary rather than exceptional. Back off
+      // so a service that is genuinely down is not hammered, and say
+      // "reconnecting" rather than reporting a dead run.
+      setConnection("error", "Reconnecting to workflow progress");
+      pollWorkflow(Math.min(wait * 2, 15000));
     }
-  }, 1400);
+  }, wait);
 }
 
 function clearWorkflowDisplay() {
@@ -1046,7 +1289,10 @@ function renderStagePreview(preview) {
   appendMessage(
     "assistant",
     preview.content,
-    preview.producer || (preview.stage === "report" ? "meta_reviewer" : "co_scientist_supervisor"),
+    preview.producer ||
+      (preview.stage === "report"
+        ? "meta_reviewer"
+        : "co_scientist_supervisor"),
     preview.presentation,
   );
   if (preview.stage === "report" && state.workflow) {
@@ -1096,7 +1342,8 @@ async function viewStagePreview(stage) {
   try {
     let preview;
     if (stage === "report") {
-      if (!state.workflow?.report) throw new Error("The dossier is not available yet.");
+      if (!state.workflow?.report)
+        throw new Error("The dossier is not available yet.");
       preview = {
         stage: "report",
         content: state.workflow.report,
@@ -1114,7 +1361,11 @@ async function viewStagePreview(stage) {
     renderStagePreview(preview);
     document.body.classList.remove("menu-open");
   } catch (error) {
-    toast(error instanceof Error ? error.message : "Stage output could not be loaded");
+    toast(
+      error instanceof Error
+        ? error.message
+        : "Stage output could not be loaded",
+    );
   }
 }
 
@@ -1124,11 +1375,15 @@ function renderWorkflow(workflow, pending = null, touchHistory = false) {
   state.sessionId = workflow.id;
   updateSessionIdentity(workflow);
   updateStageNavigation(workflow);
+  updateRuntimeCard(workflow);
   upsertRecentSession(workflow, touchHistory);
   localStorage.setItem(CURRENT_WORKFLOW_KEY, workflow.id);
   const operationActive = ["queued", "running"].includes(
     workflow.operation?.status,
   );
+  // Ahead of the early return for stage previews: a researcher reading an
+  // earlier stage while the next one runs still wants to be called back.
+  trackStageAlerts(workflow, operationActive);
 
   if (state.viewingStage) {
     if (pending) pending.remove();
@@ -1173,10 +1428,13 @@ function renderWorkflow(workflow, pending = null, touchHistory = false) {
   } else {
     renderApprovalCard(workflow);
     setConnection(
-      workflow.status.includes("blocked") || workflow.status === "input_required"
+      workflow.status.includes("blocked") ||
+        workflow.status === "input_required"
         ? "error"
         : "ready",
-      operationActive ? "Specialists are preparing the next gate" : workflowStatusCopy(workflow),
+      operationActive
+        ? "Specialists are preparing the next gate"
+        : workflowStatusCopy(workflow),
     );
     if (operationActive) pollWorkflow();
     else stopWorkflowPolling();
@@ -1184,11 +1442,20 @@ function renderWorkflow(workflow, pending = null, touchHistory = false) {
 }
 
 async function createGuidedWorkflow(prompt, pending) {
+  // The option lists arrive over the network. On a local server that lands
+  // before anyone can type; against the deployed service it does not, and a
+  // prompt submitted first posted an empty model and an empty language.
+  await state.optionsReady;
+  if (!elements.modelChoice.value || !elements.languageChoice.value) {
+    throw new Error("Model and language options are still loading");
+  }
   const workflow = await researchApi("/sessions", {
     method: "POST",
     body: JSON.stringify({
       question: prompt,
       approval_profile: elements.approvalProfile.value,
+      model: elements.modelChoice.value,
+      language: elements.languageChoice.value,
     }),
   });
   renderWorkflow(workflow, pending, true);
@@ -1199,10 +1466,18 @@ function selectMode(mode) {
   localStorage.setItem("coscientist.mode", state.mode);
   document
     .querySelectorAll("[data-mode]")
-    .forEach((item) => item.classList.toggle("active", item.dataset.mode === mode));
+    .forEach((item) =>
+      item.classList.toggle("active", item.dataset.mode === mode),
+    );
   elements.approvalProfile.hidden = mode === "conversation";
-  elements.approvalProfile.closest(".profile-control").hidden =
-    mode === "conversation";
+  [
+    elements.approvalProfile,
+    elements.modelChoice,
+    elements.languageChoice,
+  ].forEach((control) => {
+    control.hidden = mode === "conversation";
+    control.closest(".profile-control").hidden = mode === "conversation";
+  });
   updateApprovalIndicator();
 }
 
@@ -1215,7 +1490,9 @@ async function openResearchSession(sessionId, { restore = false } = {}) {
   selectMode("guided");
   setConnection("", "Restoring governed research session");
   try {
-    const workflow = await researchApi(`/sessions/${encodeURIComponent(sessionId)}`);
+    const workflow = await researchApi(
+      `/sessions/${encodeURIComponent(sessionId)}`,
+    );
     renderWorkflow(workflow, null, true);
     document.body.classList.remove("history-open");
     if (!restore) toast("Research session restored");
@@ -1229,7 +1506,8 @@ async function openResearchSession(sessionId, { restore = false } = {}) {
     updateSessionIdentity(null);
     updateStageNavigation(null);
     setConnection("error", "Saved session is unavailable on this instance");
-    if (!restore) toast(error instanceof Error ? error.message : "Session unavailable");
+    if (!restore)
+      toast(error instanceof Error ? error.message : "Session unavailable");
   }
 }
 
@@ -1280,7 +1558,10 @@ async function handleDecisionClick(event) {
 
   state.busy = true;
   card.querySelectorAll("button").forEach((item) => (item.disabled = true));
-  setConnection("", action === "accept" ? "Advancing to the next gate" : "Recording decision");
+  setConnection(
+    "",
+    action === "accept" ? "Advancing to the next gate" : "Recording decision",
+  );
   try {
     const workflow = await researchApi(
       `/sessions/${encodeURIComponent(state.workflowId)}/decisions`,
@@ -1290,7 +1571,9 @@ async function handleDecisionClick(event) {
     card.querySelector(".approval-badge").textContent = "Recorded";
     renderWorkflow(workflow);
   } catch (error) {
-    toast(error instanceof Error ? error.message : "Decision could not be recorded");
+    toast(
+      error instanceof Error ? error.message : "Decision could not be recorded",
+    );
     try {
       const workflow = await researchApi(
         `/sessions/${encodeURIComponent(state.workflowId)}`,
@@ -1311,6 +1594,7 @@ async function submitPrompt(prompt) {
   state.busy = true;
   elements.send.disabled = true;
   elements.input.disabled = true;
+  requestStageAlerts();
   appendMessage("user", cleaned);
   const pending = appendPending();
   setConnection("", "Specialists are reasoning");
@@ -1324,7 +1608,10 @@ async function submitPrompt(prompt) {
       setConnection("ready", "Session ready · global reasoning");
     }
   } catch (error) {
-    showError(pending, error instanceof Error ? error.message : "Unexpected error");
+    showError(
+      pending,
+      error instanceof Error ? error.message : "Unexpected error",
+    );
     setConnection("error", "Research service unavailable");
   } finally {
     state.busy = false;
@@ -1358,7 +1645,10 @@ async function newInquiry() {
   updateSessionIdentity(null);
   updateStageNavigation(null);
   renderSessionHistory();
-  setActiveAgent("co_scientist_supervisor");
+  setAttention(false);
+  state.notifiedGateKey = null;
+  state.operationStartedAt = null;
+  updateRuntimeCard();
   if (state.mode === "conversation") {
     try {
       await createSession();
@@ -1457,6 +1747,21 @@ elements.closeHistory.addEventListener("click", () => {
   document.body.classList.remove("history-open");
 });
 elements.approvalProfile.addEventListener("change", updateApprovalIndicator);
+[elements.modelChoice, elements.languageChoice].forEach((control) =>
+  control.addEventListener("change", () => updateRuntimeCard(state.workflow)),
+);
+elements.notifyEnabled.addEventListener("change", () => {
+  state.notifyStageAlerts = elements.notifyEnabled.checked;
+  localStorage.setItem(NOTIFY_KEY, state.notifyStageAlerts ? "on" : "off");
+  if (state.notifyStageAlerts) requestStageAlerts();
+  renderNotifyControl();
+});
+// Coming back to the tab is the acknowledgement. Clearing the marker on
+// return also re-arms the alert, so the next gate is announced again.
+window.addEventListener("focus", () => setAttention(false));
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") setAttention(false);
+});
 document.addEventListener("click", (event) => {
   if (
     document.body.classList.contains("menu-open") &&
@@ -1475,12 +1780,15 @@ document.addEventListener("click", (event) => {
 });
 
 updateInquiryNumber();
-setActiveAgent("co_scientist_supervisor");
+state.optionsReady = loadResearchOptions();
+renderNotifyControl();
 selectMode(state.mode);
 renderSessionHistory();
 updateStageNavigation(null);
 if (state.mode === "conversation") {
-  createSession().catch(() => setConnection("error", "Could not create session"));
+  createSession().catch(() =>
+    setConnection("error", "Could not create session"),
+  );
 } else {
   const currentWorkflowId = localStorage.getItem(CURRENT_WORKFLOW_KEY);
   if (currentWorkflowId) {

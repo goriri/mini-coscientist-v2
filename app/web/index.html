@@ -48,55 +48,77 @@
             <li class="active" data-stage="scope">
               <button type="button" disabled>
                 <span>01</span>
-                <div><strong>Scope</strong><small>Question &amp; inputs</small></div>
+                <div>
+                  <strong>Scope</strong><small>Question &amp; inputs</small>
+                </div>
               </button>
             </li>
             <li data-stage="evidence">
               <button type="button" disabled>
                 <span>02</span>
-                <div><strong>Evidence</strong><small>Deep Research &amp; verification</small></div>
+                <div>
+                  <strong>Evidence</strong
+                  ><small>Deep Research &amp; verification</small>
+                </div>
               </button>
             </li>
             <li data-stage="generate">
               <button type="button" disabled>
                 <span>03</span>
-                <div><strong>Generate</strong><small>Candidate hypotheses</small></div>
+                <div>
+                  <strong>Generate</strong><small>Candidate hypotheses</small>
+                </div>
               </button>
             </li>
             <li data-stage="reflect">
               <button type="button" disabled>
                 <span>04</span>
-                <div><strong>Reflect</strong><small>Independent review</small></div>
+                <div>
+                  <strong>Reflect</strong><small>Independent review</small>
+                </div>
               </button>
             </li>
             <li data-stage="rank">
               <button type="button" disabled>
                 <span>05</span>
-                <div><strong>Rank</strong><small>Tournament comparison</small></div>
+                <div>
+                  <strong>Rank</strong><small>Tournament comparison</small>
+                </div>
               </button>
             </li>
             <li data-stage="evolve">
               <button type="button" disabled>
                 <span>06</span>
-                <div><strong>Evolve</strong><small>Refine candidates</small></div>
+                <div>
+                  <strong>Evolve</strong><small>Refine candidates</small>
+                </div>
               </button>
             </li>
             <li data-stage="proximity">
               <button type="button" disabled>
                 <span>07</span>
-                <div><strong>Proximity</strong><small>Landscape &amp; diversity</small></div>
+                <div>
+                  <strong>Proximity</strong
+                  ><small>Landscape &amp; diversity</small>
+                </div>
               </button>
             </li>
             <li data-stage="meta_review">
               <button type="button" disabled>
                 <span>08</span>
-                <div><strong>Meta-review</strong><small>Final reconciliation</small></div>
+                <div>
+                  <strong>Meta-review</strong
+                  ><small>Final reconciliation</small>
+                </div>
               </button>
             </li>
             <li class="dossier-stage" data-stage="report" hidden>
               <button type="button" disabled>
                 <span>↗</span>
-                <div><strong>Dossier</strong><small>Complete research record</small></div>
+                <div>
+                  <strong>Dossier</strong
+                  ><small>Complete research record</small>
+                </div>
               </button>
             </li>
           </ol>
@@ -142,7 +164,9 @@
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="8" y="8" width="11" height="11" rx="2" />
-                <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+                <path
+                  d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"
+                />
               </svg>
             </button>
           </div>
@@ -157,7 +181,8 @@
             <h2>Turn uncertainty into<br /><em>testable direction.</em></h2>
             <p class="welcome-copy">
               Frame a scientific problem, pressure-test competing explanations,
-              and leave with a traceable research plan—not manufactured certainty.
+              and leave with a traceable research plan—not manufactured
+              certainty.
             </p>
 
             <div class="prompt-grid">
@@ -169,7 +194,9 @@
                 <span class="card-index">01</span>
                 <div>
                   <strong>Overcome KRAS inhibitor resistance</strong>
-                  <p>Compare genetic, cell-state, and microenvironmental escape.</p>
+                  <p>
+                    Compare genetic, cell-state, and microenvironmental escape.
+                  </p>
                 </div>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="m9 18 6-6-6-6" />
@@ -183,7 +210,9 @@
                 <span class="card-index">02</span>
                 <div>
                   <strong>Preserve muscle during GLP-1 therapy</strong>
-                  <p>Separate lean tissue measurements from functional outcomes.</p>
+                  <p>
+                    Separate lean tissue measurements from functional outcomes.
+                  </p>
                 </div>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="m9 18 6-6-6-6" />
@@ -197,7 +226,9 @@
                 <span class="card-index">03</span>
                 <div>
                   <strong>Confront antimicrobial resistance</strong>
-                  <p>Prioritize combinations, diagnostics, and trial strategies.</p>
+                  <p>
+                    Prioritize combinations, diagnostics, and trial strategies.
+                  </p>
                 </div>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="m9 18 6-6-6-6" />
@@ -228,11 +259,17 @@
         <section class="composer-wrap" aria-label="Research prompt composer">
           <form class="composer" id="composer">
             <div class="workflow-controls">
-              <div class="mode-switch" role="group" aria-label="Interaction mode">
+              <div
+                class="mode-switch"
+                role="group"
+                aria-label="Interaction mode"
+              >
                 <button class="active" type="button" data-mode="guided">
                   Guided HITL
                 </button>
-                <button type="button" data-mode="conversation">Conversation</button>
+                <button type="button" data-mode="conversation">
+                  Conversation
+                </button>
               </div>
               <label class="profile-control" for="approvalProfile">
                 Approval cadence
@@ -242,6 +279,18 @@
                   <option value="artifact">Every artifact</option>
                   <option value="auto">Auto</option>
                 </select>
+              </label>
+              <!-- Both lists are filled from /api/research/options at load, so
+                   the markup carries no model or language names of its own. A
+                   hard-coded option here would keep being offered after the
+                   server stopped accepting it. -->
+              <label class="profile-control" for="modelChoice">
+                Reasoning model
+                <select id="modelChoice"></select>
+              </label>
+              <label class="profile-control" for="languageChoice">
+                Research language
+                <select id="languageChoice"></select>
               </label>
             </div>
             <label for="promptInput">Research question</label>
@@ -304,13 +353,19 @@
           </div>
         </section>
 
+        <!-- The engine named here used to be a fixed string in the markup while
+             the model was a per-run choice in the composer, so the panel could
+             sit there naming Gemini through an entire Claude run. Both lines
+             are written from the run's own configuration now. -->
         <section class="context-section compact runtime-section">
           <div class="runtime-card">
             <div class="model-orbit" aria-hidden="true"><span></span></div>
             <div>
               <small>Reasoning engine</small>
-              <strong>Gemini 3.1 Pro</strong>
-              <p><span></span> Global · high thinking</p>
+              <strong id="runtimeModel">Selecting…</strong>
+              <p>
+                <span></span> <span id="runtimeDetail">Global endpoint</span>
+              </p>
             </div>
           </div>
         </section>
@@ -321,7 +376,7 @@
           </div>
           <ul class="gate-list">
             <li><span>01</span> No invented inputs or results</li>
-            <li><span>02</span> Search leads remain unverified</li>
+            <li><span>02</span> Unverified leads are labelled as unverified</li>
             <li><span>03</span> Fatal flaws block promotion</li>
             <li><span>04</span> Humans own real-world decisions</li>
           </ul>
@@ -332,6 +387,29 @@
               <span>Milestone decisions are audited</span>
             </div>
           </div>
+        </section>
+
+        <!-- A run leaves the researcher waiting minutes at a time on Deep
+             Research and on the tournament, so the tab is rarely in front of
+             them when a gate opens. -->
+        <section
+          class="context-section compact notify-section"
+          id="notifySection"
+          hidden
+        >
+          <div class="section-heading">
+            <h2>Stage alerts</h2>
+          </div>
+          <label class="notify-toggle" for="notifyEnabled">
+            <input type="checkbox" id="notifyEnabled" />
+            <span>
+              <strong>Notify me when a stage finishes</strong>
+              <small id="notifyDetail"
+                >A browser notification when a long stage finishes while this
+                tab is in the background.</small
+              >
+            </span>
+          </label>
         </section>
 
         <div class="context-foot">
