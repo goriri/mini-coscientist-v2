@@ -51,6 +51,12 @@ ELO_K = 32.0
 UNMEASURED_MOVEMENT = 1.0
 TOP_FOUR = 4
 
+# The second half of the convergence rule: the largest rating change in the final
+# round, as a fraction of DEFAULT_ELO, that still counts as the ordering having
+# settled. Named because the report states the rule to the reader and has to measure
+# the round against the same number the tournament judged it by.
+SETTLED_MOVEMENT = 0.05
+
 
 def stable_rounds(history: Sequence[Sequence[str]]) -> int:
     """How many trailing rounds left the shortlist ordering unchanged."""
@@ -871,7 +877,7 @@ def tournament_state(session: Session) -> TournamentState:
         # The same rule the debate tournament applies, so that a run judged
         # deterministically and a run judged by a model are called converged on
         # the same terms rather than one of them never being called it at all.
-        converged=stable >= 2 and movement < 0.05,
+        converged=stable >= 2 and movement < SETTLED_MOVEMENT,
     )
 
 
@@ -1069,7 +1075,7 @@ def evolution_cycle(session: Session) -> EvolutionCycle:
                 top_round_robin_size=4,
                 ranking_stable_rounds=stable_rounds,
                 score_movement=movement,
-                converged=stable_rounds >= 2 and movement < 0.05,
+                converged=stable_rounds >= 2 and movement < SETTLED_MOVEMENT,
             )
         )
         current = evolved_round

@@ -37,6 +37,7 @@ from .models import (
 from .parity import (
     DEFAULT_ELO,
     ELO_K,
+    SETTLED_MOVEMENT,
     population_from_artifacts,
     score_movement,
     stable_rounds,
@@ -1136,7 +1137,7 @@ def run_debate_tournament(
         score_movement=movement,
         # The workflow's own convergence rule: two stable rounds with under 5%
         # score movement.
-        converged=stable >= 2 and movement < 0.05,
+        converged=stable >= 2 and movement < SETTLED_MOVEMENT,
     )
     return state, render_transcript(session, records, state, provider)
 

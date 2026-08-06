@@ -46,7 +46,7 @@ from .models import (
     SourceLead,
     TournamentState,
 )
-from .parity import DEFAULT_ELO, ELO_K, UNMEASURED_MOVEMENT
+from .parity import DEFAULT_ELO, ELO_K, SETTLED_MOVEMENT, UNMEASURED_MOVEMENT
 
 # The four evidence-quality qualifiers the reference reports attach to citations.
 # Anything outside this set is a formatting bug, so the renderer and tests share it.
@@ -7606,7 +7606,8 @@ def _convergence(tournament: TournamentState, briefs: Sequence[IdeaBrief]) -> st
         "The ranking "
         + ("converged" if tournament.converged else "did not converge")
         + " under the rule this run applies: two consecutive rounds ending on the same "
-        "top four, and a final round that moves no rating by more than five per cent "
+        "top four, and a final round that moves no rating by more than "
+        f"{_number_word(round(SETTLED_MOVEMENT * 100)).lower()} per cent "
         f"of the {round(DEFAULT_ELO)} every idea starts on."
     )
     # The counter floors at one, so a run in which no two rounds agreed still counts
@@ -7629,10 +7630,23 @@ def _convergence(tournament: TournamentState, briefs: Sequence[IdeaBrief]) -> st
             "ratings, so the second half of that rule was not tested here and the "
             f"ordering below rests on the match results alone. {order}"
         )
+    # Which half of the rule the figure answers, and against what. "The final round
+    # moved one rating by 3.7 per cent of that, or about 45 points" was printed under
+    # "the ranking did not converge" as though it were the reason, when 3.7 is inside
+    # the five the sentence above had just named -- the run failed the other half. And
+    # 45 stood a paragraph away from "no single match moved a rating by more than 17
+    # points" with nothing saying a round is several matches.
     opening = (
         f"{rule} The final round moved one rating by "
         f"{tournament.score_movement * 100:.1f} per cent of that, or about "
-        f"{_plural(points, 'point')}. {order}"
+        f"{_plural(points, 'point')}, which is "
+        + (
+            "inside that limit"
+            if tournament.score_movement < SETTLED_MOVEMENT
+            else "over that limit"
+        )
+        + ". A round is several matches, so a rating can move further across a round "
+        f"than any one match moves it. {order}"
     )
     if tournament.converged:
         return (

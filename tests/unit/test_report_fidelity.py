@@ -559,6 +559,62 @@ def test_the_final_rounds_movement_is_reported_in_points_not_as_a_fraction():
     assert "did not converge" in line
 
 
+def test_a_movement_inside_the_limit_is_not_offered_as_the_reason_it_failed():
+    """ "The ranking did not converge ... The final round moved one rating by 3.7 per
+    cent of that" reads as the reason, and 3.7 is inside the five the sentence above
+    names. The run failed the other half of the rule."""
+    from coscientist.models import TournamentState
+    from coscientist.narrative import _convergence
+
+    line = _convergence(
+        TournamentState(score_movement=0.0381, ranking_stable_rounds=1),
+        [_brief("Leader", [], elo=1290.0), _brief("Rival", [], elo=1234.0)],
+    )
+
+    assert "46 points, which is inside that limit" in line
+    assert "No two consecutive rounds ended on the same top four" in line
+
+
+def test_a_movement_over_the_limit_is_reported_as_over_it():
+    from coscientist.models import TournamentState
+    from coscientist.narrative import _convergence
+
+    line = _convergence(
+        TournamentState(score_movement=0.09, ranking_stable_rounds=2),
+        [_brief("Leader", [], elo=1290.0), _brief("Rival", [], elo=1234.0)],
+    )
+
+    assert "108 points, which is over that limit" in line
+
+
+def test_a_round_is_said_to_hold_more_matches_than_one():
+    """45 points stood a paragraph away from "no single match moved a rating by more
+    than 17 points", with nothing saying the 45 is a round rather than a match."""
+    from coscientist.models import TournamentState
+    from coscientist.narrative import _convergence
+
+    line = _convergence(
+        TournamentState(score_movement=0.0381, ranking_stable_rounds=1),
+        [_brief("Leader", [], elo=1290.0), _brief("Rival", [], elo=1234.0)],
+    )
+
+    assert (
+        "A round is several matches, so a rating can move further across a round "
+        "than any one match moves it." in line
+    )
+
+
+def test_the_stated_rule_carries_the_threshold_the_tournament_judged_it_by():
+    from coscientist.models import TournamentState
+    from coscientist.narrative import _convergence
+    from coscientist.parity import SETTLED_MOVEMENT
+
+    line = _convergence(TournamentState(score_movement=0.0381), [])
+
+    assert SETTLED_MOVEMENT == 0.05, "the printed rule spells this number out"
+    assert "no rating by more than five per cent of the 1200" in line
+
+
 def test_a_single_stable_round_is_not_reported_as_rounds_that_held():
     """``_stable_rounds`` floors at one, so one is a baseline rather than a finding."""
     from coscientist.models import TournamentState
