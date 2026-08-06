@@ -92,8 +92,13 @@ def test_cli_auto_mode_completes_only_with_explicit_exploratory_opt_in(
         for event in payload["events"]
     )
     assert "UNVERIFIED" in output
-    # The dossier must never present the waived material as verified findings.
-    assert "not verified findings" in report_path.read_text()
+    # The dossier must never present the waived material as verified findings. The
+    # waived-gate warning used to say so of the whole corpus; it now splits the
+    # corpus by what was actually retrieved and checked, and this run checked
+    # nothing, so the sentence covering every source is the one to hold it to.
+    report = report_path.read_text()
+    assert "exploratory leads rather than findings" in report
+    assert "none should be cited as established" in report
 
 
 def test_tui_default_milestone_mode_requires_four_accept_inputs(monkeypatch, capsys):
