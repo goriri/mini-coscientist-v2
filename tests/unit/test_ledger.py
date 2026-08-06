@@ -80,3 +80,53 @@ def test_operation_lease_and_bearer_deletion(tmp_path: Path):
     assert ledger.delete_session(flow.session.id, token_hash) is True
     with pytest.raises(KeyError):
         ledger.load(flow.session.id)
+
+
+def test_a_renewal_keeps_the_lease_with_the_worker_that_holds_it(tmp_path: Path):
+    """Polling Deep Research outruns a five-minute lease.
+
+    Without a renewal the worker is declared dead mid-wait and a second one is
+    started beside it, both writing to the same session.
+    """
+    ledger = ResearchLedger(tmp_path / "research.db")
+    flow = CoScientistWorkflow("Question", ledger=ledger)
+    ledger.set_operation(flow.session.id, "queued", "Waiting", "evidence")
+    assert ledger.claim_operation(
+        flow.session.id, "worker-a", detail="Working", lease_seconds=-1
+    )
+    # The lease is already expired, so the session is up for grabs.
+    assert ledger.requeue_expired_operation(flow.session.id)
+
+    assert ledger.claim_operation(
+        flow.session.id, "worker-a", detail="Working", lease_seconds=-1
+    )
+    assert ledger.renew_operation(
+        flow.session.id, "worker-a", detail="Polling", lease_seconds=600
+    )
+    operation = ledger.operation(flow.session.id)
+    assert operation["status"] == "running"
+    assert operation["detail"] == "Polling"
+    # And now it is not: the renewal is what stops the second worker.
+    assert not ledger.requeue_expired_operation(flow.session.id)
+    assert not ledger.claim_operation(
+        flow.session.id, "worker-b", detail="Duplicate", lease_seconds=60
+    )
+
+
+def test_a_worker_whose_lease_was_taken_away_cannot_renew_it(tmp_path: Path):
+    """Which is how it learns to stop rather than write over the new owner."""
+    ledger = ResearchLedger(tmp_path / "research.db")
+    flow = CoScientistWorkflow("Question", ledger=ledger)
+    ledger.set_operation(flow.session.id, "queued", "Waiting", "evidence")
+    assert ledger.claim_operation(
+        flow.session.id, "worker-a", detail="Working", lease_seconds=-1
+    )
+    assert ledger.requeue_expired_operation(flow.session.id)
+    assert ledger.claim_operation(
+        flow.session.id, "worker-b", detail="Taking over", lease_seconds=600
+    )
+
+    assert not ledger.renew_operation(
+        flow.session.id, "worker-a", detail="Polling", lease_seconds=600
+    )
+    assert ledger.operation(flow.session.id)["detail"] == "Taking over"

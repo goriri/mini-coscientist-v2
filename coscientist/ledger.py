@@ -285,6 +285,36 @@ class ResearchLedger:
             )
             return cursor.rowcount == 1
 
+    def renew_operation(
+        self,
+        session_id: str,
+        owner: str,
+        *,
+        detail: str,
+        lease_seconds: int = 300,
+    ) -> bool:
+        """Extend this worker's lease, and say what it is waiting on.
+
+        A worker that waits longer than its lease -- polling Deep Research is
+        minutes of waiting -- would otherwise be declared dead by
+        ``requeue_expired_operation`` and have a second worker started beside
+        it. Returns False if the lease has already been taken away, which is the
+        signal to stop rather than to carry on writing to a session somebody
+        else now owns.
+        """
+        now = datetime.now(UTC)
+        expires = (now + timedelta(seconds=lease_seconds)).isoformat()
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE workflow_operations
+                SET detail = ?, lease_expires_at = ?, updated_at = ?
+                WHERE session_id = ? AND status = 'running' AND lease_owner = ?
+                """,
+                (detail, expires, now.isoformat(), session_id, owner),
+            )
+            return cursor.rowcount == 1
+
     def healthcheck(self) -> bool:
         with self._connect() as connection:
             return connection.execute("SELECT 1").fetchone() == (1,)
@@ -621,6 +651,28 @@ class PostgresResearchLedger:
                   )
                 """,
                 (detail, owner, lease_seconds, session_id),
+            )
+            return cursor.rowcount == 1
+
+    def renew_operation(
+        self,
+        session_id: str,
+        owner: str,
+        *,
+        detail: str,
+        lease_seconds: int = 300,
+    ) -> bool:
+        """Extend this worker's lease. See :meth:`ResearchLedger.renew_operation`."""
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE research_workflow_operations
+                SET detail = %s,
+                    lease_expires_at = NOW() + (%s * INTERVAL '1 second'),
+                    updated_at = NOW()
+                WHERE session_id = %s AND status = 'running' AND lease_owner = %s
+                """,
+                (detail, lease_seconds, session_id, owner),
             )
             return cursor.rowcount == 1
 

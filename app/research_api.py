@@ -8,6 +8,7 @@ import logging
 import os
 import secrets
 import threading
+import time
 from pathlib import Path
 from typing import Literal
 from urllib.parse import quote_plus
@@ -307,77 +308,101 @@ def _advance_in_background(session_id: str, *, kind: str, feedback: str = "") ->
     owner = f"worker-{secrets.token_hex(8)}"
     if not _ledger().claim_operation(session_id, owner, detail=details[kind]):
         return
-    try:
-        with _lock_for(session_id):
-            workflow = _load(session_id)
-            if kind == "auto" and evidence_tasks_configured():
-                while (
-                    not workflow.done
-                    and workflow.stage != "evidence"
-                    and workflow.session.status == "active"
-                ):
-                    workflow.accept(workflow.preview(), automatic=True)
-                if workflow.stage == "evidence":
-                    _set_operation(
-                        session_id,
-                        "queued",
-                        "Deep Research pass 1 is queued.",
-                        "evidence",
-                    )
-                    enqueue_evidence_step(
-                        session_id,
-                        session_version=workflow.session.version,
-                        delay_seconds=0,
-                    )
-                    return
-            elif kind == "auto":
-                workflow.run_auto()
-            elif kind == "evidence":
-                if workflow.approval_profile == ApprovalProfile.AUTO:
+    # Deep Research answers in minutes, and each poll that comes back "still
+    # running" schedules the next one. Where Cloud Tasks is configured that next
+    # poll is a task and this worker returns; where it is not, the worker waits
+    # here and polls again, which is what the loop is for.
+    while True:
+        try:
+            with _lock_for(session_id):
+                workflow = _load(session_id)
+                if kind == "auto" and evidence_tasks_configured():
+                    while (
+                        not workflow.done
+                        and workflow.stage != "evidence"
+                        and workflow.session.status == "active"
+                    ):
+                        workflow.accept(workflow.preview(), automatic=True)
+                    if workflow.stage == "evidence":
+                        _set_operation(
+                            session_id,
+                            "queued",
+                            "Deep Research pass 1 is queued.",
+                            "evidence",
+                        )
+                        enqueue_evidence_step(
+                            session_id,
+                            session_version=workflow.session.version,
+                            delay_seconds=0,
+                        )
+                        return
+                elif kind == "auto":
                     workflow.run_auto()
+                elif kind == "evidence":
+                    if workflow.approval_profile == ApprovalProfile.AUTO:
+                        workflow.run_auto()
+                    else:
+                        _draft_next_gate(workflow)
+                elif kind == "revision":
+                    workflow.preview(feedback)
                 else:
                     _draft_next_gate(workflow)
-            elif kind == "revision":
-                workflow.preview(feedback)
-            else:
-                _draft_next_gate(workflow)
-        _set_operation(
-            session_id, "completed", "The requested artifact is ready.", kind
-        )
-    except EvidenceStillRunning:
-        persisted = _ledger().load(session_id)
-        discovery = next(
-            (
-                item
-                for item in reversed(persisted.artifacts)
-                if item.schema_name == "DiscoveryManifest" and item.payload
-            ),
-            None,
-        )
-        polls = 0
-        if discovery:
-            runs = discovery.payload.get("runs") or []
-            if runs:
-                polls = int(runs[-1].get("poll_count", 0))
-        delay = min(60, 15 * (2 ** min(2, polls // 5)))
-        _set_operation(
-            session_id,
-            "queued",
-            f"Deep Research is still running; next status check in {delay} seconds.",
-            "evidence",
-        )
-        enqueue_evidence_step(
-            session_id,
-            session_version=persisted.version,
-            delay_seconds=delay,
-        )
-    except Exception as error:
-        try:
-            _set_operation(session_id, "failed", str(error), kind)
-        except Exception:
-            # A researcher may permanently delete a session while its worker
-            # is finishing. The optimistic session write cannot recreate it.
-            pass
+            _set_operation(
+                session_id, "completed", "The requested artifact is ready.", kind
+            )
+            return
+        except EvidenceStillRunning:
+            persisted = _ledger().load(session_id)
+            discovery = next(
+                (
+                    item
+                    for item in reversed(persisted.artifacts)
+                    if item.schema_name == "DiscoveryManifest" and item.payload
+                ),
+                None,
+            )
+            polls = 0
+            if discovery:
+                runs = discovery.payload.get("runs") or []
+                if runs:
+                    polls = int(runs[-1].get("poll_count", 0))
+            delay = min(60, 15 * (2 ** min(2, polls // 5)))
+            waiting = (
+                f"Deep Research is still running; next status check in {delay} seconds."
+            )
+            if evidence_tasks_configured():
+                _set_operation(session_id, "queued", waiting, "evidence")
+                enqueue_evidence_step(
+                    session_id,
+                    session_version=persisted.version,
+                    delay_seconds=delay,
+                )
+                return
+            # Without a task queue there is nobody to hand the next poll to.
+            # Handing it to ``enqueue_evidence_step`` anyway raised inside this
+            # handler and killed the worker with the operation left queued, so
+            # the stage only advanced when a lease expiry happened to restart
+            # it: one poll every five minutes, and a session that never
+            # finished discovery.
+            #
+            # The lease is renewed rather than released, and the operation stays
+            # ``running``, so an instance that dies mid-wait is still recovered
+            # by ``requeue_expired_operation``. A renewal that fails means the
+            # lease was taken away, and this worker stops rather than writing to
+            # a session another one now owns.
+            if not _ledger().renew_operation(
+                session_id, owner, detail=waiting, lease_seconds=delay + 300
+            ):
+                return
+            time.sleep(delay)
+        except Exception as error:
+            try:
+                _set_operation(session_id, "failed", str(error), kind)
+            except Exception:
+                # A researcher may permanently delete a session while its worker
+                # is finishing. The optimistic session write cannot recreate it.
+                pass
+            return
 
 
 def _schedule_advance(
