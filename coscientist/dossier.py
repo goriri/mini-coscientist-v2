@@ -35,6 +35,7 @@ from .debate import (
 from .evidence import GROUNDING_REDIRECT_MARKER, names_a_document
 from .flowchart import flowchart_drawing, flowchart_steps
 from .markdown_render import (
+    FIGURE_INDEX_HEADING,
     Code,
     Details,
     Heading,
@@ -3270,6 +3271,69 @@ def _introduces(block, following) -> bool:
     return isinstance(following, ListBlock | Table)
 
 
+_EXHIBIT_INDEX_TITLE = FIGURE_INDEX_HEADING.lstrip("# ").strip()
+
+
+def _exhibit_index_lists(blocks: list) -> set[int]:
+    """Where the back-matter index of exhibits is written out as a plain list."""
+    return {
+        index + 1
+        for index, block in enumerate(blocks[:-1])
+        if isinstance(block, Heading)
+        and plain_text(block.text).strip() == _EXHIBIT_INDEX_TITLE
+        and isinstance(blocks[index + 1], ListBlock)
+    }
+
+
+def _exhibit_wording(block: ListBlock) -> dict[str, str]:
+    """Each exhibit's index entry, keyed by its label and kept in the order written."""
+    wording: dict[str, str] = {}
+    for item in block.items:
+        text = " ".join(plain_text(item.text).split())
+        label = _CAPTION.match(f"{text.partition(' — ')[0]}.")
+        if label:
+            wording[label.group(0).rstrip(".")] = text
+    return wording
+
+
+def _exhibit_index(block: ListBlock, styles: dict):
+    """The index of exhibits, set with the page each exhibit is actually on.
+
+    The Markdown index locates its entries by anchor, which is what a Markdown reader
+    follows and what a PDF has no notion of. Flattened for export, all nineteen entries
+    printed as a list of names over two pages with no page number against any of them
+    and nothing to click -- an index of figures and tables that locates neither.
+
+    The entries keep the Markdown's own wording and order so the two indexes are the
+    same index; only the page numbers, which only the typeset copy has, are added.
+    """
+    from reportlab.platypus.tableofcontents import TableOfContents
+
+    class _Index(TableOfContents):
+        def __init__(self, wording: dict[str, str]):
+            super().__init__(notifyKind="ExhibitEntry")
+            self._wording = wording
+            self._found: dict[str, tuple[int, str | None]] = {}
+            self.levelStyles = [styles["toc"][1]]
+            self.dotsMinLevel = 0
+
+        def beforeBuild(self):
+            super().beforeBuild()
+            self._found = {}
+
+        def addEntry(self, level, text, pageNum, key=None):
+            # Captions are notified in the order they are typeset, which interleaves
+            # the figures with the tables; the index is written figures first.
+            self._found[text] = (pageNum, key)
+            self._entries = [
+                (0, _literal(wording), *self._found[label])
+                for label, wording in self._wording.items()
+                if label in self._found
+            ]
+
+    return _Index(_exhibit_wording(block))
+
+
 def _keep_a_heading_with_what_it_heads(story: list) -> list:
     """Bind a heading past the space under it to the thing that space is above.
 
@@ -3300,7 +3364,16 @@ def _story_from_blocks(
     from reportlab.lib import colors
     from reportlab.platypus import HRFlowable, KeepTogether, PageBreak, Spacer
 
-    tails = _chapter_tails(blocks)
+    indexes = _exhibit_index_lists(blocks)
+    # reportlab only registers an indexing flowable it finds at the top of the story, so
+    # an index folded into a KeepTogether group is never asked for its entries and prints
+    # "Placeholder for table of contents" against page 0. A short index -- a report with
+    # two exhibits -- is exactly the closing section that qualifies as a chapter tail.
+    tails = {
+        head: end
+        for head, end in _chapter_tails(blocks).items()
+        if not any(head <= entry < end for entry in indexes)
+    }
     story: list = []
     index = -1
     skip_until = 0
@@ -3309,6 +3382,9 @@ def _story_from_blocks(
         if index < skip_until:
             continue
         following = blocks[index + 1] if index + 1 < len(blocks) else None
+        if index in indexes:
+            story.append(_exhibit_index(block, styles))
+            continue
         if index in tails:
             skip_until = tails[index]
             story.append(
@@ -3436,6 +3512,15 @@ def _make_doc_template(buffer, title: str, header: str, totals: dict):
                 return
             level = _TOC_LEVELS.get(flowable.style.name.removesuffix("CJK"))
             if level is None:
+                # A caption is body type, so it falls through the contents machinery.
+                # The back-matter index needs the page it landed on all the same.
+                label = _CAPTION.match(flowable.getPlainText().strip())
+                if label:
+                    key = f"exhibit-{label.group(0).rstrip('.').lower()}"
+                    self.canv.bookmarkPage(key)
+                    self.notify(
+                        "ExhibitEntry", (0, label.group(0).rstrip("."), self.page, key)
+                    )
                 return
             text = flowable.getPlainText()
             key = f"toc-{self._entry_index}"

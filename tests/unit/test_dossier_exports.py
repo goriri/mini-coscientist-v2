@@ -810,3 +810,42 @@ def test_a_paragraph_that_announces_nothing_is_not_bound_to_what_follows():
     story = _story("The tournament ran three rounds.\n\n| A |\n| --- |\n| 1 |\n")
 
     assert not story[0].getKeepWithNext()
+
+
+def test_the_index_of_exhibits_gives_a_page_and_a_link_for_every_entry():
+    """The Markdown index locates its entries by anchor, which is what a Markdown
+    reader follows and what a PDF has no notion of. Flattened for export, all
+    twenty-nine entries of a live report printed over two pages with no page number
+    against any of them and nothing to click."""
+    from pypdf import PdfReader
+
+    dossier = (
+        "# Report\n\n## Findings\n\n| Rank | Idea |\n| --- | --- |\n| 1 | Coating |\n\n"
+        + "Filler sentence about the tournament. " * 400
+        + "\n\n## Later findings\n\n| Rank | Idea |\n| --- | --- |\n| 2 | Doping |\n"
+    )
+    reader = PdfReader(BytesIO(render_pdf(dossier)))
+    pages = {
+        page.indirect_reference.idnum: number
+        for number, page in enumerate(reader.pages, start=1)
+    }
+    index = reader.pages[-1]
+    text = index.extract_text() or ""
+
+    entries = dict(re.findall(r"\.\s(\d+)\n(Table \d+) —", text))
+    assert {"Table 1", "Table 2"} == set(entries.values())
+    printed = {label: int(page) for page, label in entries.items()}
+    assert printed["Table 1"] != printed["Table 2"], (
+        "both exhibits were listed against the same page"
+    )
+    for label, page in printed.items():
+        assert label in (reader.pages[page - 1].extract_text() or ""), (
+            f"{label} is not on the page the index sends the reader to"
+        )
+
+    # And the entries are links, not text that happens to name a page.
+    targets = {
+        pages[annotation.get_object()["/Dest"][0].idnum]
+        for annotation in (index.get("/Annots") or [])
+    }
+    assert targets == set(printed.values())
