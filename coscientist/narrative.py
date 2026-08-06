@@ -350,9 +350,28 @@ def _publisher_of(url: str) -> str:
     return host.removeprefix("www.")
 
 
+# A search result's title, as the grounding API hands it over, ends in the site it
+# was found on: "... by atomic layer deposition - The Royal Society of Chemistry
+# rsc.org". The hostname is the search engine's own furniture. Printed in a
+# reference list it reads as part of the paper's name, and the same paper found on
+# two aggregators then carries two different names.
+_TRAILING_HOST = re.compile(
+    r"[\s,;|/\u2013\u2014-]+(?:www\.)?[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.[a-z]{2,}\.?$",
+    re.IGNORECASE,
+)
+
+
+def _without_search_chrome(title: str) -> str:
+    """A search result's title without the site name the search appended to it."""
+    trimmed = _TRAILING_HOST.sub("", title).strip(" .,;|-\u2013\u2014")
+    # Only where something recognisable as a title is left. On a result whose whole
+    # title is the hostname there is nothing to keep, and the caller says so instead.
+    return trimmed if len(trimmed.split()) >= 3 else title
+
+
 def _reference_title(lead: SourceLead) -> str:
     """Prefer the annotation title: the canonical URL is a grounding redirect."""
-    title = " ".join(lead.title.split())
+    title = _without_search_chrome(" ".join(lead.title.split()))
     if not title:
         # A lead with no title still usually has a link, and the link names the
         # publisher. A live list printed "Untitled source lead." -- a reference

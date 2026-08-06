@@ -28,7 +28,7 @@ from .debate import (
     strip_rationale_label,
     strip_turn_label,
 )
-from .evidence import names_a_document
+from .evidence import GROUNDING_REDIRECT_MARKER, names_a_document
 from .markdown_render import (
     Code,
     Details,
@@ -428,7 +428,15 @@ def _reference_lines(references: Sequence[Citation]) -> list[str]:
             distinguisher = (
                 f", the {_ORDINAL_WORDS[position[key]]} of "
                 f"{_number_word(repeated[key]).lower()} separate records the search "
-                "returned under that publisher without a title"
+                "returned "
+                # The clause was written for entries the search left untitled and
+                # was then printed under entries that had one, telling the reader
+                # there was no title directly after setting the title down.
+                + (
+                    "under that title"
+                    if _titled(citation)
+                    else "under that publisher without a title"
+                )
             )
         lines.append(_reference_line(citation, distinguisher=distinguisher))
     return lines
@@ -496,10 +504,25 @@ def _reference_line(citation: Citation, *, distinguisher: str = "") -> str:
         # the same twenty-word explanation is the explanation printed four times too
         # often.
         return f"{citation.number}. {title}{stop}"
+    if GROUNDING_REDIRECT_MARKER in citation.url:
+        # A link was recorded. It is the search's own redirector, which expires and
+        # names no publisher, so it cannot be printed and cannot be followed -- but
+        # "no link was recorded" said the run had captured nothing when what it had
+        # captured was a locator that stopped working.
+        return (
+            f"{citation.number}. {title}{stop} The literature search recorded only "
+            "its own redirect link for this source, which no longer resolves, so it "
+            "has to be found by title."
+        )
     return (
         f"{citation.number}. {title}{stop} No link to this source was recorded, so it "
         "has to be found by title."
     )
+
+
+def _titled(citation: Citation) -> bool:
+    """Whether the entry prints a title, as opposed to standing in for one."""
+    return not citation.title.lstrip().startswith("Untitled source")
 
 
 def _redirect_only(citation: Citation) -> bool:
@@ -507,13 +530,13 @@ def _redirect_only(citation: Citation) -> bool:
     return (
         not names_a_document(citation.url)
         and not _site_of(citation.url)
-        and citation.title.lstrip().startswith("Untitled source")
+        and not _titled(citation)
     )
 
 
 def _site_of(url: str) -> str:
     """The host a non-citable locator points at, if it points at one."""
-    if not url.startswith(("http://", "https://")) or "grounding-api-redirect" in url:
+    if not url.startswith(("http://", "https://")) or GROUNDING_REDIRECT_MARKER in url:
         return ""
     _, _, remainder = url.partition("://")
     host, _, _ = remainder.partition("/")

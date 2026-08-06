@@ -1343,15 +1343,42 @@ def normalize_report(
     return narrative
 
 
+def lead_identity(lead: SourceLead) -> str:
+    """What makes two search results the same document.
+
+    The canonical URL alone is not it. A grounding redirector mints one opaque
+    token per citation, and the ones that cannot be followed keep that token --
+    so a live report printed references 5, 6 and 7 as three separate papers when
+    they were one paper found three times, under a title the three shared word
+    for word. A DOI is the same document by definition however it was reached,
+    and a redirector that resolved is matched on where it resolved to.
+    """
+    doi = (lead.identifiers.get("doi") or "").strip().lower()
+    if doi:
+        return f"doi:{doi}"
+    title = " ".join(lead.title.split()).casefold()
+    if GROUNDING_REDIRECT_MARKER in lead.canonical_url and title:
+        return f"title:{title}"
+    return lead.canonical_url
+
+
 def merge_leads(
     existing: list[SourceLead], additions: list[SourceLead]
 ) -> list[SourceLead]:
-    merged = {lead.canonical_url: lead.model_copy(deep=True) for lead in existing}
+    merged = {lead_identity(lead): lead.model_copy(deep=True) for lead in existing}
     for lead in additions:
-        current = merged.get(lead.canonical_url)
+        current = merged.get(lead_identity(lead))
         if current is None:
-            merged[lead.canonical_url] = lead.model_copy(deep=True)
+            merged[lead_identity(lead)] = lead.model_copy(deep=True)
             continue
+        # A redirector says which search found the paper; the resolved link says
+        # which paper. Whichever copy carries the second one is the locator to
+        # keep, whichever of them the merge happened to meet first.
+        if (
+            GROUNDING_REDIRECT_MARKER in current.canonical_url
+            and GROUNDING_REDIRECT_MARKER not in lead.canonical_url
+        ):
+            current.canonical_url = lead.canonical_url
         current.originating_passes = list(
             dict.fromkeys([*current.originating_passes, *lead.originating_passes])
         )
@@ -1375,6 +1402,15 @@ def merge_leads(
             current.title = lead.title
         if current.source_type == "unknown":
             current.source_type = lead.source_type
+        # The one copy that was checked settles it for the document. Keeping the
+        # first copy's "discovered_unverified" would throw away a retrieval that
+        # already happened and quarantine a source this run has read.
+        if (
+            current.verification_status == "discovered_unverified"
+            and lead.verification_status != "discovered_unverified"
+        ):
+            current.verification_status = lead.verification_status
+            current.verification_note = lead.verification_note
     return list(merged.values())
 
 
