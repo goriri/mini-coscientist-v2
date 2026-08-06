@@ -1204,12 +1204,55 @@ def _idea_deep_dive(
     lines.extend(["### Idea Proposal", "", brief.proposal, "", "### Description", ""])
     for paragraph in brief.description:
         lines.extend([paragraph, ""])
+    lines.extend(_self_rating(brief))
     lines.extend(_workflow_diagram(brief))
     lines.extend(_evidence_assessment(brief))
     lines.extend(_revised_form_block(brief))
     lines.extend(_review_block(brief, hoisted_questions))
     lines.extend(_match_summary(brief, hoisted_matches, transcribed))
     return lines
+
+
+def _self_rating(brief: IdeaBrief) -> list[str]:
+    """The table the proposing specialist appended to its own mechanism.
+
+    It arrived inside a prose field, so it was read out as clauses of the mechanism
+    and printed into the Mechanism cell of the comparison grid, where a judgement
+    the specialist awarded itself stood among the fields the run filled in. Kept,
+    because the specialist wrote it; moved, and said to be its own.
+    """
+    if not brief.self_rating:
+        return []
+    header, *rows = brief.self_rating
+    width = len(header)
+    return [
+        "### The Specialist's Own Rating",
+        "",
+        "The specialist that proposed this idea appended a table of its own to the "
+        + (
+            f"mechanism, headed {brief.self_rating_title}. "
+            if brief.self_rating_title
+            else "mechanism. "
+        )
+        + "The ratings in it are its own assessment of what it had just written, "
+        "not a result of the reviews or the tournament below.",
+        "",
+        *_grid(
+            [_cell(name) for name in header],
+            [
+                [
+                    _cell(row[index] if index < len(row) else "")
+                    for index in range(width)
+                ]
+                for row in rows
+            ],
+        ),
+    ]
+
+
+def _cell(text: str) -> str:
+    """One table cell, with anything that would end the cell early taken out."""
+    return " ".join(str(text).split()).replace("|", "—")
 
 
 def _workflow_diagram(brief: IdeaBrief) -> list[str]:

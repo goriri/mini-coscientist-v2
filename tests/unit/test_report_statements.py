@@ -352,3 +352,116 @@ def test_agreeing_reviews_with_no_falsifier_are_not_told_they_disagree():
         "Their agreement is about a claim nothing can yet be held against"
         in (lines[-1])
     )
+
+
+# --- a table the specialist appended is its table, not the mechanism ----------
+
+
+MECHANISM_WITH_A_SCORECARD = (
+    "High-nickel cathodes suffer from instability, and the coating slows it.\n\n"
+    "## Evaluation of Idea\n\n"
+    "| Criterion | Description | Judgment |\n"
+    "| --- | --- | --- |\n"
+    "| Aggregation Control | Fluidized bed ALD coats discrete particles | High |\n"
+    "| Purity Potential | Amorphous, defect-free layer | Exceptional |\n"
+)
+
+
+def _rated_candidate():
+    from coscientist.models import Candidate
+
+    return Candidate(
+        id="candidate_0001",
+        title="A 2.5 nm LiNbO3 Coating",
+        claim="A 2.5 nm coating raises retention.",
+        rationale=MECHANISM_WITH_A_SCORECARD,
+        mechanism_model="The coating buffers oxygen.",
+        validation_protocol="Coin cells against an uncoated control.",
+        falsifier="No difference at 500 cycles.",
+    )
+
+
+def test_the_mechanism_cell_holds_the_mechanism_and_not_the_self_rating():
+    """ "Stereochemical Integrity (Description: ...; Judgment: Exceptional)" ran on
+    inside the Mechanism cell of a live comparison grid, where a rating the specialist
+    awarded itself reads as one of the fields the run filled in."""
+    from coscientist.narrative import _table_rows
+
+    mechanism = dict(_table_rows(_rated_candidate()))["Mechanism"]
+
+    assert mechanism == (
+        "High-nickel cathodes suffer from instability, and the coating slows it."
+    )
+    assert "Judgment" not in mechanism
+    assert "Evaluation of Idea" not in mechanism
+
+
+def test_the_self_rating_is_printed_as_the_specialists_own_table():
+    from coscientist.dossier import _self_rating
+    from coscientist.narrative import IdeaBrief, _authors_own_table
+
+    _, title, rating = _authors_own_table(MECHANISM_WITH_A_SCORECARD)
+    brief = IdeaBrief(
+        title="A 2.5 nm LiNbO3 Coating",
+        candidate_id="candidate_0001",
+        rank=1,
+        elo=1200,
+        category="",
+        proposal="",
+        description=[],
+        facts={},
+        summary={},
+        table_rows=[],
+        reviews=[],
+        coherence=[],
+        deep_verification=[],
+        matches=[],
+        wins=0,
+        losses=0,
+        ties=0,
+        shortlisted=False,
+        self_rating_title=title,
+        self_rating=rating,
+    )
+
+    said = "\n".join(_self_rating(brief))
+
+    assert "headed Evaluation of Idea." in said
+    assert "not a result of the reviews or the tournament below" in said
+    assert "| Criterion | Description | Judgment |" in said
+    assert "| Purity Potential | Amorphous, defect-free layer | Exceptional |" in said
+
+
+def test_an_idea_whose_specialist_rated_nothing_gets_no_rating_section():
+    from coscientist.dossier import _self_rating
+    from coscientist.narrative import _authors_own_table
+
+    kept, title, rating = _authors_own_table("The coating slows the fade.")
+
+    assert (kept, title, rating) == ("The coating slows the fade.", "", [])
+    assert _self_rating(_brief_without_a_rating()) == []
+
+
+def _brief_without_a_rating():
+    from coscientist.narrative import IdeaBrief
+
+    return IdeaBrief(
+        title="Idea",
+        candidate_id="candidate_0002",
+        rank=1,
+        elo=1200,
+        category="",
+        proposal="",
+        description=[],
+        facts={},
+        summary={},
+        table_rows=[],
+        reviews=[],
+        coherence=[],
+        deep_verification=[],
+        matches=[],
+        wins=0,
+        losses=0,
+        ties=0,
+        shortlisted=False,
+    )

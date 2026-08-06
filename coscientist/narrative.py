@@ -737,6 +737,15 @@ class IdeaBrief:
     """
     revised_unchanged: list[str] = field(default_factory=list)
     """Fields the rewrite left alone, named so the diff above can be read as a diff."""
+    self_rating_title: str = ""
+    """The heading the specialist gave the table it appended to the mechanism."""
+    self_rating: list[list[str]] = field(default_factory=list)
+    """That table, header row first, printed as the specialist's own rating.
+
+    It arrived inside a prose field, so the grid read it out as clauses of the
+    mechanism and a rating the specialist awarded itself stood among the fields the
+    run filled in.
+    """
     strategy: str = ""
     """Which of the four generation strategies proposed this idea."""
     mermaid: str = ""
@@ -2448,6 +2457,52 @@ def _row_as_prose(header: Sequence[str], row: Sequence[str]) -> str:
     return f"{row[0]} ({body})"
 
 
+def _authors_own_table(text: str) -> tuple[str, str, list[list[str]]]:
+    """A prose field split from the table the specialist appended to it.
+
+    Evolution asks for "a structured Evaluation Table in the mechanism_model", and
+    four of eight live ideas answered that prose field with the mechanism and then a
+    table scoring the idea against criteria of the specialist's own choosing. Read
+    out as clauses it ran on inside the Mechanism cell of the comparison grid --
+    "Stereochemical Integrity (Description: Preserves transition metal coordination
+    octahedra; Judgment: Exceptional)" -- where a rating the specialist awarded
+    itself sits among fields the run filled in and reads as one of them.
+
+    Returned as (the prose without it, the heading it was given, the table). Only
+    the first table comes out; anything further is left to the flattener, which
+    still has to handle a table written mid-sentence.
+    """
+    lines = str(text or "").splitlines()
+    for index, line in enumerate(lines):
+        header = _table_cells(line)
+        rule = _table_cells(lines[index + 1]) if index + 1 < len(lines) else []
+        if not (
+            header
+            and rule
+            and len(rule) == len(header)
+            and all(_RULE_CELL.fullmatch(cell) for cell in rule)
+        ):
+            continue
+        end = index + 2
+        rows = []
+        while end < len(lines) and (row := _table_cells(lines[end])):
+            rows.append(row)
+            end += 1
+        if not rows:
+            continue
+        start = index
+        while start and not lines[start - 1].strip():
+            start -= 1
+        title = ""
+        # The heading above a table names that table. Left where it was, it would
+        # introduce whatever paragraph the table used to sit in front of.
+        if start and (heading := _MARKDOWN_HEADING_RE.match(lines[start - 1].strip())):
+            title = heading.group(2).strip().rstrip(".:")
+            start -= 1
+        return "\n".join(lines[:start] + lines[end:]), title, [header, *rows]
+    return str(text or ""), "", []
+
+
 def _blocks_as_prose(text: str) -> str:
     """A specialist's own Markdown, written as the prose the field is declared to hold.
 
@@ -2987,11 +3042,20 @@ def _stated(facts: dict[str, str], field_name: str) -> bool:
     return facts.get(field_name) != _UNSTATED[field_name]
 
 
+def _mechanism(candidate: Candidate) -> str:
+    """The mechanism the specialist wrote, without the table it appended to it.
+
+    The table is printed under the idea it belongs to, as the specialist's own
+    rating rather than as part of the mechanism it was written after.
+    """
+    return _sentence(_authors_own_table(candidate.rationale)[0])
+
+
 def _idea_facts(candidate: Candidate) -> dict[str, str]:
     """The candidate's own fields as prose, the raw material every section draws on."""
     return {
         "Core idea": _sentence(candidate.claim),
-        "Mechanism and rationale": _sentence(candidate.rationale),
+        "Mechanism and rationale": _mechanism(candidate),
         "Discriminating predictions": _join(
             candidate.predictions,
             fallback=_UNSTATED["Discriminating predictions"],
@@ -3620,7 +3684,7 @@ def _summary_sections(
 def _table_rows(candidate: Candidate) -> list[tuple[str, str]]:
     """The per-idea comparison grid, using one row-label set across the whole report."""
     values = {
-        "Mechanism": _sentence(candidate.rationale),
+        "Mechanism": _mechanism(candidate),
         "Discriminating prediction": _join(
             candidate.predictions[:1], fallback="None recorded."
         ),
@@ -4343,6 +4407,7 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
         )
         revision = record.revision_of(candidate.id)
         revised_facts = _idea_facts(revision.candidate) if revision else None
+        _, rating_title, rating = _authors_own_table(candidate.rationale)
         briefs.append(
             IdeaBrief(
                 title=record.title_for(candidate.id),
@@ -4389,6 +4454,8 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
                 revised_lead_in=revised_lead_in,
                 revised_form=revised_form,
                 revised_unchanged=revised_unchanged,
+                self_rating_title=rating_title,
+                self_rating=rating,
                 strategy=candidate.generation_strategy.replace("_", " "),
                 mermaid=candidate.workflow_diagram_mermaid.strip(),
                 evidence_notes=_evidence_notes(record, candidate),
