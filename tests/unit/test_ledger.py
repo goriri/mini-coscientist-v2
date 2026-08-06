@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 from pathlib import Path
 
@@ -130,3 +131,94 @@ def test_a_worker_whose_lease_was_taken_away_cannot_renew_it(tmp_path: Path):
         flow.session.id, "worker-a", detail="Polling", lease_seconds=600
     )
     assert ledger.operation(flow.session.id)["detail"] == "Taking over"
+
+
+def test_the_postgres_ledger_holds_a_bounded_share_of_the_server(monkeypatch):
+    """One pool per process, sized, waiting rather than refusing.
+
+    Every operation used to open its own connection and close it again, so the
+    only bound on how many this process held at once was the server's own
+    ceiling -- twenty-five on the machine it runs against, three of them
+    reserved. Three concurrent report exports reached it: the PDF came back a
+    500 in forty milliseconds reading "remaining connection slots are reserved
+    for non-replication superuser connections", at the end of an hour-long run.
+    """
+    import psycopg_pool
+
+    from coscientist.ledger import (
+        DEFAULT_POOL_MAX_SIZE,
+        POOL_WAIT_SECONDS,
+        PostgresResearchLedger,
+    )
+
+    built: list[dict] = []
+    handed_out: list[int] = []
+
+    liveness_check = psycopg_pool.ConnectionPool.check_connection
+
+    class _Pool:
+        check_connection = liveness_check
+
+        def __init__(self, conninfo, **kwargs):
+            built.append({"conninfo": conninfo, **kwargs})
+
+        def connection(self):
+            handed_out.append(1)
+            return contextlib.nullcontext(object())
+
+        def close(self):
+            built.append({"closed": True})
+
+    monkeypatch.setattr(psycopg_pool, "ConnectionPool", _Pool)
+    monkeypatch.setattr(PostgresResearchLedger, "_initialize", lambda self: None)
+
+    ledger = PostgresResearchLedger("postgresql:///coscientist")
+    with ledger._connect():
+        pass
+    with ledger._connect():
+        pass
+
+    assert len(built) == 1, "A pool per operation is the churn this replaced."
+    assert built[0]["conninfo"] == "postgresql:///coscientist"
+    assert built[0]["max_size"] == DEFAULT_POOL_MAX_SIZE
+    # Queue the burst, do not refuse it: a reader clicking three export links
+    # should wait for the third, not be handed a 500 for it.
+    assert built[0]["timeout"] == POOL_WAIT_SECONDS
+    # Cloud SQL drops an idle connection without telling the holder.
+    assert built[0]["check"] is liveness_check
+    assert len(handed_out) == 2
+
+    ledger.close()
+    assert built[-1] == {"closed": True}
+    assert ledger._pool is None
+
+
+def test_the_connection_share_is_configurable_for_a_bigger_server(monkeypatch):
+    """The default is a share of a small server's ceiling, not a fixed truth."""
+    from coscientist.ledger import DEFAULT_POOL_MAX_SIZE, _pool_max_size
+
+    monkeypatch.delenv("LEDGER_POOL_MAX_SIZE", raising=False)
+    assert _pool_max_size() == DEFAULT_POOL_MAX_SIZE
+    monkeypatch.setenv("LEDGER_POOL_MAX_SIZE", "12")
+    assert _pool_max_size() == 12
+    # A misconfigured value must not leave the process with an unusable pool.
+    monkeypatch.setenv("LEDGER_POOL_MAX_SIZE", "0")
+    assert _pool_max_size() == DEFAULT_POOL_MAX_SIZE
+    monkeypatch.setenv("LEDGER_POOL_MAX_SIZE", "not a number")
+    assert _pool_max_size() == DEFAULT_POOL_MAX_SIZE
+
+
+def test_the_adk_engines_take_a_share_of_the_same_server():
+    """The two SQLAlchemy engines draw on the ceiling the ledger draws on.
+
+    SQLAlchemy holds five and overflows to fifteen by default, and there are two
+    engines here: thirty from one process, against a budget of twenty-two shared
+    with every other instance of the service.
+    """
+    from app.app_utils.services import _engine_options
+
+    postgres = _engine_options("postgresql+asyncpg://user@/coscientist")
+    assert postgres["pool_size"] + postgres["max_overflow"] <= 5
+    assert postgres["pool_pre_ping"] is True
+    # SQLite has no server and no ceiling, and its pool arguments differ.
+    assert _engine_options("sqlite+aiosqlite:///runtime.db") == {}

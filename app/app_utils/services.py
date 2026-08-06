@@ -63,6 +63,27 @@ def _database_url() -> str:
     return f"sqlite+aiosqlite:///{_STATE_DIR / 'adk_runtime.db'}"
 
 
+# Every pool in this process draws on one server's connection ceiling, and that
+# ceiling is twenty-five on the machine this runs against. SQLAlchemy defaults to
+# five held plus ten overflow per engine, and there are two engines here beside
+# the research ledger's own pool -- thirty-five from one process against a
+# twenty-two-connection budget. The exports stage of a live run collected the
+# resulting "remaining connection slots are reserved" 500. These are shares of
+# that budget: raise them with the server's max_connections, not before it.
+_ENGINE_POOL = {
+    "pool_size": 2,
+    "max_overflow": 2,
+    # Cloud SQL closes an idle connection without telling the holder.
+    "pool_pre_ping": True,
+    "pool_recycle": 1800,
+}
+
+
+def _engine_options(url: str) -> dict:
+    """Pool settings for a server that has them, and none for SQLite, which has not."""
+    return {} if url.startswith("sqlite") else dict(_ENGINE_POOL)
+
+
 @functools.cache
 def get_session_service():
     """Process-wide session service shared across every serving surface."""
@@ -81,13 +102,15 @@ def get_session_service():
             or os.environ.get("GOOGLE_CLOUD_LOCATION"),
             agent_engine_id=agent_engine_id,
         )
-    return DatabaseSessionService(db_url=_database_url())
+    url = _database_url()
+    return DatabaseSessionService(db_url=url, **_engine_options(url))
 
 
 @functools.cache
 def get_task_store():
     """Durable A2A task store shared by the generated JSON-RPC surface."""
-    engine = create_async_engine(_database_url())
+    url = _database_url()
+    engine = create_async_engine(url, **_engine_options(url))
     return DatabaseTaskStore(engine=engine, create_table=True)
 
 

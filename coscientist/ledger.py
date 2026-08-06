@@ -4,12 +4,22 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from .models import AuditEvent, Session, utc_now
+
+
+def _pool_max_size() -> int:
+    """The configured per-process connection share, or the conservative default."""
+    try:
+        configured = int(os.environ.get("LEDGER_POOL_MAX_SIZE", "") or 0)
+    except ValueError:
+        configured = 0
+    return max(1, configured or DEFAULT_POOL_MAX_SIZE)
 
 
 class ConcurrentSessionUpdate(RuntimeError):
@@ -340,17 +350,69 @@ class ResearchLedger:
             return cursor.rowcount == 1
 
 
+DEFAULT_POOL_MAX_SIZE = 3
+"""How many server connections one process may hold, unless told otherwise.
+
+A Postgres server has a hard connection ceiling and it is small on the smallest
+machines -- twenty-five on a db-f1-micro, three of them reserved for the
+superuser. This ledger opened and closed one connection per operation, and the
+serving process is a threadpool behind an autoscaler, so the ceiling was the
+only thing bounding how many it held at once. Three concurrent report exports
+were enough: the PDF came back in forty milliseconds as a 500 reading
+"remaining connection slots are reserved for non-replication superuser
+connections", after the workflow behind it had run for the better part of an
+hour.
+
+Three per process leaves room for the two SQLAlchemy engines beside it and for
+a second instance of the service. Raise ``LEDGER_POOL_MAX_SIZE`` alongside the
+server's own ``max_connections`` -- this number is a share of that one, and
+setting it without raising that is how the failure above comes back.
+"""
+
+POOL_WAIT_SECONDS = 30.0
+"""How long an operation waits for a free connection before giving up.
+
+Waiting is the point. Under a burst the work is queued rather than refused,
+which is what a reader clicking three export links at once should get.
+"""
+
+
 class PostgresResearchLedger:
     """PostgreSQL implementation used by horizontally scaled Cloud Run."""
 
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str, pool_max_size: int = 0):
         self.database_url = database_url
+        self._pool_max_size = pool_max_size or _pool_max_size()
+        self._pool = None
         self._initialize()
 
     def _connect(self):
-        import psycopg
+        """A pooled connection, returned to the pool rather than closed at exit.
 
-        return psycopg.connect(self.database_url)
+        ``pool.connection()`` commits on a clean exit and rolls back on an
+        exception, which is what ``psycopg.connect()`` as a context manager did
+        here before, so every call site reads the same.
+        """
+        from psycopg_pool import ConnectionPool
+
+        if self._pool is None:
+            self._pool = ConnectionPool(
+                self.database_url,
+                min_size=1,
+                max_size=self._pool_max_size,
+                timeout=POOL_WAIT_SECONDS,
+                # Cloud SQL drops a connection that has been idle, and the
+                # holder does not hear about it until it tries to use it.
+                check=ConnectionPool.check_connection,
+                open=True,
+            )
+        return self._pool.connection()
+
+    def close(self) -> None:
+        """Hand every pooled connection back to the server."""
+        if self._pool is not None:
+            self._pool.close()
+            self._pool = None
 
     def _initialize(self) -> None:
         with self._connect() as connection, connection.cursor() as cursor:
