@@ -1990,9 +1990,15 @@ _HOUSE_TERMS: tuple[tuple[re.Pattern[str], str], ...] = (
     # "reflection" is the pipeline's own name for the evidence-and-correctness pass.
     # It is stripped from the review headings, so a debate turn that said "the
     # reflection review points out" left the report calling one review two different
-    # things, one of them a stage id.
+    # things, one of them a stage id. Panelists reach for the same stage id under
+    # other nouns: "flagged by the reflection reviewer" and "the fatal flaw flagged
+    # by the reflection agent" both reached a live transcript, and "agent" names a
+    # process the reader has never been shown.
     (
-        re.compile(r"\breflection review\b", re.IGNORECASE),
+        re.compile(
+            r"\breflection (?:review(?:er)?s?|agents?|stages?|passe?s?)\b",
+            re.IGNORECASE,
+        ),
         "evidence and correctness review",
     ),
 )
@@ -2550,10 +2556,19 @@ def _integrity_entries(record: ResearchRecord) -> list[tuple[str, str]]:
     # claim_6_1, source_6_2" -- so the one section of the report about evidence that
     # cannot be trusted was the one place that never said what the evidence was.
     names = _record_names(record)
+    written = {candidate.id: candidate for candidate in record.candidates}
     lines: list[tuple[str, str]] = []
     grouped: dict[str, list[str]] = {"unverified": [], "uncited": []}
     for candidate_id, citations in ordered:
         title = record.title_for(candidate_id)
+        # The same list the idea's own warning prints, so the two do not disagree
+        # about how many ids the idea invented. Which ideas land here is still the
+        # resolver's call, not this list's.
+        invented = (
+            _invented_ids(record, written[candidate_id], citations)
+            if candidate_id in written
+            else list(citations.unresolved)
+        )
         if citations.unresolved:
             lines.append(
                 (
@@ -2561,7 +2576,7 @@ def _integrity_entries(record: ResearchRecord) -> list[tuple[str, str]]:
                     f"{title} cites evidence that does not exist in this session — "
                     # Nothing to name these after, so they are set as the literal
                     # identifiers they are rather than dressed up as prose.
-                    + _names([f"`{item}`" for item in citations.unresolved])
+                    + _names([f"`{item}`" for item in invented])
                     + ". Its claim is unsupported.",
                 )
             )
@@ -4690,7 +4705,7 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
                 ties=ties,
                 shortlisted=shortlisted,
                 support=citations.support if citations else "unknown",
-                unresolved_evidence_ids=list(citations.unresolved) if citations else [],
+                unresolved_evidence_ids=_invented_ids(record, candidate, citations),
                 accepted_flaw=accepted_flaw,
                 tied_with=len(tied_ids),
                 contradicting_claims=_contradicting_claims(record, candidate),
@@ -4835,6 +4850,43 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
             claim.id, claim.claim, claim.verification_status
         )
     return index
+
+
+def _invented_ids(
+    record: ResearchRecord, candidate: Candidate, citations: CandidateCitations | None
+) -> list[str]:
+    """Every id this idea cited that names nothing, wherever it wrote it.
+
+    The unsupported warning was built from ``evidence_ids`` alone, which is the field
+    the resolver reads. A live idea put a third invented id in an evidence statement
+    instead of in that field: the audit trail printed "no record of that id exists in
+    this run's evidence base" against `stmt_4_pass1`, three separate reviews named all
+    three ids, and the warning at the head of the idea named two -- so a reader who
+    counted was told by the report that the report cannot count. Only a statement that
+    is nothing but an id is taken, because that is the case the audit trail already
+    reports as an invented citation; an id inside a sentence is the sentence's own
+    business and a chemical formula is shaped like one.
+    """
+    named = list(citations.unresolved) if citations else []
+    index = _evidence_index(record)
+    recorded = record.cited_evidence.get(
+        candidate.id,
+        [
+            list(candidate.evidence_for),
+            list(candidate.evidence_against),
+            list(candidate.evidence_gaps),
+        ],
+    )
+    for statements in recorded:
+        for statement in statements:
+            bare = _sentence(statement).rstrip(".").strip()
+            if (
+                _BARE_REFERENCE.fullmatch(bare)
+                and bare not in index
+                and bare not in named
+            ):
+                named.append(bare)
+    return named
 
 
 def _cited_records(

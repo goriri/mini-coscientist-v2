@@ -1744,6 +1744,68 @@ def test_a_missing_evidence_id_is_never_presented_as_grounding(
         assert brief.title in body
 
 
+def test_an_id_invented_in_a_statement_is_counted_by_the_warning_that_names_them(
+    rich_session: Session,
+):
+    """Three reviews of a live idea named three fabricated ids; the warning at the head
+    of that idea named two, because the third was written into an evidence statement
+    rather than into the field the resolver reads. The audit trail printed "no record of
+    that id exists" against it, so the report held both counts and printed the low one
+    where a reader would act on it."""
+    from coscientist.narrative import _integrity_entries
+
+    record = load_record(rich_session)
+    broken = next(
+        candidate
+        for candidate in record.candidates
+        if record.evidence_support[candidate.id].support == "unsupported"
+    )
+    resolver_saw = record.evidence_support[broken.id].unresolved
+    assert resolver_saw, "the fixture no longer exercises an invented citation"
+    record.cited_evidence[broken.id][0].append("stmt_4_pass1")
+
+    brief = next(
+        item for item in build_idea_briefs(record) if item.candidate_id == broken.id
+    )
+    assert "`stmt_4_pass1`" in brief.support_notice
+    for named in resolver_saw:
+        assert f"`{named}`" in brief.support_notice
+
+    line = next(
+        text
+        for _, text in _integrity_entries(record)
+        if record.title_for(broken.id) in text
+    )
+    assert "`stmt_4_pass1`" in line, (
+        "the run-level list and the idea's own warning disagree on the count"
+    )
+
+
+def test_an_ordinary_statement_is_not_read_as_an_invented_identifier(
+    rich_session: Session,
+):
+    """Only a statement that is nothing but an id is one. A sentence that happens to
+    contain an underscored token -- a formula, a filename -- is a statement."""
+    record = load_record(rich_session)
+    broken = next(
+        candidate
+        for candidate in record.candidates
+        if record.evidence_support[candidate.id].support == "unsupported"
+    )
+    before = len(record.evidence_support[broken.id].unresolved)
+    record.cited_evidence[broken.id][0].append(
+        "Coating Li_2CO_3 residue was measured at pass_2 of the deposition."
+    )
+
+    brief = next(
+        item for item in build_idea_briefs(record) if item.candidate_id == broken.id
+    )
+    assert brief.unresolved_evidence_ids == list(
+        record.evidence_support[broken.id].unresolved
+    )
+    assert len(brief.unresolved_evidence_ids) == before
+
+
 def test_every_idea_states_a_support_verdict_somewhere_it_is_shown(
     rich_session: Session, body: str
 ):
