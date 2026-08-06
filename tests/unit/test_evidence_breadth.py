@@ -30,12 +30,14 @@ from coscientist.evidence import (
     downgrade_unlocatable_sources,
     merge_evidence_packets,
     names_a_document,
+    retain_leads,
 )
 from coscientist.models import (
     EVIDENCE_FACETS,
     EvidenceClaim,
     EvidencePacket,
     ResearchPlan,
+    SourceLead,
     SourceRecord,
 )
 from coscientist.orchestration import CoScientistWorkflow
@@ -456,3 +458,62 @@ def test_the_contract_asks_for_a_title_and_says_what_a_title_is_not():
 
     assert "the document's own title and nothing else" in instruction
     assert "not a sentence from its abstract" in instruction
+
+
+# ---------------------------------------------------------------------------
+# What survives the retention ceiling
+# ---------------------------------------------------------------------------
+
+
+def _facet_leads(facet: str, count: int) -> list[SourceLead]:
+    return [
+        SourceLead(
+            canonical_url=f"https://example.org/{facet}/{index}",
+            title=f"{facet} {index}",
+            facets=[facet],
+        )
+        for index in range(count)
+    ]
+
+
+def test_the_retention_ceiling_keeps_every_facet_the_run_paid_to_search():
+    """It used to be ``leads[:90]``, over a list in pass-ingestion order.
+
+    The broad supporting pass is ingested first and returns the most, so a live
+    seven-facet fan-out kept ninety leads that were all its -- and discarded
+    every lead the contradictory, negative-null, replication, methods, safety
+    and retraction passes had found. Twenty-one dollars of research, six facets
+    of it gone, and the panel then reported one facet covered.
+    """
+    leads = [
+        lead
+        for facet, count in zip(
+            EVIDENCE_FACETS, (200, 40, 30, 20, 15, 10, 5), strict=True
+        )
+        for lead in _facet_leads(facet, count)
+    ]
+
+    kept = retain_leads(leads, 90)
+
+    assert len(kept) == 90
+    assert {facet for lead in kept for facet in lead.facets} == set(EVIDENCE_FACETS)
+    # The scarce facets are kept whole rather than sampled; the broad one gives
+    # up the slots, because it is the one with leads to spare.
+    assert sum(lead.facets == ["corrections_retractions"] for lead in kept) == 5
+
+
+def test_a_corpus_inside_the_ceiling_is_left_in_the_order_it_was_found():
+    leads = _facet_leads("supporting", 10)
+
+    assert retain_leads(leads, 90) == leads
+
+
+def test_an_undecomposed_pass_still_fills_the_manifest():
+    """One broad search tags nothing, and round-robin over one queue is a slice."""
+    leads = [
+        SourceLead(canonical_url=f"https://example.org/{index}") for index in range(120)
+    ]
+
+    kept = retain_leads(leads, 90)
+
+    assert kept == leads[:90]

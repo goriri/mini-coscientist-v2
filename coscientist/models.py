@@ -492,6 +492,10 @@ class DiscoveryManifest(Contract):
     # every panel downstream, as a corpus that was checked in full.
     leads_sent_to_verification: int = Field(default=0, ge=0)
     leads_beyond_verification_ceiling: int = Field(default=0, ge=0)
+    # And how many discovery found but the manifest could not hold. Same reason:
+    # a corpus of three hundred cut to ninety is a decision about the evidence,
+    # and every number downstream is computed from what survived it.
+    leads_beyond_retention_ceiling: int = Field(default=0, ge=0)
     synthesis_report: str = ""
 
 

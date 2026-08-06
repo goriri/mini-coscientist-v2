@@ -231,3 +231,29 @@ def test_a_manifest_with_nothing_to_follow_is_returned_unchanged():
         raise AssertionError("nothing should have been fetched")
 
     assert _resolved_manifest(unused, manifest) is manifest
+
+
+def test_one_paper_cited_twelve_times_is_one_lead_once_the_links_are_followed():
+    """Deep Research mints a fresh redirector token per citation.
+
+    So a paper cited twelve times arrives as twelve distinct URLs and survives
+    every dedupe, because until the links are followed nothing knows they are
+    the same document. A live run's panel showed one ACS paper twelve times and
+    reported fifty-five usable sources for a corpus the evidence floor had
+    counted as sixteen.
+    """
+    manifest = _manifest(REDIRECT, OTHER)
+    manifest.source_leads[0].facets = ["supporting"]
+    manifest.source_leads[0].originating_passes = [1]
+    manifest.source_leads[1].facets = ["contradictory"]
+    manifest.source_leads[1].originating_passes = [3]
+
+    resolved = _resolved_manifest(_redirects_to(ARTICLE), manifest)
+
+    assert [lead.canonical_url for lead in resolved.source_leads] == [ARTICLE]
+    lead = resolved.source_leads[0]
+    # Merged, not dropped: the second citation is why the contradictory facet
+    # has a source at all.
+    assert lead.facets == ["supporting", "contradictory"]
+    assert lead.originating_passes == [1, 3]
+    assert resolved.verification_handoff_source_ids == [lead.id]

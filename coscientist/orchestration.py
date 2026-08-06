@@ -1202,6 +1202,15 @@ class CoScientistWorkflow:
             f"- Stop reason: {manifest.convergence_reason or 'in progress'}",
             "- Status: discovered, not yet verified",
         ]
+        if manifest.leads_beyond_retention_ceiling:
+            # Same reason as the batch ceiling below. Every count on the panel
+            # and every facet on the evidence floor is computed from what
+            # survived this cut, so the cut has to appear next to them.
+            lines.append(
+                f"- Not retained: {manifest.leads_beyond_retention_ceiling} "
+                "further leads, beyond what one manifest holds; the retained "
+                "leads are spread across the facets that were searched"
+            )
         if manifest.leads_sent_to_verification:
             lines.append(
                 f"- Sent to verification: {manifest.leads_sent_to_verification} "

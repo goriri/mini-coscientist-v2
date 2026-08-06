@@ -574,6 +574,14 @@ async def resolve_manifest_locators(
     every one -- a paid run whose reference list said "no link to this source was
     recorded" nine times. Resolving the manifest first is what fixes the corpus
     too: the packet is written from these leads.
+
+    The leads are then re-merged, because following the links is what reveals
+    which of them are the same source. Deep Research mints a fresh redirector
+    token for every citation it prints, so one paper cited twelve times arrives
+    as twelve distinct URLs and survives every dedupe until they are followed.
+    Un-merged, that paper filled twelve rows of the evidence panel, and the
+    panel's "fifty-five usable sources" stood next to an evidence floor that had
+    counted the same corpus as sixteen.
     """
     followed = await _followed_redirects(
         (lead.canonical_url for lead in manifest.source_leads), client=client
@@ -585,6 +593,8 @@ async def resolve_manifest_locators(
         replacement = followed.get(lead.canonical_url)
         if replacement:
             lead.canonical_url = replacement
+    updated.source_leads = merge_leads([], updated.source_leads)
+    updated.verification_handoff_source_ids = [lead.id for lead in updated.source_leads]
     return updated
 
 
@@ -1337,6 +1347,39 @@ def merge_leads(
     return list(merged.values())
 
 
+def retain_leads(leads: list[SourceLead], limit: int) -> list[SourceLead]:
+    """Cut a corpus down to ``limit`` leads without losing whole facets.
+
+    This was ``leads[:limit]``, and the list it sliced is in the order the passes
+    were ingested. A seven-facet fan-out returns its broadest pass first, so a
+    live run that found three hundred and sixty-three leads kept ninety, all of
+    them the supporting pass's, and threw away every lead the contradictory,
+    negative-null, replication, methods, safety and retraction passes had
+    returned -- twenty-one dollars of research, six facets of it discarded by a
+    slice. The panel then reported one facet covered and the evidence floor
+    failed, on a corpus that had covered all seven an hour earlier.
+
+    Taking one lead per facet per turn spends the same budget and keeps the shape
+    of what was searched. Untagged leads go last within each turn, not last
+    overall: on an undecomposed pass they are all there is.
+    """
+    if len(leads) <= limit:
+        return list(leads)
+    queues: dict[str, list[SourceLead]] = {facet: [] for facet in (*FAN_OUT_FACETS, "")}
+    for lead in leads:
+        facet = next((item for item in lead.facets if item in queues), "")
+        queues[facet].append(lead)
+    kept: list[SourceLead] = []
+    while len(kept) < limit and any(queues.values()):
+        for queue in queues.values():
+            if not queue:
+                continue
+            kept.append(queue.pop(0))
+            if len(kept) >= limit:
+                break
+    return kept
+
+
 def audit_coverage(
     narrative: DiscoveryNarrative,
     leads: list[SourceLead],
@@ -1960,12 +2003,14 @@ class IterativeEvidenceDiscovery:
                 )
                 for gap in manifest.coverage_history[-1].gaps[:MAX_ENRICHMENT_REQUESTS]
             ]
+        retained = retain_leads(manifest.source_leads, MAX_RETAINED_SOURCE_LEADS)
+        manifest.leads_beyond_retention_ceiling = len(manifest.source_leads) - len(
+            retained
+        )
         if self.registry_enricher is not None:
-            manifest.source_leads = self.registry_enricher.enrich(
-                manifest.source_leads[:MAX_RETAINED_SOURCE_LEADS]
-            )
+            manifest.source_leads = self.registry_enricher.enrich(retained)
         else:
-            manifest.source_leads = manifest.source_leads[:MAX_RETAINED_SOURCE_LEADS]
+            manifest.source_leads = retained
         manifest.verification_handoff_source_ids = [
             lead.id for lead in manifest.source_leads
         ]
