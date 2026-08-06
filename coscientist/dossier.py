@@ -2043,7 +2043,9 @@ def compile_dossier(session: Session) -> str:
         )
     lines += _advisory_appendix(advisories)
     lines += _provenance_appendix(record)
-    report = _em_dashed(_densely_numbered("\n".join(lines).rstrip() + "\n"))
+    report = _em_dashed(
+        _densely_numbered(_without_math_markup("\n".join(lines).rstrip() + "\n"))
+    )
     # Numbering runs before the contents list, so the index of exhibits it adds
     # is itself an entry in the contents rather than a section nothing points at.
     return table_of_contents(number_figures_and_tables(report))
@@ -2132,6 +2134,84 @@ def _candidate_summary_table(briefs: Sequence) -> list[str]:
         ]
     )
     return lines
+
+
+# A specialist writing chemistry and units reaches for TeX, and nothing downstream
+# of here renders it: a live report carried "aluminum oxide ($Al_2O_3$)" in the body
+# and "a precisely controlled $\mathbf{1\text{--}5 \text{ nm}}$ cathode coating"
+# across a page of the Knowledge Base, in the Markdown, the PDF and the DOCX alike.
+# What a reader wants out of those is Al2O3 and a 1-5 nm coating.
+_MATH_SPAN = re.compile(r"(?<!\$)\$(?!\$)([^\$\n]{1,240})\$(?!\$)")
+_TEX_WRAPPER = re.compile(r"\\(?:mathbf|mathrm|mathit|textbf|textit|text|bm)\s*\{")
+_TEX_SYMBOLS = {
+    r"\geq": "\u2265",
+    r"\ge": "\u2265",
+    r"\leq": "\u2264",
+    r"\le": "\u2264",
+    r"\approx": "\u2248",
+    r"\times": "\u00d7",
+    r"\cdot": "\u00b7",
+    r"\pm": "\u00b1",
+    r"\sim": "~",
+    r"\circ": "\u00b0",
+    r"\degree": "\u00b0",
+    r"\mu": "\u00b5",
+    r"\alpha": "\u03b1",
+    r"\beta": "\u03b2",
+    r"\Delta": "\u0394",
+    r"\rightarrow": "\u2192",
+    r"\to": "\u2192",
+    r"\%": "%",
+    r"\&": "&",
+    r"\$": "$",
+}
+_TEX_SUPERSCRIPTS = str.maketrans(
+    "0123456789+-=()n",
+    "\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078"
+    "\u2079\u207a\u207b\u207c\u207d\u207e\u207f",
+)
+_TEX_SUPERSCRIPT = re.compile(r"\^\{?([^{}\s$]{1,6})\}?")
+_TEX_SUBSCRIPT = re.compile(r"_\{([^{}]{1,12})\}|_([A-Za-z0-9])")
+_TEX_COMMAND = re.compile(r"\\[A-Za-z]+|\\[,;:!]|\\ ")
+
+
+def _is_math(span: str) -> bool:
+    """Whether a dollar-delimited span is notation rather than two sums of money.
+
+    "$21.00" is the estimated cost of a discovery run and appears in the provenance
+    appendix; two of those on one line must not read as a formula between them.
+    """
+    return bool(set(span) & set("\\_^{")) or span[:1].isalpha()
+
+
+def _plain_superscript(match: re.Match[str]) -> str:
+    body = match.group(1)
+    lifted = body.translate(_TEX_SUPERSCRIPTS)
+    # Only where every character has a raised form. "x^{max}" lifted letter by letter
+    # would be unreadable, and a caret a reader can parse beats one they cannot.
+    return lifted if not set(lifted) & set(body) else f"^{body}"
+
+
+def _without_math_markup(report: str) -> str:
+    """Every inline TeX span in the report, set as the plain text it stands for."""
+
+    def spelled(match: re.Match[str]) -> str:
+        span = match.group(1)
+        if not _is_math(span):
+            return match.group(0)
+        # Wrappers first, so "\mathbf{n \geq 5}" is unwrapped before its contents are
+        # read; the closing brace goes with the rest of the braces at the end.
+        text = _TEX_WRAPPER.sub("", span)
+        for command, symbol in sorted(_TEX_SYMBOLS.items(), key=len, reverse=True):
+            text = text.replace(command, symbol)
+        text = _TEX_SUBSCRIPT.sub(lambda hit: hit.group(1) or hit.group(2), text)
+        text = _TEX_SUPERSCRIPT.sub(_plain_superscript, text)
+        text = _TEX_COMMAND.sub(" ", text).replace("{", "").replace("}", "")
+        # A double hyphen inside notation is a range -- "1\text{--}5 \text{ nm}" -- and
+        # the em-dash pass below only touches the spaced form used in prose.
+        return " ".join(text.replace("--", "\u2013").split()) or match.group(0)
+
+    return _MATH_SPAN.sub(spelled, report)
 
 
 def _em_dashed(report: str) -> str:

@@ -3993,3 +3993,35 @@ def test_a_cell_with_no_clause_boundary_still_falls_back_to_a_word():
 
     assert cell.endswith("held…")
     assert len(cell) <= 140
+
+
+def test_notation_a_specialist_wrote_in_tex_is_set_as_the_text_it_stands_for():
+    """Nothing downstream of the compiler renders TeX. A live report carried
+    "aluminum oxide ($Al_2O_3$)" in the body and, across a page of the Knowledge
+    Base, "a precisely controlled $\\mathbf{1\\text{--}5 \\text{ nm}}$ cathode
+    coating" -- in the Markdown, the PDF and the DOCX alike."""
+    from coscientist.dossier import _without_math_markup
+
+    assert _without_math_markup("oxide ($Al_2O_3$) on") == "oxide (Al2O3) on"
+    assert _without_math_markup(r"of $n \ge 5$ cells") == "of n ≥ 5 cells"
+    assert (
+        _without_math_markup(r"a $\mathbf{1\text{--}5 \text{ nm}}$ coating")
+        == "a 1\u20135 nm coating"
+    )
+    assert (
+        _without_math_markup(r"($\mathbf{1.15 \times 10^{-8} \text{ S cm}^{-1}}$)")
+        == "(1.15 \u00d7 10\u207b\u2078 S cm\u207b\u00b9)"
+    )
+    # A caret a reader can parse beats a word lifted letter by letter.
+    assert _without_math_markup("$x^{max}$ holds") == "x^max holds"
+
+
+def test_two_sums_of_money_on_one_line_are_not_read_as_a_formula():
+    """The provenance appendix prints what a discovery run cost."""
+    from coscientist.dossier import _without_math_markup
+
+    line = "Deep Research ran seven passes, at an estimated cost of $21.00, and"
+    assert _without_math_markup(line) == line
+    assert _without_math_markup("between $3.00 and $21.00 a pass") == (
+        "between $3.00 and $21.00 a pass"
+    )
