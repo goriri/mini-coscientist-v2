@@ -20,6 +20,7 @@ from .agents import (
 from .collaboration import LocalA2ATaskBus
 from .dossier import compile_dossier
 from .evidence import (
+    MAX_DEEP_RESEARCH_PASSES,
     EvidenceArtifactStore,
     EvidenceStillRunning,
     GeminiDeepResearchTransport,
@@ -32,6 +33,7 @@ from .evidence import (
     evaluate_evidence_floor,
     merge_evidence_packets,
     merge_leads,
+    names_a_document,
     resolve_manifest_locators,
     resolve_packet_locators,
     sweep_verification,
@@ -47,7 +49,9 @@ from .methods import classify_research_mode, method_requirements
 from .model_catalog import DEFAULT_LANGUAGE, DEFAULT_MODEL
 from .models import (
     EVIDENCE_FACETS,
+    MAX_VERIFICATION_BATCHES,
     STAGES,
+    VERIFICATION_BATCH_SIZE,
     ApprovalMode,
     ApprovalProfile,
     Artifact,
@@ -497,6 +501,12 @@ class CoScientistWorkflow:
             # recorded, so the corpus written from these leads names documents.
             manifest = await self._resolved_lead_locators(manifest)
 
+        # Split before the manifest is written out, not at dispatch: the split is
+        # what records how many leads went to a verifier and how many the ceiling
+        # left behind, and computing it afterwards published a manifest and a
+        # summary that both said nothing about either.
+        batches = self._verification_batches(manifest)
+
         summary = self._evidence_summary(manifest)
         discovery.revise(summary, manifest.model_dump(mode="json"))
         output_ids = [discovery.id]
@@ -552,12 +562,20 @@ class CoScientistWorkflow:
             for item in SPECIALISTS_BY_STAGE["evidence"]
             if item.role == "source_verification"
         )
-        results = await self.task_bus.dispatch_stage(
-            temporary,
-            verifier_definition,
-            feedback=feedback,
-            revision=revision,
+        dispatched = await asyncio.gather(
+            *(
+                self.task_bus.dispatch_stage(
+                    temporary,
+                    verifier_definition,
+                    feedback=self._verification_feedback(
+                        feedback, batch, index, len(batches)
+                    ),
+                    revision=revision,
+                )
+                for index, batch in enumerate(batches, start=1)
+            )
         )
+        results = [result for group in dispatched for result in group]
         verified_packets: list[EvidencePacket] = []
         for result in results:
             self.session.tasks.append(result.task)
@@ -583,16 +601,59 @@ class CoScientistWorkflow:
             self.session.artifacts.append(result.artifact)
             output_ids.append(result.artifact.id)
 
+        # The batches are one verification of one corpus, and everything
+        # downstream reads the newest EvidencePacket in the session: left as ten
+        # artifacts, the gate, the panel and the list of citable ids would all
+        # see whichever batch happened to finish last. They are folded into one
+        # here for the same reason the discovery angles are.
+        if len(verified_packets) > 1:
+            consolidated = merge_evidence_packets(
+                self.session.question, verified_packets
+            )
+            for result in results:
+                if result.artifact.schema_name == "EvidencePacket":
+                    result.artifact.status = ArtifactStatus.SUPERSEDED
+            corpus = Artifact(
+                stage="evidence",
+                agent="source_verification",
+                artifact_type="specialist_output",
+                content=(
+                    f"### Verified corpus\n\n{len(consolidated.sources)} distinct "
+                    f"sources and {len(consolidated.claims)} claims, merged from "
+                    f"{len(verified_packets)} verification batches."
+                ),
+                feedback=feedback,
+                producer_model=getattr(self.provider, "model_id", "unknown"),
+                schema_name="EvidencePacket",
+                payload=consolidated.model_dump(mode="json"),
+                input_artifact_ids=[result.artifact.id for result in results],
+            )
+            self.session.artifacts.append(corpus)
+            output_ids.append(corpus.id)
+            verified_packets = [consolidated]
+
         if verified_packets:
             manifest = self._manifest_with_verification(manifest, verified_packets)
             discovery.revise(
                 self._evidence_summary(manifest), manifest.model_dump(mode="json")
             )
 
-        verifier_text = "\n\n".join(
-            f"### Source Verification\n\n{result.artifact.content}"
-            for result in results
-        )
+        # The corpus once, never the specialist's surrounding prose. A live run
+        # ended its answer by pasting the navigation menu of a university site
+        # its fetch tool had returned -- "Skip to main content", the whole course
+        # listing -- and that landed verbatim in the artifact a researcher reads.
+        # Batched, the same habit would paste it ten times.
+        if verified_packets:
+            verifier_text = "### Source Verification\n\n" + json.dumps(
+                verified_packets[0].model_dump(mode="json"),
+                indent=2,
+                ensure_ascii=False,
+            )
+        else:
+            verifier_text = "\n\n".join(
+                f"### Source Verification\n\n{result.artifact.content}"
+                for result in results
+            )
         draft = Artifact(
             stage="evidence",
             agent="supervisor",
@@ -615,6 +676,64 @@ class CoScientistWorkflow:
             )
         )
         return draft
+
+    @staticmethod
+    def _verification_batches(manifest: DiscoveryManifest) -> list[list[SourceLead]]:
+        """Split the discovered leads into work-lists one specialist can finish.
+
+        One dispatch over the whole corpus does not scale with the corpus, and
+        the failure is silent: shown ninety leads, a live run returned a packet
+        of five, three of which named a bare domain the model had shortened for
+        itself. Nothing in the packet said the other eighty-five had been
+        skipped -- they simply were not in it, and the evidence floor then
+        measured the literature as one usable source.
+
+        A bounded list is a different instruction. Each batch is small enough to
+        enumerate, they run concurrently, and a batch that comes back short is
+        visibly short against the leads it was given.
+        """
+        leads = [
+            lead
+            for lead in manifest.source_leads
+            if names_a_document(lead.canonical_url)
+        ]
+        if not leads:
+            # Nothing was discovered by URL, so the specialist works from the
+            # corpus packet as before rather than from an empty work-list.
+            manifest.leads_sent_to_verification = 0
+            manifest.leads_beyond_verification_ceiling = 0
+            return [[]]
+        # Highest-value leads first, so a corpus past the ceiling loses its
+        # weakest material rather than an arbitrary tail.
+        leads.sort(
+            key=lambda lead: (not lead.identifiers, lead.source_type == "unknown")
+        )
+        capped = leads[: VERIFICATION_BATCH_SIZE * MAX_VERIFICATION_BATCHES]
+        manifest.leads_sent_to_verification = len(capped)
+        manifest.leads_beyond_verification_ceiling = len(leads) - len(capped)
+        return [
+            capped[start : start + VERIFICATION_BATCH_SIZE]
+            for start in range(0, len(capped), VERIFICATION_BATCH_SIZE)
+        ]
+
+    @staticmethod
+    def _verification_feedback(
+        feedback: str, batch: list[SourceLead], index: int, total: int
+    ) -> str:
+        if not batch:
+            return feedback
+        listing = "\n".join(
+            f"- {lead.canonical_url}" + (f" -- {lead.title}" if lead.title else "")
+            for lead in batch
+        )
+        return (
+            f"Verify exactly these {len(batch)} sources. They are batch {index} of "
+            f"{total}; the others are being verified in parallel, so do not reach "
+            "for sources outside this list and do not shorten a URL to its "
+            "domain -- fetch each locator exactly as written. Return one entry "
+            "per source, including the ones you could not reach.\n\n"
+            f"{listing}\n\n{feedback}"
+        ).strip()
 
     async def _swept(self, packet: EvidencePacket) -> EvidencePacket:
         """Fetch every locator in a packet, and carry on if the network will not.
@@ -964,7 +1083,7 @@ class CoScientistWorkflow:
             "### Evidence Discovery",
             "",
             f"- Deep Research passes: {completed} completed of "
-            f"{len(manifest.runs)} attempted (limit 3)",
+            f"{len(manifest.runs)} attempted (limit {MAX_DEEP_RESEARCH_PASSES})",
             f"- Discovery provider: {', '.join(providers) or 'none'}",
             f"- Coverage: {coverage}",
             f"- Source leads: {len(manifest.source_leads)}",
@@ -972,6 +1091,18 @@ class CoScientistWorkflow:
             f"- Stop reason: {manifest.convergence_reason or 'in progress'}",
             "- Status: discovered, not yet verified",
         ]
+        if manifest.leads_sent_to_verification:
+            lines.append(
+                f"- Sent to verification: {manifest.leads_sent_to_verification} "
+                "of the leads that name a document"
+            )
+        if manifest.leads_beyond_verification_ceiling:
+            # A truncation nobody states reads as coverage of everything.
+            lines.append(
+                f"- Not verified: {manifest.leads_beyond_verification_ceiling} "
+                "further leads, left unchecked because the batch ceiling was "
+                "reached"
+            )
         if manifest.stored_interaction_notice:
             lines.append(
                 "- Stored interaction notice: Deep Research uses stored Gemini "

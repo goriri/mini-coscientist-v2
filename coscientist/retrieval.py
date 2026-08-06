@@ -700,18 +700,29 @@ async def assess_sources(
     retriever: SourceRetriever | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> dict[str, RetrievalOutcome]:
-    """Assess every ``(url, claimed_title)`` pair concurrently, keyed by URL."""
+    """Assess every ``(url, claimed_title)`` pair concurrently, keyed by URL.
+
+    Whole assessments are capped, not just their fetches. The retriever gates
+    document retrieval already, but a Crossref and an OpenAlex lookup are two
+    more requests per source and pass through no gate at all: a live fan-out
+    hands this ninety locators, and Crossref answers a hundred and eighty
+    simultaneous questions from one address by rate-limiting the lot, which
+    arrives downstream as a corpus nobody could confirm.
+    """
     if not urls:
         return {}
     retriever = retriever or SourceRetriever()
     owned = client is None
     client = client or httpx.AsyncClient(follow_redirects=False)
+    gate = asyncio.Semaphore(MAX_CONCURRENT_FETCHES)
+
+    async def _assess(url: str, title: str) -> RetrievalOutcome:
+        async with gate:
+            return await assess_source(client, retriever, url, claimed_title=title)
+
     try:
         outcomes = await asyncio.gather(
-            *(
-                assess_source(client, retriever, url, claimed_title=title)
-                for url, title in urls
-            ),
+            *(_assess(url, title) for url, title in urls),
             return_exceptions=True,
         )
     finally:

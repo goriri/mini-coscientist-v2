@@ -229,6 +229,24 @@ for most healthy literatures, and requiring it would make the gate unclearable
 on sound evidence.
 """
 
+VERIFICATION_BATCH_SIZE = 12
+"""How many discovered sources one verification specialist is asked to check.
+
+Twelve is a list a model will enumerate. Handed all ninety leads of a live
+fan-out at once, the specialist returned five sources and said nothing about the
+rest, and the evidence floor then measured a literature of ninety papers as one
+usable source.
+"""
+
+MAX_VERIFICATION_BATCHES = 10
+"""Ceiling on concurrent verification batches, so a wide corpus stays bounded.
+
+Ten batches is a hundred and twenty sources, past the reach of any single
+fan-out so far. A corpus that exceeds it is truncated by lead quality rather
+than arrival order, and the manifest records that the ceiling was reached --
+a cap that reports nothing reads as complete coverage.
+"""
+
 
 class EvidenceFloor(Contract):
     """Whether a corpus is strong enough to generate hypotheses from.
@@ -453,6 +471,11 @@ class DiscoveryManifest(Contract):
     verification_handoff_source_ids: list[str] = Field(default_factory=list)
     stored_interaction_notice: bool = True
     estimated_cost_usd: float = Field(default=0.0, ge=0.0)
+    # How many discovered leads were sent to a verification specialist, and how
+    # many the batch ceiling left behind. A truncation nobody records reads, in
+    # every panel downstream, as a corpus that was checked in full.
+    leads_sent_to_verification: int = Field(default=0, ge=0)
+    leads_beyond_verification_ceiling: int = Field(default=0, ge=0)
 
 
 class Candidate(Contract):

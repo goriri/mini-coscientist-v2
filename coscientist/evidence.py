@@ -102,6 +102,8 @@ caveat: an angle whose literature genuinely does not exist reports that instead.
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _URL_RE = re.compile(r"https?://[^\s<>()\[\]\"']+")
 _DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.I)
+# A citation marker, as a Deep Research report writes one: [7], or [2, 5, 9].
+_CITATION_MARKER_RE = re.compile(r"\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\]")
 _FACET_KEYWORDS = {
     "supporting": (
         "support",
@@ -1110,8 +1112,12 @@ def _source_leads(
 
 
 def _fallback_narrative(
-    question: str, report: str, pass_number: int
+    question: str,
+    report: str,
+    pass_number: int,
+    citation_urls: list[str] | None = None,
 ) -> DiscoveryNarrative:
+    cited = citation_urls or []
     statements: list[DiscoveryStatement] = []
     for paragraph in re.split(r"\n\s*\n", report):
         urls = []
@@ -1120,6 +1126,15 @@ def _fallback_narrative(
                 urls.append(canonicalize_url(raw_url))
             except ValueError:
                 continue
+        # A report that cites by marker spells out no URL at all, so without
+        # this the fallback returns nothing from a pass that cited forty papers.
+        # The marker is resolved positionally against the provider's own list,
+        # which is the order the provider numbered them in.
+        for marker in _CITATION_MARKER_RE.findall(paragraph):
+            for number in marker.split(","):
+                index = int(number) - 1
+                if 0 <= index < len(cited):
+                    urls.append(cited[index])
         if not urls:
             continue
         lowered = paragraph.lower()
@@ -1157,16 +1172,44 @@ def normalize_report(
     report: str,
     pass_number: int,
     normalizer: Callable[[str], str] | None = None,
+    citation_urls: list[str] | None = None,
 ) -> DiscoveryNarrative:
-    """Normalize a report, accepting only citations present in the source report."""
+    """Normalize a report, accepting only citations the provider itself returned.
+
+    ``citation_urls`` is the provider's own citation metadata for this pass. It
+    belongs here because a Deep Research report generally cites by number and
+    carries the URLs alongside the prose rather than inside it, and the guard
+    below -- which exists to stop a normalizer inventing a source -- was reading
+    the report text as the whole of what the provider said. On a live wave that
+    threw away every statement in all eight passes.
+    """
+    cited = []
+    for raw_url in citation_urls or []:
+        try:
+            cited.append(canonicalize_url(raw_url))
+        except ValueError:
+            continue
+    cited = list(dict.fromkeys(cited))
     narrative = None
     if normalizer is not None:
+        # The numbered list is what makes "copied verbatim" achievable when the
+        # report cites by marker: without it the only URLs a normalizer can copy
+        # are the ones that happen to be spelled out in the prose.
+        sources_block = (
+            "\n\nSources cited by this report, in order:\n"
+            + "\n".join(f"[{index}] {url}" for index, url in enumerate(cited, start=1))
+            if cited
+            else ""
+        )
         prompt = (
             "Extract one DiscoveryNarrative JSON object from the report below. "
             "Do not add facts or URLs. Each statement must contain its originating "
             f"pass {pass_number}, an evidence facet, and only source URLs copied "
-            "verbatim from the report.\n\n"
+            "verbatim from the report or from the numbered source list beneath "
+            "it. Where the report cites a marker such as [3], resolve it against "
+            "that list.\n\n"
             f"Research question: {question}\n\nReport:\n{report[:180000]}"
+            f"{sources_block}"
         )
         try:
             raw = normalizer(prompt)
@@ -1176,9 +1219,9 @@ def normalize_report(
         except (ValueError, ValidationError, json.JSONDecodeError):
             narrative = None
     if narrative is None:
-        narrative = _fallback_narrative(question, report, pass_number)
+        narrative = _fallback_narrative(question, report, pass_number, cited)
 
-    report_urls = set()
+    report_urls = set(cited)
     for raw_url in _URL_RE.findall(report):
         try:
             report_urls.add(canonicalize_url(raw_url))
@@ -1274,11 +1317,24 @@ def audit_coverage(
         for statement in narrative.statements
         if statement.facet in EVIDENCE_FACETS
     }
+    #
+    # A lead counts for the same reason a cited statement does, and it has to:
+    # tying coverage to prose alone made the score depend on how the provider
+    # chose to cite. A live wave returned ninety citable papers through the
+    # provider's own citation metadata rather than as links in the report text,
+    # every statement was dropped for having no URL the report spelled out, and
+    # the stage then reported 0% coverage and told the reader that all seven
+    # passes "returned no citable source" while seven of them had returned
+    # dozens. A lead is tagged with the facet of the pass that returned it, so
+    # counting it says the same thing about the same act.
     tagged_facets = {
         statement.facet
         for statement in narrative.statements
         if statement.facet in EVIDENCE_FACETS and statement.source_urls
     }
+    tagged_facets.update(
+        facet for lead in leads for facet in lead.facets if facet in EVIDENCE_FACETS
+    )
     for facet in EVIDENCE_FACETS:
         if searched:
             facet_scores[facet] = 1.0 if facet in tagged_facets else 0.0
@@ -1730,11 +1786,14 @@ class IterativeEvidenceDiscovery:
                 run.error = "Deep Research completed without a report."
                 continue
             completed += 1
+            steps = payload.get("steps") or []
+            citation_urls = _payload_urls(steps)
             narrative = normalize_report(
                 question=session.question,
                 report=report,
                 pass_number=run.pass_number,
                 normalizer=normalizer,
+                citation_urls=citation_urls,
             )
             if run.facet:
                 # The pass was sent to cover one facet, so that is what its
@@ -1748,8 +1807,8 @@ class IterativeEvidenceDiscovery:
                 report,
                 run.pass_number,
                 run.raw_artifact_reference,
-                citation_urls=_payload_urls(payload.get("steps") or []),
-                citation_titles=_citation_titles(payload.get("steps") or []),
+                citation_urls=citation_urls,
+                citation_titles=_citation_titles(steps),
             )
             statement_ids_by_url: dict[str, list[str]] = {}
             for statement in narrative.statements:
