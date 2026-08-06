@@ -470,6 +470,13 @@ def _run_advance(
                 return
             time.sleep(delay)
         except Exception as error:
+            # Logged before it is recorded. What the researcher is shown is
+            # ``str(error)``, and "list index out of range" with no traceback
+            # anywhere names neither the stage nor the line -- a real production
+            # failure took an extra deploy to find for want of these two lines.
+            logger.exception(
+                "The %s worker for %s failed", kind, session_id, exc_info=error
+            )
             try:
                 _set_operation(session_id, "failed", str(error), kind)
             except Exception:
