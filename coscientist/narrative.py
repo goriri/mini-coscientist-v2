@@ -1879,7 +1879,17 @@ def _record_names(record: ResearchRecord) -> dict[str, str]:
             names[claim.id] = (
                 f"the {standing}claim drawn from {title}"
                 if title
-                else f"the {standing}cited claim"
+                # A claim whose source went unnamed has nothing to be called after
+                # except what it says. Called after its standing alone, three
+                # different records reached a live review inside one parenthesis as
+                # "..., the unverified cited claim, the unverified cited claim" --
+                # the same four words twice over, naming neither which claims were
+                # meant nor what either of them held.
+                else _named_by_text(
+                    f"the {standing}claim that",
+                    claim.claim,
+                    f"the {standing}cited claim",
+                )
             )
     for lead in record.discovery.source_leads if record.discovery else []:
         title = _without_search_chrome(" ".join(lead.title.split()))
@@ -1890,18 +1900,28 @@ def _record_names(record: ResearchRecord) -> dict[str, str]:
         )
     for narrative in record.discovery.narratives if record.discovery else []:
         for statement in narrative.statements:
-            # A finding is a sentence, and a sentence spliced into the middle of a
-            # reviewer's own sentence is only readable while it is short. Past that
-            # the report says which search recorded it and leaves the finding where
-            # it is printed in full.
-            text = " ".join(statement.text.split()).rstrip(".")
             names.setdefault(
                 statement.id,
-                f"the finding that {text[:1].lower()}{text[1:]}"
-                if 0 < len(text) <= 120
-                else "an unverified finding from the literature search",
+                _named_by_text(
+                    "the finding that",
+                    statement.text,
+                    "an unverified finding from the literature search",
+                ),
             )
     return names
+
+
+def _named_by_text(opener: str, text: str, fallback: str) -> str:
+    """A record called after what it says, where what it says will fit in a sentence.
+
+    A finding is a sentence, and a sentence spliced into the middle of a reviewer's
+    own sentence is only readable while it is short. Past that the report says what
+    kind of record was cited and leaves the finding where it is printed in full.
+    """
+    spoken = " ".join(text.split()).rstrip(".")
+    if not 0 < len(spoken) <= 120:
+        return fallback
+    return f"{opener} {spoken[:1].lower()}{spoken[1:]}"
 
 
 def _name_ids_in_prose(record: ResearchRecord) -> None:
@@ -2206,21 +2226,31 @@ def evidence_integrity_lines(record: ResearchRecord) -> list[str]:
         record.evidence_support.items(),
         key=lambda item: (-ratings.get(record.ranked_id(item[0]), 0.0), item[0]),
     )
+    # A discredited citation names a record this run does hold, and which paper was
+    # withdrawn is the whole of what a reader can act on here. The line printed the
+    # ids instead -- "cites evidence that was retracted or could not be retrieved:
+    # claim_6_1, source_6_2" -- so the one section of the report about evidence that
+    # cannot be trusted was the one place that never said what the evidence was.
+    names = _record_names(record)
     lines: list[str] = []
     grouped: dict[str, list[str]] = {"unverified": [], "uncited": []}
     for candidate_id, citations in ordered:
         title = record.title_for(candidate_id)
         if citations.unresolved:
             lines.append(
-                f"{title} cites evidence that does not exist in this session: "
-                + ", ".join(citations.unresolved)
+                f"{title} cites evidence that does not exist in this session — "
+                # Nothing to name these after, so they are set as the literal
+                # identifiers they are rather than dressed up as prose.
+                + _names([f"`{item}`" for item in citations.unresolved])
                 + ". Its claim is unsupported."
             )
         elif citations.discredited:
             lines.append(
-                f"{title} cites evidence that was retracted or could not be "
-                "retrieved: " + ", ".join(citations.discredited) + ". Its claim is "
-                "discredited."
+                f"{title} cites evidence this session could not stand behind: "
+                + _names(
+                    [names.get(item, f"`{item}`") for item in citations.discredited]
+                )
+                + ". Its claim is discredited."
             )
         # Citing nothing was treated as nothing to report, so the one idea in the run
         # with no grounding whatsoever was the one idea missing from the list of ideas

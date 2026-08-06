@@ -1468,6 +1468,49 @@ def test_a_verified_record_is_not_labelled_as_though_it_were_doubtful(
     assert "unverified claim drawn from Thin-film passivation" not in body
 
 
+def test_two_claims_whose_sources_went_unnamed_are_still_told_apart(
+    rich_session: Session,
+):
+    """A live review read "(the unretrieved claim drawn from Limitations of Ultrathin
+    Al2O3 Coatings, the unverified cited claim, the unverified cited claim)" -- two
+    different records inside one parenthesis under the same four words, naming neither
+    which claims the reviewer meant nor what either of them held."""
+    evidence = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "EvidencePacket"
+    )
+    for index, text in (
+        (1, "Pore blockage alone accounts for the retention gain."),
+        (2, "Interphase composition sets the rate of lithium transport."),
+    ):
+        evidence.payload["claims"][index]["source_id"] = ""
+        evidence.payload["claims"][index]["claim"] = text
+    body = _findings(rich_session, "The idea synthesizes claim_1 and claim_2")
+
+    _assert_no_record_ids(body)
+    assert "claim that pore blockage alone accounts for the retention gain" in body
+    assert (
+        "claim that interphase composition sets the rate of lithium transport" in body
+    )
+    assert "cited claim" not in body
+
+
+def test_a_claim_too_long_to_splice_says_only_what_kind_of_record_it_is(
+    rich_session: Session,
+):
+    evidence = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "EvidencePacket"
+    )
+    evidence.payload["claims"][2]["source_id"] = ""
+    body = _findings(rich_session, "The idea rests on claim_2")
+
+    _assert_no_record_ids(body)
+    assert "the unverified cited claim" in body
+
+
 def test_a_retracted_record_says_so_where_the_reviewer_cites_it(
     rich_session: Session,
 ):
@@ -2891,6 +2934,41 @@ def test_the_evidence_integrity_list_runs_in_the_order_the_ideas_are_ranked_in(
         assert listed == sorted(listed, key=line.index)
     flagged = [title for title in ranked for line in lines if title in line]
     assert len(flagged) == len(set(flagged)), "an idea is flagged under two cases"
+
+
+def test_the_integrity_list_names_the_withdrawn_paper_rather_than_its_id(
+    rich_session: Session,
+):
+    """A live appendix read "cites evidence that was retracted or could not be
+    retrieved: claim_6_1, source_6_2" -- the one section of the report about evidence
+    that cannot be trusted, and the one place in it that never said what the evidence
+    was. The record is held, so which paper was withdrawn is knowable here."""
+    from coscientist.narrative import evidence_integrity_lines
+
+    (line,) = [
+        item
+        for item in evidence_integrity_lines(load_record(rich_session))
+        if "discredited" in item
+    ]
+
+    assert "claim_3" not in line
+    assert "the retracted claim drawn from Cycle-life benchmarking" in line
+
+
+def test_an_id_the_session_cannot_place_is_set_as_the_identifier_it_is(
+    rich_session: Session,
+):
+    """Nothing names it, so it is printed -- in code font, so a reader can see that
+    what they are being shown is a literal identifier and not a mangled word."""
+    from coscientist.narrative import evidence_integrity_lines
+
+    (line,) = [
+        item
+        for item in evidence_integrity_lines(load_record(rich_session))
+        if "does not exist in this session" in item
+    ]
+
+    assert "`claim_missing`" in line
 
 
 def test_a_reference_the_report_never_cites_is_not_listed(rich_session: Session):
