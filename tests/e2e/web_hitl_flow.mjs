@@ -108,6 +108,13 @@ async function waitForDebugging() {
   throw new Error("Chrome DevTools endpoint did not become ready.");
 }
 
+// A DevTools call that never comes back used to wedge the whole run: the
+// promise had no deadline, so waitFor sat inside it and its own timeout could
+// never fire. One evaluation whose awaited fetch never settled left the run
+// idle for forty minutes -- no output, no failure, no CPU -- while the gate it
+// was waiting on had been on screen the whole time.
+const CALL_TIMEOUT_MILLISECONDS = 30000;
+
 class Cdp {
   constructor(url) {
     this.socket = new WebSocket(url);
@@ -119,9 +126,23 @@ class Cdp {
       const handler = this.pending.get(message.id);
       if (!handler) return;
       this.pending.delete(message.id);
+      clearTimeout(handler.timer);
       if (message.error) handler.reject(new Error(message.error.message));
       else handler.resolve(message.result);
     });
+    const abandon = (reason) => {
+      for (const [id, handler] of this.pending) {
+        clearTimeout(handler.timer);
+        handler.reject(new Error(reason));
+        this.pending.delete(id);
+      }
+    };
+    this.socket.addEventListener("close", () =>
+      abandon("The DevTools connection closed mid-run."),
+    );
+    this.socket.addEventListener("error", () =>
+      abandon("The DevTools connection failed mid-run."),
+    );
   }
 
   async ready() {
@@ -135,7 +156,11 @@ class Cdp {
   call(method, params = {}) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`${method} did not answer within 30 s.`));
+      }, CALL_TIMEOUT_MILLISECONDS);
+      this.pending.set(id, { resolve, reject, timer });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
@@ -163,11 +188,21 @@ const timeoutScale = Number(process.env.COSCIENTIST_E2E_TIMEOUT_SCALE || "1");
 async function waitFor(cdp, expression, message, timeout = 15000) {
   timeout *= timeoutScale;
   const started = Date.now();
+  let lastFailure = null;
   while (Date.now() - started < timeout) {
-    if (await cdp.evaluate(expression)) return;
+    try {
+      if (await cdp.evaluate(expression)) return;
+    } catch (error) {
+      // A single unanswered call is a hiccup to retry, not a verdict; the
+      // deadline above is what ends the wait either way. The last one is kept
+      // so a wait that only ever failed says why.
+      lastFailure = error;
+    }
     await delay(100);
   }
-  throw new Error(message);
+  throw new Error(
+    lastFailure ? `${message} (${lastFailure.message})` : message,
+  );
 }
 
 function assert(condition, message) {
