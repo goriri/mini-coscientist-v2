@@ -3327,6 +3327,7 @@ def _revised_form(
         if reviews
         else " No re-review of the rewrite is on the record."
     )
+    checked += _rereview_reach(record, candidate, reviews)
     # A rewrite may say it disposes of the flaw a person accepted: one wrote that
     # substituting the precursor achieves the same layer "while eliminating the safety
     # fatal flaw", twenty lines above a conclusion saying the flaw was allowed to
@@ -3409,13 +3410,67 @@ def _revised_form(
 
 
 def _review_verdicts(reviews: Sequence[CandidateReview]) -> str:
-    """The re-review outcomes, counted by verdict."""
+    """The re-review outcomes, counted by verdict.
+
+    Counted rather than named while there is more than one of them, because five
+    verdicts across five criteria is a tally. One is not: "one review said advance
+    the idea as written" was the whole of what a live report said about the only
+    check the rewrite got, over a page that names every other review by what it
+    reviews. Which review it was is what says how far that check reached.
+    """
+    if len(reviews) == 1:
+        section = CRITERION_SECTIONS.get(reviews[0].criterion, "").lower()
+        said = _RECOMMENDATION_WORDS.get(
+            reviews[0].recommendation, reviews[0].recommendation
+        )
+        return (
+            f"the {section} review said {said}"
+            if section
+            else f"one review said {said}"
+        )
     counts = Counter(review.recommendation for review in reviews)
     return _series(
         [
             f"{_plural(count, 'review')} said {_RECOMMENDATION_WORDS.get(name, name)}"
             for name, count in counts.most_common()
         ]
+    )
+
+
+def _rereview_reach(
+    record: ResearchRecord,
+    candidate: Candidate,
+    reviews: Sequence[CandidateReview],
+) -> str:
+    """Which of the criteria that judged the idea were not run again on the rewrite.
+
+    A rewrite re-reviewed on one criterion out of five has been checked on one
+    criterion out of five, and the sentence above says only that it was re-reviewed.
+    On a live run that sentence sat under a recommendation to carry the rewrite
+    forward, so the four judgements the reader was carrying forward were judgements
+    of the text the rewrite replaced.
+    """
+    was = {
+        CRITERION_SECTIONS.get(review.criterion, review.criterion) for review in reviews
+    }
+    # In the order the report prints them, deduplicated, so two reviewers sharing a
+    # criterion are one criterion here as they are everywhere else.
+    missing = list(
+        dict.fromkeys(
+            review.section
+            for review in _idea_reviews(record, candidate.id)
+            if review.section not in was
+        )
+    )
+    if not missing or not reviews:
+        return ""
+    return (
+        f" The other {_plural(len(missing), 'criterion', plural='criteria')} that "
+        f"judged it — {_names([name.lower() for name in missing])} — "
+        + ("was" if len(missing) == 1 else "were")
+        + " not run again, so on "
+        + ("that one" if len(missing) == 1 else "those")
+        + " the scores above are scores of the form the rewrite replaced."
     )
 
 

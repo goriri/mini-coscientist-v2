@@ -35,6 +35,7 @@ from coscientist.narrative import (
     IdeaReview,
     ResearchRecord,
     _category_path,
+    _idea_reviews,
     _joined_titles,
     _lead_over_rival,
     _objection_spread,
@@ -229,8 +230,62 @@ def test_the_rewrite_on_the_page_is_credited_only_with_its_own_re_reviews():
 
     lead_in, _, _ = _revised_form(record, _candidate("cand_a"))
 
-    assert "one review said advance the idea as written" in lead_in
+    # One re-review, and named: a lone check is reported by what it checked.
+    assert "the novelty review said advance the idea as written" in lead_in
     assert "reviews said revise" not in lead_in
+
+
+def test_a_rewrite_checked_on_one_criterion_says_which_four_were_not_re_run():
+    """ "It was re-reviewed after the rewrite: one review said advance the idea as
+    written" sat under a live recommendation to carry the rewrite forward. Five
+    criteria judged the ranked form and one judged the rewrite, so four of the five
+    scores the reader was carrying forward were scores of the text it replaced."""
+    from coscientist.narrative import _revised_form
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.reviews = [
+        ReviewSet(
+            reviews=[
+                _review("cand_a", criterion=criterion)
+                for criterion in (
+                    "evidence_correctness",
+                    "novelty",
+                    "methods_feasibility",
+                    "impact_safety",
+                    "safety_governance",
+                )
+            ]
+        )
+    ]
+    record.evolution = EvolutionCycle(
+        records=[_evolved("cand_a_v2", "cand_a", 2)],
+        rereviews=[_review("cand_a_v2", criterion="novelty", recommendation="advance")],
+    )
+    _trace_lineage(record, {"cand_a"})
+    assert len(_idea_reviews(record, "cand_a")) == 5
+
+    lead_in, _, _ = _revised_form(record, _candidate("cand_a"))
+
+    assert "The other four criteria that judged it" in lead_in
+    assert "correctness, feasibility, impact, and safety" in lead_in
+    assert "were not run again" in lead_in
+    assert "the scores above are scores of the form the rewrite replaced" in lead_in
+
+
+def test_a_rewrite_every_criterion_saw_again_says_nothing_about_what_was_missed():
+    """The clause is only worth printing where something was in fact not re-run."""
+    from coscientist.narrative import _revised_form
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evolution = EvolutionCycle(
+        records=[_evolved("cand_a_v2", "cand_a", 2)],
+        rereviews=[_review("cand_a_v2", recommendation="advance")],
+    )
+    _trace_lineage(record, {"cand_a"})
+
+    lead_in, _, _ = _revised_form(record, _candidate("cand_a"))
+
+    assert "not run again" not in lead_in
 
 
 def test_clusters_with_one_mechanism_between_them_are_not_said_to_each_have_one():
