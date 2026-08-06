@@ -209,3 +209,28 @@ def test_a_report_within_the_limit_is_kept_whole_and_not_flagged():
     summary, truncated = _report_summary(REPORT)
     assert not truncated
     assert summary == REPORT.strip()
+
+
+def test_a_pass_that_calls_its_own_document_the_report_is_told_which_one():
+    """Three of six live passes opened "The report evaluates whether...", "The report
+    outlines...", "The report overwhelmingly supports..." -- inside a document that
+    calls itself the report on every other page, under a heading reading "Pass 5"."""
+    prose = _deep_research_prose(
+        "The report evaluates whether a coating improves cycle life.\n\n"
+        "## Findings\n\nThe report by the Hanyang team is the exception.\n"
+    )
+
+    assert prose.startswith("This pass's report evaluates whether")
+    # Only the opening. Further in, "the report" is as likely to name a paper the
+    # pass is discussing, which is not this section's to rename.
+    assert "The report by the Hanyang team is the exception." in prose
+
+
+def test_a_report_the_pass_is_citing_is_not_renamed_as_the_passs_own():
+    """ "The report by X" names somebody else's work, and renaming it would put this
+    section's words inside a claim about a paper."""
+    prose = _deep_research_prose(
+        "# Protective Coatings\n\nThe report by Kim et al. finds no null result.\n"
+    )
+    assert "The report by Kim et al." in prose
+    assert "This pass's report" not in prose

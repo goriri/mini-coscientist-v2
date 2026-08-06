@@ -8939,6 +8939,17 @@ _PASS_CITE_RE = re.compile(r"[ \t]*\[cite:[^\]\n]{0,80}\]")
 _MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(\S.*)$")
 
 
+# "The report" and "This report" at the head of a pass, saying what it itself does:
+# the only report those words can name there is the pass's own. A report followed by
+# "by", "of", "from" or a possessive is a paper the pass is citing, and renaming one
+# of those would put this section's words into a claim about somebody else's work.
+# The group keeps the caller's capitalisation -- the opening is sentence-initial, and
+# a lower-case "t" would be a new defect in place of the one being fixed.
+_OWN_REPORT = re.compile(
+    r"^(T|t)h(?:e|is) report(?!\s+(?:by|from|of|in|on|at|for|to|and|or)\b|['\u2019,])"
+)
+
+
 def _deep_research_prose(text: str) -> str:
     """One pass's report, as Markdown that sits under this report's own headings.
 
@@ -8951,8 +8962,18 @@ def _deep_research_prose(text: str) -> str:
     """
     stripped = _PASS_CITE_RE.sub("", _FACET_TAG_RE.sub("", text))
     lines = []
+    opened = False
     for line in stripped.splitlines():
         heading = _MARKDOWN_HEADING_RE.match(line.strip())
+        if line.strip() and not heading and not opened:
+            opened = True
+            # Three of six live passes opened "The report evaluates whether...",
+            # "The report outlines...", "The report overwhelmingly supports..." --
+            # printed inside a document that calls itself the report on every other
+            # page, under a heading reading "Pass 5". Only the pass's own opening is
+            # touched: further in, "the report" is as likely to be a paper the pass
+            # is discussing, and that one is not this section's to rename.
+            line = _OWN_REPORT.sub(r"\1his pass's report", line, count=1)
         if heading:
             # Demoted, not dropped: the pass's own structure is how a fifteen-page
             # literature report stays navigable, and it has to nest under the
