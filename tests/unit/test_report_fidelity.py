@@ -1965,6 +1965,53 @@ def test_a_withdrawn_hypothesis_is_not_filed_under_the_meta_reviews_exclusions()
     assert "A pre-coating. The meta-review did not exclude" not in core
 
 
+def test_an_idea_on_both_of_the_meta_reviews_lists_is_reported_as_on_both():
+    """Section eight said the meta-review excluded every ranked idea, section nine
+    recommended four of them by name eight lines later, and the minority note said of
+    two of those four that they are "outside any recommendation this report makes".
+    Both lists are the model's own and they overlapped on all four ideas; three
+    sections read them independently and printed them as disjoint, so a reader could
+    not determine whether the report recommends anything at all."""
+    from coscientist.models import CandidatePopulation, DossierManifest, ReviewSet
+    from coscientist.narrative import _minority_note, _section_eight, _section_nine
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.population = CandidatePopulation(
+        candidates=[_candidate("cand_a"), _candidate("cand_b")]
+    )
+    record.titles = {"cand_a": "A coating", "cand_b": "A pre-coating"}
+    record.reviews = [
+        ReviewSet(
+            reviews=[
+                _review("cand_a", fatal_flaws=["It replicates a published study."]),
+                _review("cand_b", fatal_flaws=["It vents without containment."]),
+            ]
+        )
+    ]
+    record.manifest = DossierManifest(
+        title="Dossier",
+        sections=[],
+        unresolved_fatal_flaw_candidate_ids=["cand_a", "cand_b"],
+        recommendation_candidate_ids=["cand_a"],
+    )
+
+    disagreement = "The meta-review both excluded and recommended A coating"
+    # Stated where the exclusion is stated and again where the recommendation is,
+    # because a reader meets only one of the two paragraphs before acting on it.
+    assert disagreement in " ".join(_section_eight(record, []).core)
+    assert disagreement in " ".join(_section_nine(record, []).core)
+
+    # And the idea is no longer said to be outside every recommendation the report
+    # makes, in a report that recommends it.
+    note = _minority_note(record, "cand_a")
+    assert "outside any recommendation this report makes" not in note
+    assert "excluded it and then recommended carrying it" in note
+    # The idea the meta-review only excluded still gets the plain sentence.
+    assert "outside any recommendation this report makes" in _minority_note(
+        record, "cand_b"
+    )
+
+
 def _section_one_core(record: ResearchRecord) -> str:
     from coscientist.narrative import _section_one
 

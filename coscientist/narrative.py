@@ -7282,6 +7282,60 @@ def _reference_standing(record: ResearchRecord) -> str:
     )
 
 
+def _excluded_ids(record: ResearchRecord) -> list[str]:
+    """The ideas the meta-review excluded, resolved back onto the ranked field."""
+    manifest = record.manifest
+    return list(
+        dict.fromkeys(
+            record.ranked_id(item)
+            for item in (
+                manifest.unresolved_fatal_flaw_candidate_ids if manifest else []
+            )
+        )
+    )
+
+
+def _recommended_ids(record: ResearchRecord) -> list[str]:
+    """The ideas the meta-review recommended, resolved back onto the ranked field."""
+    manifest = record.manifest
+    return list(
+        dict.fromkeys(
+            record.ranked_id(item)
+            for item in (manifest.recommendation_candidate_ids if manifest else [])
+        )
+    )
+
+
+def _self_contradicting_manifest(record: ResearchRecord) -> str:
+    """What to say where the meta-review both excluded an idea and recommended it.
+
+    Three sections read the meta-review's two candidate lists and none of them read
+    the other's: section eight printed "the meta-review excluded every ranked idea
+    from any recommendation", section nine recommended four of them by name eight
+    lines later, and the minority note said of two of those four that they are
+    "outside any recommendation this report makes". Both lists are the model's, they
+    overlapped on all four ideas, and the report presented them as disjoint.
+
+    Nothing here picks a winner. The disagreement is the meta-review's and the reader
+    is the one who has to resolve it, so it is stated once, in the same words, in both
+    sections that carry half of it.
+    """
+    excluded = set(_excluded_ids(record))
+    both = [item for item in _recommended_ids(record) if item in excluded]
+    if not both:
+        return ""
+    titles = _sentence_of_titles(
+        [record.title_for(item) for item in both], fallback="none."
+    ).rstrip(".")
+    return (
+        f" The meta-review both excluded and recommended {titles}: its "
+        "exclusion list and its recommendation list are its own and they disagree "
+        + ("about this idea" if len(both) == 1 else "about these ideas")
+        + ". Nothing in the run reconciles them, so both are reported as given and "
+        "neither settles what happens next; that is a decision for the reader."
+    )
+
+
 def _section_eight(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft:
     manifest = record.manifest
     fatal = [
@@ -7416,12 +7470,7 @@ def _section_eight(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draf
             )
         )
     if manifest and manifest.unresolved_fatal_flaw_candidate_ids:
-        excluded = list(
-            dict.fromkeys(
-                record.ranked_id(item)
-                for item in manifest.unresolved_fatal_flaw_candidate_ids
-            )
-        )
+        excluded = _excluded_ids(record)
         recorded = record.recorded_fatal_flaw_ids
         # An idea a person withdrew is not the meta-review's to exclude, and the
         # meta-review lists it anyway: on the governance run it named a hypothesis a
@@ -7479,6 +7528,10 @@ def _section_eight(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draf
                         else ", and against no idea the meta-review left standing."
                     )
                 )
+                # The exclusion cannot be read on its own, because on a live run the
+                # same meta-review recommended four of the ideas this paragraph has
+                # just said it excluded, and section nine is eight lines below.
+                + _self_contradicting_manifest(record)
             )
         if withdrawn:
             core.append(
@@ -7775,12 +7828,7 @@ def _section_nine(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
     manifest = record.manifest
     # Resolved back to the ranked field. The meta-review names whichever revision was
     # current when it ran, and those ids carry claims the reader has not been shown.
-    resolved_ids = list(
-        dict.fromkeys(
-            record.ranked_id(item)
-            for item in (manifest.recommendation_candidate_ids if manifest else [])
-        )
-    )
+    resolved_ids = _recommended_ids(record)
     # Anything still holding a revision's own id did not resolve. Its title is derived
     # from the rewritten claim, so on a live run this section recommended four ideas
     # under four names that appear nowhere else in the report -- one of them stating
@@ -7817,6 +7865,10 @@ def _section_nine(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
             "and the protocol should be reviewed by a domain specialist who was not "
             "involved in producing this report."
             + _recommendation_grounding(record, recommended_ids)
+            # Said again here, and not left in section eight, because a reader who
+            # arrives at a recommendation has to meet the exclusion of the same idea
+            # in the paragraph that recommends it rather than a chapter earlier.
+            + _self_contradicting_manifest(record)
         )
         # Section 8 checks the meta-review's exclusions against the reviews and, on a
         # live run, found a fatal flaw recorded against an idea the meta-review had
@@ -8775,14 +8827,18 @@ def _minority_note(record: ResearchRecord, candidate_id: str) -> str:
     # no reconciling sentence at all, and the Knowledge Base said it was preserved
     # while section eight said it was excluded.
     faulted = ranked_id in record.recorded_fatal_flaw_ids
-    listed = ranked_id in {
-        record.ranked_id(item)
-        for item in (
-            record.manifest.unresolved_fatal_flaw_candidate_ids
-            if record.manifest
-            else []
+    listed = ranked_id in set(_excluded_ids(record))
+    # An idea the meta-review also recommended is not outside every recommendation the
+    # report makes, and this said so of two ideas section nine recommends by name.
+    # Where the two lists disagree the disagreement is the fact, and it is stated in
+    # both sections that carry half of it rather than a third time here.
+    if listed and ranked_id in set(_recommended_ids(record)):
+        return (
+            f"{note} The meta-review excluded it and then recommended carrying it: "
+            "what that disagreement leaves open is set out with the recommendation "
+            "itself. Protection keeps the region open for a future run and settles "
+            "nothing about acting on this idea."
         )
-    }
     if faulted or listed:
         if faulted and listed:
             authority = (
