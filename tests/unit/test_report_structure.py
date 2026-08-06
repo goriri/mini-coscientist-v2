@@ -404,7 +404,9 @@ def _assert_no_record_ids(body: str) -> None:
         line for line in body.splitlines() if not line.startswith(warning)
     )
     leaked = re.findall(
-        r"\b(?:candidate|cand|claim|source|src|review|rev|hypothesis)_\w+\b", prose
+        r"\b(?:candidate|cand|claim|source|src|review|rev|hypothesis|lead|stmt"
+        r"|statement)[0-9]*_\w+\b",
+        prose,
     )
     assert not leaked, f"internal record ids reached the body: {sorted(set(leaked))}"
 
@@ -1369,7 +1371,9 @@ def test_an_id_quoted_inside_specialist_prose_is_replaced_by_what_it_names(
     ]
     body = compile_dossier(rich_session).split(_APPENDIX)[0]
     _assert_no_record_ids(body)
-    assert "the claim drawn from" in body, "a resolvable id lost its referent"
+    assert "the unverified claim drawn from" in body, (
+        "a resolvable id lost its referent"
+    )
     assert "a record this session does not hold" in body
 
 
@@ -1393,7 +1397,100 @@ def test_an_id_capitalised_at_the_start_of_a_sentence_still_resolves(
     ]
     body = compile_dossier(rich_session).split(_APPENDIX)[0]
     assert "a record this session does not hold" not in body
-    assert "The claim drawn from" in body, "the sentence lost its opening capital"
+    assert "The unverified claim drawn from" in body, (
+        "the sentence lost its opening capital"
+    )
+
+
+def _findings(session: Session, *findings: str) -> str:
+    reviews = next(
+        artifact
+        for artifact in session.artifacts
+        if artifact.schema_name == "ReviewSet"
+    )
+    reviews.payload["reviews"][0]["findings"] = list(findings)
+    return compile_dossier(session).split(_APPENDIX)[0]
+
+
+def test_an_id_with_more_than_one_numbered_part_still_resolves(rich_session: Session):
+    """A live transcript argued an idea up the ranking because it "relies on verified
+    evidence (claim_11_1, source_11_2)" -- two records the run never retrieved, whose
+    ids the pattern missed because it stopped at the first numbered part."""
+    evidence = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "EvidencePacket"
+    )
+    evidence.payload["claims"].append(
+        {
+            "id": "claim_11_1",
+            "claim": "A 2.5 nm coating held 82 per cent of capacity at 500 cycles.",
+            "source_id": "source_0",
+            "verification_status": "discovered_unverified",
+            "confidence": 0.5,
+            "relation": "supports",
+        }
+    )
+    body = _findings(rich_session, "The case rests on claim_11_1 and nothing else")
+
+    _assert_no_record_ids(body)
+    assert "the unverified claim drawn from" in body
+
+
+def test_a_verified_record_is_not_labelled_as_though_it_were_doubtful(
+    rich_session: Session,
+):
+    body = _findings(rich_session, "The mechanism rests on claim_0")
+
+    assert "the claim drawn from Thin-film passivation" in body
+    assert "unverified claim drawn from Thin-film passivation" not in body
+
+
+def test_a_retracted_record_says_so_where_the_reviewer_cites_it(
+    rich_session: Session,
+):
+    body = _findings(rich_session, "The benchmark comes from source_3")
+
+    assert "the retracted source" in body
+
+
+def test_a_source_lead_cited_by_id_is_named_by_what_it_is(rich_session: Session):
+    """ "(lead_0f651732f8364b01)" was printed inside an idea's own description."""
+    record = load_record(rich_session)
+    lead = record.discovery.source_leads[2]
+    body = _findings(rich_session, f"The competing reading comes from {lead.id}")
+
+    _assert_no_record_ids(body)
+    assert "the unverified source Solid electrolyte interphase" in body
+
+
+def test_a_short_discovery_finding_cited_by_id_is_read_out_where_it_is_cited(
+    rich_session: Session,
+):
+    discovery = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "DiscoveryManifest"
+    )
+    statement = discovery.payload["narratives"][0]["statements"][0]
+    statement["text"] = "Coated cells lose ten per cent less capacity by cycle 500."
+    body = _findings(rich_session, f"This is answered by {statement['id']}")
+
+    _assert_no_record_ids(body)
+    assert "the finding that coated cells lose ten per cent less" in body
+
+
+def test_a_finding_too_long_to_splice_is_named_rather_than_read_out(
+    rich_session: Session,
+):
+    """A finding is a sentence, and a sentence spliced into the middle of a
+    reviewer's own sentence is only readable while it is short."""
+    record = load_record(rich_session)
+    statement = record.discovery.narratives[0].statements[0]
+    body = _findings(rich_session, f"This is answered by {statement.id}")
+
+    _assert_no_record_ids(body)
+    assert "an unverified finding from the literature search" in body
 
 
 def test_a_waived_evidence_gate_is_a_blocking_warning_the_body_counts(

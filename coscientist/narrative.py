@@ -361,9 +361,28 @@ _TRAILING_HOST = re.compile(
 )
 
 
+# What the aggregators put in front of the hostname, and what is left behind once
+# it goes. "Corrosion-inspired design of artificial interphases ... - DOI doi.org"
+# reached a live review as the name of a paper; cutting "doi.org" leaves "- DOI",
+# which is no better. The words listed are labels for a link, never the last words
+# of a paper's title.
+_TRAILING_LINK_LABEL = re.compile(
+    r"[\s,;|/\u2013\u2014-]+(?:doi|pdf|html|pmc|abstract|full[\s-]?text|"
+    r"download|view|open access)\.?$",
+    re.IGNORECASE,
+)
+
+
 def _without_search_chrome(title: str) -> str:
-    """A search result's title without the site name the search appended to it."""
-    trimmed = _TRAILING_HOST.sub("", title).strip(" .,;|-\u2013\u2014")
+    """A search result's title without the link furniture appended to it."""
+    trimmed = title
+    for _ in range(4):
+        cut = _TRAILING_LINK_LABEL.sub("", _TRAILING_HOST.sub("", trimmed)).strip(
+            " .,;|-\u2013\u2014"
+        )
+        if cut == trimmed:
+            break
+        trimmed = cut
     # Only where something recognisable as a title is left. On a result whose whole
     # title is the hostname there is nothing to keep, and the caller says so instead.
     return trimmed if len(trimmed.split()) >= 3 else title
@@ -1707,13 +1726,40 @@ def _load_governance(record: ResearchRecord, retired: dict[str, Candidate]) -> N
 # "src" is here because the evidence stage numbers its sources that way and a live
 # run printed "particularly src_1 regarding whether pinhole defects ..." into the
 # open questions, where a reader has nothing to resolve it against.
+#
+# Every part of the id, not just the first: the evidence stage numbers a claim
+# "claim_11_1" and the discovery passes number a statement "stmt_5_pass4", and a
+# pattern that stopped at the first underscore-separated part matched neither. A
+# live transcript therefore read "relies on verified evidence (claim_11_1,
+# source_11_2)", and a live idea cited "(lead_0f651732f8364b01)".
 _RECORD_ID = re.compile(
-    r"\b(?:claim|source|src|candidate|cand|review|rev|hypothesis)_[0-9a-zA-Z]+\b",
+    r"\b(?:claim|source|src|candidate|cand|review|rev|hypothesis|lead|stmt|statement)"
+    r"[0-9]*(?:_[0-9a-zA-Z]+)+\b",
     # A reviewer that opens a sentence with an id capitalises it, and "Claim_1 and
     # the source ... already explore dry-coating methods" reached a live report.
     re.IGNORECASE,
 )
 _MISSING_RECORD = "a record this session does not hold"
+
+
+def _standing(status: str) -> str:
+    """The word that has to travel with a record's name wherever prose cites it.
+
+    A debate panelist wrote "this idea relies on verified evidence (claim_11_1,
+    source_11_2)" about two records the run had never retrieved, and the report
+    printed it under the idea as an argument for ranking it above another. The
+    badges and the support verdict say what the grounding is worth elsewhere in
+    the document; inside a sentence asserting the opposite they are too far away
+    to be read as a correction, so the standing goes into the name itself.
+    """
+    if status in GROUNDED_STATUSES:
+        return ""
+    if status == "retracted":
+        return "retracted "
+    if status == "inaccessible":
+        return "unretrieved "
+    return "unverified "
+
 
 # A claim id and the id of the source it was drawn from often appear side by side in
 # the same sentence, because the specialist that wrote it was citing both. Naming each
@@ -1723,7 +1769,9 @@ _MISSING_RECORD = "a record this session does not hold"
 # replaced may have opened the sentence, and a literal lowercase replacement put a
 # small "the" at the head of a paragraph.
 _DOUBLE_NAMED_SOURCE = re.compile(
-    r"(the) claim drawn from (.+?) and the source \2\b", re.IGNORECASE
+    r"(the) ((?:retracted |unretrieved |unverified )?)claim drawn from (.+?) "
+    r"and the (?:retracted |unretrieved |unverified )?source \3\b",
+    re.IGNORECASE,
 )
 
 
@@ -1734,7 +1782,10 @@ def _double_named(match: re.Match[str]) -> str:
     drawn from X already explore dry-coating methods" -- and naming both printed the
     same title twice in one clause.
     """
-    return f"{match.group(1)} claim drawn from {match.group(2)} and that source"
+    return (
+        f"{match.group(1)} {match.group(2)}claim drawn from {match.group(3)} "
+        "and that source"
+    )
 
 
 # The generator names its own strategy in prose, and the debate agents quote that name
@@ -1783,15 +1834,49 @@ def _name_ids_in_prose(record: ResearchRecord) -> None:
     """Rewrite internal ids into the things they name, everywhere prose is stored."""
     names: dict[str, str] = dict(record.titles)
     if record.evidence:
-        titles = {source.id: source.title for source in record.evidence.sources}
+        # The title as the search handed it over ends in the site it was found on
+        # and the label on the link. Substituted into a reviewer's sentence, "the
+        # source Corrosion-inspired design of artificial interphases ... - DOI
+        # doi.org" and "the source One Unrecorded Polymer Batch Number Skewed a
+        # Battery Cycling Study mergerotgames.com" both reached a live report,
+        # reading as though the furniture were the last words of the paper's name.
+        titles = {
+            source.id: _without_search_chrome(" ".join(source.title.split()))
+            for source in record.evidence.sources
+        }
         for source in record.evidence.sources:
+            title = titles[source.id]
+            standing = _standing(source.verification_status)
             names[source.id] = (
-                f"the source {source.title}" if source.title else "the source"
+                f"the {standing}source {title}" if title else f"the {standing}source"
             )
         for claim in record.evidence.claims:
             title = titles.get(claim.source_id or "", "")
+            standing = _standing(claim.verification_status)
             names[claim.id] = (
-                f"the claim drawn from {title}" if title else "the cited claim"
+                f"the {standing}claim drawn from {title}"
+                if title
+                else f"the {standing}cited claim"
+            )
+    for lead in record.discovery.source_leads if record.discovery else []:
+        title = _without_search_chrome(" ".join(lead.title.split()))
+        standing = _standing(lead.verification_status)
+        names.setdefault(
+            lead.id,
+            f"the {standing}source {title}" if title else f"the {standing}source lead",
+        )
+    for narrative in record.discovery.narratives if record.discovery else []:
+        for statement in narrative.statements:
+            # A finding is a sentence, and a sentence spliced into the middle of a
+            # reviewer's own sentence is only readable while it is short. Past that
+            # the report says which search recorded it and leaves the finding where
+            # it is printed in full.
+            text = " ".join(statement.text.split()).rstrip(".")
+            names.setdefault(
+                statement.id,
+                f"the finding that {text[:1].lower()}{text[1:]}"
+                if 0 < len(text) <= 120
+                else "an unverified finding from the literature search",
             )
 
     # The ids are matched case-insensitively because a reviewer that opens a sentence
@@ -4095,13 +4180,16 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
     for source in record.evidence.sources if record.evidence else []:
         index[source.id] = _EvidenceRecord(
             source.id,
-            source.title.strip() or source.url,
+            # Whatever a statement resolves an id into is printed as the finding,
+            # so the search's own furniture is cut here for the same reason it is
+            # cut from the reference list.
+            _without_search_chrome(" ".join(source.title.split())) or source.url,
             source.verification_status,
         )
     for lead in record.discovery.source_leads if record.discovery else []:
         index[lead.id] = _EvidenceRecord(
             lead.id,
-            lead.title.strip() or lead.canonical_url,
+            _without_search_chrome(" ".join(lead.title.split())) or lead.canonical_url,
             lead.verification_status,
         )
     for narrative in record.discovery.narratives if record.discovery else []:
