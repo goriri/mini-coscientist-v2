@@ -85,6 +85,7 @@ from .narrative import (
     shared_grounding_reach,
     shared_review_questions,
     shared_support_notices,
+    stage_name,
     synthesize_overview,
 )
 from .parity import DEFAULT_ELO, UNMEASURED_MOVEMENT
@@ -1503,6 +1504,30 @@ def _specialist_label(record: ResearchRecord, note) -> str:
     return name
 
 
+# Words that carry no meaning of their own in a two- or three-word name, so that
+# "scoping the goal" and "goal scoping" can be recognised as the one name they are.
+_STAGE_FILLER = frozenset({"a", "and", "by", "of", "the"})
+
+
+def _one_name(text: str) -> frozenset[str]:
+    """A name reduced to the words that distinguish it, in no particular order."""
+    return frozenset(word for word in text.lower().split() if word not in _STAGE_FILLER)
+
+
+def _specialist_cell(stage: str, label: str, alone: bool) -> str:
+    """The specialist, or what its name would say twice if the row printed it.
+
+    Five of the nine stages run one specialist that carries the stage's own name, so
+    naming the stage in words rather than by its id puts the same phrase in two
+    adjacent cells: "| tournament ranking | tournament ranking |", and "| scoping the
+    goal | goal scoping |" for the same repetition with the words swapped round. What
+    the second cell is there to say on those rows is that nothing fanned out.
+    """
+    if alone and _one_name(stage) == _one_name(label):
+        return "the stage's only specialist"
+    return label
+
+
 def _elapsed(start: str, end: str) -> str:
     """How long the run took, which is what the two timestamps are printed for."""
     try:
@@ -2005,14 +2030,23 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
     # six times over, which a reader can only read as a repeat until they count them.
     # The repeats are real work and are not dropped -- the count says how many.
     rows: list[tuple[list[str], int]] = []
+    # Which stages ran one specialist and which fanned out, which is what decides
+    # whether a specialist cell has anything to add to the stage cell beside it.
+    worked = Counter(note.stage for note in record.provenance)
     for note in record.provenance:
+        # The column printed the pipeline's ids -- "scope", "evidence", "generate",
+        # "reflect" -- in a report that calls those same passes scoping the goal,
+        # literature discovery, idea generation and independent review in every
+        # sentence it writes about them, including the sentence directly under this
+        # table. The id is the run's word for the stage, not the reader's.
+        stage = stage_name(note.stage)
         row = [
-            # Every other line of this report writes "meta-review", and the one stage
-            # id that carries an underscore reached this column as "meta review"
-            # because the underscore was swapped for a space. The id is not a word
-            # here; it is a compound the report already knows how to spell.
-            note.stage.replace("_", "-"),
-            _specialist_label(record, note),
+            stage,
+            _specialist_cell(
+                stage,
+                _specialist_label(record, note),
+                worked[note.stage] == 1,
+            ),
             _record_type(note.schema_name),
             _produced_by(note),
         ]

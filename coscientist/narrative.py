@@ -5863,6 +5863,18 @@ _STAGE_WORDS = {
 }
 
 
+def stage_name(stage: str) -> str:
+    """One stage as the report names it, for a place that names them one at a time.
+
+    The provenance table printed the ids themselves -- a Stage column reading "scope",
+    "evidence", "generate", "reflect" down a report whose every sentence about those
+    same passes calls them scoping the goal, literature discovery, idea generation and
+    independent review. A reader cannot join the table to the prose without being told
+    that "reflect" is the review.
+    """
+    return _STAGE_WORDS.get(stage, stage.replace("_", " "))
+
+
 def _stage_words(stages: Iterable[str]) -> list[str]:
     """The named stages, in the order the pipeline runs them rather than in id order."""
     present = set(stages)

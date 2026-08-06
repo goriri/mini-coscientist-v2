@@ -2209,6 +2209,58 @@ def test_the_stage_column_spells_a_stage_the_way_the_rest_of_the_report_does(
     ]
     assert "meta-review" in stages
     assert "meta review" not in stages
+    # The ids themselves reached the column too. A reader joining this table to the
+    # chapter above it has no way to know that "reflect" is the review pass.
+    assert not {"scope", "evidence", "generate", "reflect"} & set(stages)
+    assert {"scoping the goal", "literature discovery", "idea generation"} <= set(
+        stages
+    )
+
+
+def test_a_stage_run_by_one_specialist_of_its_own_name_says_so_once(
+    rich_session: Session,
+):
+    """Naming the stage in words rather than by its id makes five of the nine rows
+    print the one name twice: "| tournament ranking | tournament ranking |", and
+    "| scoping the goal | goal scoping |" for the same name with the words swapped.
+    A stage that did fan out still names each specialist that worked on it."""
+    from coscientist.dossier import _provenance_appendix
+    from coscientist.narrative import ProvenanceNote
+
+    def note(stage: str, agent: str, schema: str) -> ProvenanceNote:
+        return ProvenanceNote(
+            stage=stage,
+            agent=agent,
+            schema_name=schema,
+            source="specialist",
+            repairs=[],
+            error="",
+            model="gemini-3.1-pro-preview",
+        )
+
+    record = load_record(rich_session)
+    record.provenance = [
+        note("scope", "goal_manager", "ResearchPlan"),
+        note("evidence", "evidence_discovery", "DiscoveryManifest"),
+        note("evidence", "source_verification", "EvidencePacket"),
+        note("rank", "ranking", "TournamentRecord"),
+        note("evolve", "evolution", "RevisionCycle"),
+        note("proximity", "proximity", "IdeaLandscape"),
+        note("meta_review", "meta_reviewer", "MetaReview"),
+    ]
+    rows = [
+        [cell.strip() for cell in row.strip("|").split("|")]
+        for row in _stage_table("\n".join(_provenance_appendix(record)))[2:]
+    ]
+    named = {row[0]: row[1] for row in rows}
+    assert named["scoping the goal"] == "the stage's only specialist"
+    assert named["tournament ranking"] == "the stage's only specialist"
+    assert named["evolution of the shortlist"] == "the stage's only specialist"
+    assert named["clustering by mechanism"] == "the stage's only specialist"
+    assert named["meta-review"] == "the stage's only specialist"
+    # Two specialists worked the discovery stage, so each is worth naming.
+    fanned = [row[1] for row in rows if row[0] == "literature discovery"]
+    assert fanned == ["literature discovery", "source verification"]
 
 
 def test_a_title_never_opens_a_bracket_it_does_not_close():
