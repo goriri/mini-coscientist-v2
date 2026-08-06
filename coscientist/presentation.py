@@ -80,13 +80,19 @@ def _candidate_card(
     ]
     return {
         "candidate_id": candidate.id,
+        "title": candidate.title or label,
         "label": label,
         "claim": candidate.claim,
+        "mechanism_model": candidate.mechanism_model or candidate.rationale,
         "rationale": candidate.rationale,
         "strategy": candidate.generation_strategy,
+        "evidence_for": candidate.evidence_for,
+        "evidence_against": candidate.evidence_against,
+        "evidence_gaps": candidate.evidence_gaps,
         "predictions": candidate.predictions,
         "alternatives": candidate.alternatives,
         "falsifier": candidate.falsifier,
+        "validation_protocol": candidate.validation_protocol,
         "dependencies": candidate.dependencies,
         "risks": candidate.risks,
         "go_no_go_tests": candidate.go_no_go_tests,
@@ -100,6 +106,7 @@ def _candidate_card(
         "rank": rank,
         "elo": round(elo, 1) if elo is not None else None,
         "shortlisted": shortlisted,
+        "workflow_diagram_mermaid": getattr(candidate, "workflow_diagram_mermaid", ""),
     }
 
 

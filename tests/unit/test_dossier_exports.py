@@ -3,6 +3,7 @@ from io import BytesIO
 from zipfile import ZipFile
 
 from coscientist.dossier import render_docx, render_pdf
+from coscientist.markdown_render import _unique_anchor
 
 DOSSIER = """# Co-Scientist Research Dossier
 
@@ -88,11 +89,23 @@ def test_pdf_toc_entries_carry_resolved_page_numbers():
     assert "Contents" in contents
     for heading in ("Section one", "Appendix"):
         assert heading in contents
+
     # Outline entries prove the bookmark keys resolved during multiBuild. The
     # document's own opening H1 is not among them: it repeats the title page.
-    assert [str(entry["/Title"]) for entry in reader.outline] == [
+    # The outline nests, so it is read depth-first rather than as a flat list.
+    def titles(entries) -> list[str]:
+        found = []
+        for entry in entries:
+            if isinstance(entry, list):
+                found.extend(titles(entry))
+            else:
+                found.append(str(entry["/Title"]))
+        return found
+
+    assert titles(reader.outline) == [
         "Section one",
         "Appendix",
+        "Index of Figures and Tables",
     ]
 
 
@@ -536,3 +549,130 @@ def test_a_chapter_does_not_end_on_two_orphaned_bullets():
 
     assert "Closing section" in closing, "the heading was left on the previous page"
     assert "Second point." in closing, "the list was split across the break"
+
+
+def test_pdf_export_renders_tables_as_reportlab_table_objects():
+    table_dossier = """# Title
+
+| Col A | Col B |
+| --- | --- |
+| Val 1 | Val 2 |
+"""
+    exported = render_pdf(table_dossier)
+    assert exported.startswith(b"%PDF-")
+    assert len(exported) > 1000
+
+
+def test_compile_dossier_toc_alignment_and_evidence_discovery():
+    import re
+
+    from coscientist.dossier import compile_dossier
+    from coscientist.models import ApprovalProfile
+    from coscientist.orchestration import CoScientistWorkflow
+
+    flow = CoScientistWorkflow(
+        "Design a 2026-State-of-the-Art Synthesis Strategy for a 45-mer Hydrophobic Therapeutic Peptide",
+        approval_profile=ApprovalProfile.AUTO,
+        workflow_version=1,
+    )
+    flow.accept_literature_only()
+    flow.run_auto()
+    from coscientist.models import Artifact, DeepResearchRun, DiscoveryManifest
+
+    manifest = DiscoveryManifest(
+        question=flow.session.question,
+        runs=[DeepResearchRun(pass_number=1, status="completed")],
+    )
+    flow.session.artifacts.append(
+        Artifact(
+            stage="evidence",
+            agent="deep_research_discovery",
+            artifact_type="specialist_output",
+            content="Evidence discovered.",
+            schema_name="DiscoveryManifest",
+            payload=manifest.model_dump(mode="json"),
+        )
+    )
+    report_md = compile_dossier(flow.session)
+
+    # The contents list, not every bracketed link in the document: the index of
+    # exhibits at the back is written in the same notation and is not part of it.
+    contents = report_md.split("## Table of Contents", 1)[1].split("\n## ", 1)[0]
+    entries = re.findall(r"^\s*-\s*\[([^\]]+)\]\((#[^)]*)\)$", contents, re.M)
+    assert entries, "the dossier carries no contents list"
+
+    anchors: dict[str, int] = {}
+    headings: list[tuple[int, str, str]] = []
+    for match in re.finditer(r"^(#{1,2}) (.+)$", report_md, re.M):
+        text = match.group(2).strip()
+        headings.append(
+            (len(match.group(1)), text, "#" + _unique_anchor(text, anchors))
+        )
+
+    # Every entry points at a heading that exists. A contents list whose links
+    # resolve to nothing is worse than none: it looks navigable and is not.
+    by_anchor = {anchor: text for _, text, anchor in headings}
+    for title, anchor in entries:
+        assert anchor in by_anchor, f"contents entry {title!r} points at nothing"
+        assert by_anchor[anchor] == title
+
+    # And every chapter and section is in it, bar the two that would be noise:
+    # the document's own title, which the entry would sit directly under, and
+    # the contents list itself.
+    listed = {anchor for _, anchor in entries}
+    for index, (level, text, anchor) in enumerate(headings):
+        if index == 0 or text == "Table of Contents":
+            continue
+        assert anchor in listed, f"heading {text!r} (h{level}) is not in the contents"
+
+    assert "## Literature discovery" in report_md
+    discovery_section = report_md.split("## Literature discovery", 1)[1].split("\n## ")[
+        0
+    ]
+    assert "Deep Research ran one pass" in discovery_section
+    assert "source lead" in discovery_section
+
+    main_section = report_md.split("## Complete artifact appendix")[0]
+    assert not re.search(r"\bcandidate_[a-z0-9_-]+\b", main_section, re.IGNORECASE)
+
+
+def test_render_pdf_clickable_toc_mermaid_and_index():
+    md = """# Co-Scientist Research Dossier
+
+## Table of Contents
+
+- [Executive synthesis (Executive Summary)](#executive-synthesis-executive-summary)
+- [Evidence Discovery](#evidence-discovery)
+
+## Executive synthesis (Executive Summary)
+
+Summary content here.
+| Col A | Col B |
+| --- | --- |
+| Val 1 | Val 2 |
+
+## Evidence Discovery
+
+```mermaid
+graph TD
+    A[Baseline Strategy] --> B(Evaluation Stage)
+```
+"""
+    from pypdf import PdfReader
+
+    pdf_bytes = render_pdf(md)
+    assert pdf_bytes.startswith(b"%PDF-")
+    assert len(pdf_bytes) > 2500
+
+    assert b"/Link" in pdf_bytes or b"/Annot" in pdf_bytes
+    assert b"/Dest" in pdf_bytes or b"/Dests" in pdf_bytes or b"/Names" in pdf_bytes
+
+    # Read the pages rather than the file. ReportLab deflates its content
+    # streams, so a substring search over the bytes finds only what happens to
+    # live outside them -- it would pass on a document whose body was blank.
+    reader = PdfReader(BytesIO(pdf_bytes))
+    rendered = "\n".join((page.extract_text() or "") for page in reader.pages)
+    assert "Index of Figures and Tables" in rendered
+    assert "Figure 1." in rendered
+    assert "Table 1." in rendered
+    assert "Page" in rendered

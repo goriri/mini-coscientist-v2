@@ -49,8 +49,11 @@ def _candidate(candidate_id: str, version: int = 1, parents: list[str] | None = 
         id=candidate_id,
         version=version,
         parent_ids=parents or [],
+        title=f"{candidate_id} raises retention",
         claim=f"{candidate_id} raises retention",
         rationale="Because the coating blocks the reaction.",
+        mechanism_model="The coating blocks the reaction that drives fade.",
+        validation_protocol="Coin cells against an uncoated control.",
         falsifier="Retention does not improve.",
     )
 

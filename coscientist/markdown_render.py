@@ -393,3 +393,233 @@ def _consume_paragraph(lines: list[str], index: int) -> tuple[int, str]:
         body.append(line.strip())
         index += 1
     return index, "\n".join(body)
+
+
+FIGURE_INDEX_HEADING = "## Index of Figures and Tables"
+CONTENTS_HEADING = "## Table of Contents"
+
+_SLUG_STRIP = re.compile(r"[^a-z0-9\s-]")
+
+
+def _anchor(text: str) -> str:
+    """The GitHub-style anchor a heading gets, which is what the index links to."""
+    return _SLUG_STRIP.sub("", text.strip().lower()).replace(" ", "-")
+
+
+def _caption_context(
+    stack: list[tuple[int, str, str]], repeated: set[str]
+) -> tuple[str, str]:
+    """What section an exhibit sits in, as (caption, anchor).
+
+    Nothing in the document describes a table beyond the heading it was printed
+    under, and a caption that invents one is a caption a reader cannot check.
+    Eight ideas each close on a section headed "Match summary", so where the
+    heading is not unique the caption names the chapter or idea it belongs to as
+    well -- an index whose eight entries all read "Match summary" identifies
+    nothing, and an index that then sends all eight to the first one is worse.
+    """
+    if not stack:
+        return "the report", ""
+    _, text, anchor = stack[-1]
+    if text not in repeated:
+        return text, anchor
+    parent = next((item[1] for item in reversed(stack[:-1]) if item[0] <= 2), "")
+    return (f"{text} ({parent})" if parent else text), anchor
+
+
+def _caption(label: str, caption: str, under_heading: bool) -> str:
+    """A numbered caption, minus the words the heading above it already set.
+
+    An exhibit that opens its own section takes that section's title as its
+    caption, and printing it there gives "### Executive Candidate Summary"
+    followed immediately by "Table 10. Executive Candidate Summary." The number
+    is what the caption is for; the sentence is already on the page.
+    """
+    return f"**{label}.**" if under_heading else f"**{label}.** {caption}."
+
+
+def number_figures_and_tables(content: str) -> str:
+    """Caption every table and diagram, and list them in a back-matter index.
+
+    A reader referring back to "the comparison of the eight candidates" had no
+    handle for it: the report set seventeen tables and two diagrams and numbered
+    none of them, so a discussion of one could only point at the section it was
+    in. Both exporters run this, so the numbers in the PDF and in the Markdown
+    are the same numbers.
+
+    Idempotent -- a document that already carries the index is returned as it
+    came in, so compiling and then rendering does not caption anything twice.
+    """
+    if FIGURE_INDEX_HEADING in content:
+        return content
+
+    lines = content.splitlines()
+    seen_text: dict[str, int] = {}
+    for line in lines:
+        heading = _HEADING.match(line)
+        if heading:
+            text = heading.group(2).strip()
+            seen_text[text] = seen_text.get(text, 0) + 1
+    repeated = {text for text, count in seen_text.items() if count > 1}
+
+    out: list[str] = []
+    # (level, text, anchor) for every heading still open above this point.
+    stack: list[tuple[int, str, str]] = []
+    anchors: dict[str, int] = {}
+    figures: list[tuple[str, str, str]] = []
+    tables: list[tuple[str, str, str]] = []
+    index = 0
+    # Whether the only thing between here and the last heading is blank space,
+    # which decides whether a caption repeating that heading is worth setting.
+    under_heading = False
+    while index < len(lines):
+        line = lines[index]
+
+        heading = _HEADING.match(line)
+        if heading:
+            level = len(heading.group(1))
+            text = heading.group(2).strip()
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            stack.append((level, text, _unique_anchor(text, anchors)))
+            under_heading = True
+            out.append(line)
+            index += 1
+            continue
+
+        fence = _FENCE.match(line)
+        if fence:
+            language = (fence.group(2) or "").strip().lower()
+            body = [line]
+            index += 1
+            while index < len(lines):
+                body.append(lines[index])
+                closing = _FENCE.match(lines[index])
+                index += 1
+                if closing and not (closing.group(2) or "").strip():
+                    break
+            out.extend(body)
+            # Only a diagram is a figure. A fenced JSON payload in the appendix is
+            # a record the reader is not meant to be pointed back at.
+            if language in _DIAGRAM_LANGUAGES:
+                label = f"Figure {len(figures) + 1}"
+                caption, anchor = _caption_context(stack, repeated)
+                figures.append((label, caption, anchor))
+                # Always with its caption text. A figure's caption goes below
+                # the diagram, so the heading it would be repeating is no
+                # longer next to it, and eliding the words leaves a bare
+                # "Figure 1." floating under the drawing.
+                out.extend(["", _caption(label, caption, False), ""])
+            under_heading = False
+            continue
+
+        if (
+            line.lstrip().startswith("|")
+            and index + 1 < len(lines)
+            and _TABLE_SEPARATOR.match(lines[index + 1])
+        ):
+            label = f"Table {len(tables) + 1}"
+            caption, anchor = _caption_context(stack, repeated)
+            tables.append((label, caption, anchor))
+            # Above the table, which is where a table's caption goes.
+            out.extend([_caption(label, caption, under_heading), ""])
+            while index < len(lines) and lines[index].lstrip().startswith("|"):
+                out.append(lines[index])
+                index += 1
+            under_heading = False
+            continue
+
+        out.append(line)
+        if line.strip():
+            under_heading = False
+        index += 1
+
+    if not figures and not tables:
+        return content
+
+    out.extend(["", FIGURE_INDEX_HEADING, ""])
+    for label, caption, anchor in figures + tables:
+        out.append(f"- [{label}](#{anchor}) — {caption}")
+    out.append("")
+    return "\n".join(out)
+
+
+_DIAGRAM_LANGUAGES = frozenset({"mermaid", "dot", "graphviz", "plantuml"})
+
+
+def _unique_anchor(text: str, seen: dict[str, int]) -> str:
+    """GitHub's own rule for a repeated heading: the second gets ``-1``.
+
+    Two chapters in this report are headed "Top ideas", and an anchor that does
+    not disambiguate them sends both entries to the first one.
+    """
+    base = _anchor(text)
+    count = seen.get(base, 0)
+    seen[base] = count + 1
+    return base if not count else f"{base}-{count}"
+
+
+def table_of_contents(content: str) -> str:
+    """Put a linked contents list under the report's title.
+
+    The PDF and the DOCX build native contents of their own; the Markdown export
+    had none, so the one format a reader is most likely to open in a browser was
+    also the only one they had to scroll seventeen hundred lines of to navigate.
+    """
+    if CONTENTS_HEADING in content:
+        return content
+
+    lines = content.splitlines()
+    seen: dict[str, int] = {}
+    entries: list[str] = []
+    first = True
+    for line in lines:
+        heading = _HEADING.match(line)
+        if not heading:
+            continue
+        level = len(heading.group(1))
+        text = heading.group(2).strip()
+        # Every heading claims its anchor, in document order, or the numbering
+        # of a repeated one stops matching the anchors the reader's browser makes.
+        anchor = _unique_anchor(text, seen)
+        was_first, first = first, False
+        # The document's opening heading is its title, not a section of itself.
+        if level > 2 or was_first:
+            continue
+        indent = "" if level == 1 else "  "
+        entries.append(f"{indent}- [{plain_text(text)}](#{anchor})")
+    if len(entries) < 2:
+        return content
+
+    head = 1 if lines and _HEADING.match(lines[0]) else 0
+    return "\n".join(
+        [*lines[:head], "", CONTENTS_HEADING, "", *entries, "", *lines[head:]]
+    )
+
+
+def strip_table_of_contents(content: str) -> str:
+    """Drop the Markdown contents list, for the exporters that build their own."""
+    if CONTENTS_HEADING not in content:
+        return content
+    lines = content.splitlines()
+    start = lines.index(CONTENTS_HEADING)
+    end = start + 1
+    while end < len(lines) and (
+        not lines[end].strip() or lines[end].lstrip().startswith("- [")
+    ):
+        end += 1
+    return "\n".join([*lines[:start], *lines[end:]])
+
+
+_FRAGMENT_LINK = re.compile(r"\[([^\]\n]*)\]\(#[^)\s]*\)")
+
+
+def flatten_fragment_links(content: str) -> str:
+    """Turn in-document links into plain text for the exporters that cannot follow them.
+
+    A PDF or a Word file resolves a link to a named destination, and the names it
+    knows are the ones its own contents builder registered -- not the GitHub-style
+    slugs the Markdown carries. Left in, reportlab raises on the first one it
+    cannot resolve and the export fails outright.
+    """
+    return _FRAGMENT_LINK.sub(r"\1", content)

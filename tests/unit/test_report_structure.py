@@ -382,10 +382,16 @@ def _assert_no_record_ids(body: str) -> None:
 
 
 def test_every_hash_in_the_body_is_a_heading(body: str):
-    """A stray ``#`` means markdown leaked as text rather than rendering."""
-    for line in body.splitlines():
+    """A stray ``#`` means markdown leaked as text rather than rendering.
+
+    Link destinations are exempt: the contents list and the index of exhibits
+    are made of ``[text](#anchor)``, where the hash is the fragment separator
+    and never reaches the reader.
+    """
+    for raw in body.splitlines():
+        line = re.sub(r"\]\(#[^)\s]*\)", "]()", raw)
         if "#" in line:
-            assert re.match(r"^#{1,6} \S", line), f"raw hash in prose: {line!r}"
+            assert re.match(r"^#{1,6} \S", line), f"raw hash in prose: {raw!r}"
 
 
 def test_the_body_never_prints_a_schema_name(body: str):
@@ -1428,9 +1434,15 @@ def test_a_real_workflow_run_produces_the_same_document_shape():
     test_the_nine_parts_appear_once_each_and_in_the_reference_order(live_body)
     test_the_narrative_has_exactly_nine_numbered_sections_in_order(live_body)
     test_every_hash_in_the_body_is_a_heading(live_body)
-    assert "```" not in live_body
-    assert "{" not in live_body and "}" not in live_body
-    assert "http" not in live_body
+    # Fences are for diagrams and nothing else. A fence with any other tag, or
+    # none, is a serialized artifact that escaped into the prose.
+    fences = re.findall(r"^```(.*)$", live_body, flags=re.M)
+    assert fences[0::2] == ["mermaid"] * (len(fences) // 2)
+    assert fences[1::2] == [""] * (len(fences) // 2)
+    diagrams = "\n".join(re.findall(r"^```mermaid$.*?^```$", live_body, re.M | re.S))
+    prose = live_body.replace(diagrams, "") if diagrams else live_body
+    assert "{" not in prose and "}" not in prose
+    assert "http" not in prose
     assert not re.search(r"\bN/?A\b", live_body)
     assert not re.search(r"[0-9a-f]{12,}", live_body)
     _assert_no_record_ids(live_body)

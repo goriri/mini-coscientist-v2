@@ -102,6 +102,10 @@ caveat: an angle whose literature genuinely does not exist reports that instead.
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _URL_RE = re.compile(r"https?://[^\s<>()\[\]\"']+")
 _DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.I)
+_LIST_MARKER_RE = re.compile(r"^[\s\-*#>]*(?:\d+[.)])?\s*")
+_REDIRECTOR_HOST = "vertexaisearch.cloud.google.com"
+"""The grounding redirector, which a report prints as a link's title when it has
+none. It is never the name of a document."""
 # A citation marker, as a Deep Research report writes one: [7], or [2, 5, 9].
 _CITATION_MARKER_RE = re.compile(r"\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\]")
 _FACET_KEYWORDS = {
@@ -441,6 +445,16 @@ def canonicalize_url(url: str) -> str:
     host = parts.hostname.lower().rstrip(".")
     if host in {"localhost", "metadata.google.internal"}:
         raise ValueError("Local and metadata-service URLs are not evidence sources.")
+    if host in {
+        "google.com",
+        "www.google.com",
+        "vertexaisearch.cloud.google.com",
+        "url.google.com",
+    }:
+        query_dict = dict(parse_qsl(parts.query))
+        for key in ("q", "url", "target", "dest"):
+            if key in query_dict and query_dict[key].startswith("http"):
+                return canonicalize_url(query_dict[key])
     try:
         address = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
@@ -1076,9 +1090,20 @@ def _source_leads(
     citation_titles: dict[str, str] | None = None,
 ) -> list[SourceLead]:
     titles = dict(citation_titles or {})
-    titles.update(
-        {url: title.strip() for title, url in _MARKDOWN_LINK_RE.findall(report)}
-    )
+    for title_text, raw_link in _MARKDOWN_LINK_RE.findall(report):
+        clean_title = title_text.strip()
+        # What a report prints when it has no title for a link is the grounding
+        # redirector's own hostname, and taking it leaves every lead from that
+        # pass called "vertexaisearch.cloud.google.com".
+        if not clean_title or clean_title == _REDIRECTOR_HOST:
+            continue
+        titles[raw_link] = clean_title
+        # Keyed both ways: the loop below looks the title up by canonical URL,
+        # and the report wrote the raw one.
+        try:
+            titles[canonicalize_url(raw_link)] = clean_title
+        except ValueError:
+            continue
     urls = [*titles, *_URL_RE.findall(report), *(citation_urls or [])]
     by_url: dict[str, SourceLead] = {}
     for raw_url in urls:
@@ -1100,9 +1125,33 @@ def _source_leads(
             or any(marker in host for marker in _AUTHORITATIVE_HOST_MARKERS)
             else "unknown"
         )
+        title = titles.get(url) or titles.get(raw_url) or ""
+        if title == _REDIRECTOR_HOST:
+            title = ""
+        snippet = ""
+        for line in report.splitlines():
+            if raw_url not in line and url not in line:
+                continue
+            if not title:
+                inline = _MARKDOWN_LINK_RE.search(line)
+                if inline and inline.group(1).strip() != _REDIRECTOR_HOST:
+                    title = inline.group(1).strip()
+            unlinked = _MARKDOWN_LINK_RE.sub(r"\1", line)
+            prose = _LIST_MARKER_RE.sub("", unlinked).strip()
+            if len(prose) > 15:
+                snippet = prose
+                if not title and len(prose.split(".")) > 1:
+                    title = prose.split(".")[0].strip()
+                break
+        # No invented title and no invented summary. A lead labelled "Deep
+        # Research Scholarly Evidence (pubs.acs.org)" disagrees with whatever
+        # Crossref has registered for the DOI, and the verifier then reports a
+        # real paper as "the registry record is a different document". An empty
+        # title contradicts no registry, so the registered one is adopted.
         by_url[url] = SourceLead(
             canonical_url=url,
-            title=titles.get(raw_url, host),
+            title=title,
+            summary=snippet[:180],
             identifiers=identifiers,
             source_type=source_type,
             originating_passes=[pass_number],

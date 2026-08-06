@@ -230,6 +230,20 @@ def _criterion_from_review(payload: dict[str, Any]) -> str:
     return "evidence_correctness"
 
 
+def _title_from_claim(payload: dict[str, Any]) -> str:
+    """Name a candidate after the claim it makes when the generator named none.
+
+    A title is a label for the claim, so deriving one invents nothing. Voiding
+    the candidate instead loses a complete hypothesis -- mechanism, falsifier
+    and all -- over its heading.
+    """
+    claim = str(payload.get("claim") or payload.get("rationale") or "").strip()
+    sentence = claim.split(". ")[0].strip().rstrip(".")
+    if len(sentence) > 90:
+        sentence = sentence[:87].rstrip() + "..."
+    return sentence or "Untitled candidate"
+
+
 def _recommendation_from_review(payload: dict[str, Any]) -> str:
     """Derive a review verdict when the reviewer scored but never labelled one."""
     if payload.get("fatal_flaws"):
@@ -264,7 +278,18 @@ _FIELD_DEFAULTS: dict[str, dict[str, Any]] = {
         "round_number": 1,
     },
     "EvolutionRecord": {"parent_ids": [], "changes": [], "new_prediction": ""},
-    "Candidate": {"rationale": "", "falsifier": ""},
+    "Candidate": {
+        "rationale": "",
+        "falsifier": "",
+        "title": _title_from_claim,
+        # Left empty rather than invented. A hypothesis whose generator wrote no
+        # mechanism and no protocol is still the generator's hypothesis; voiding
+        # it would throw the whole population away for two missing headings, and
+        # filling them with plausible prose would put a mechanism nobody
+        # proposed under a scientist's idea.
+        "mechanism_model": "",
+        "validation_protocol": "",
+    },
     "SourceRecord": {"url": ""},
     "EvidenceClaim": {"claim": ""},
 }

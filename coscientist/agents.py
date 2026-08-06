@@ -11,6 +11,7 @@ from typing import Protocol
 from .citations import citation_rule
 from .contract_io import repair_prompt, schema_instruction
 from .debate import run_debate_tournament
+from .disciplines import classify_discipline
 from .evidence import (
     ANGLE_SOURCE_TARGET,
     CORPUS_SOURCE_TARGET,
@@ -25,8 +26,11 @@ from .model_catalog import (
     specialist_agent_name,
 )
 from .models import Artifact, ArtifactStatus, Session
-from .parity import ROLE_CONTRACTS, typed_specialist_payload
+from .parity import ROLE_CONTRACTS, TypedPayload, typed_specialist_payload
 from .retrieval import fetch_source_document
+
+CRITIC_ROUNDS = int(os.environ.get("COSCIENTIST_CRITIC_ROUNDS", "2"))
+"""How many times a domain critic may send a specialist's draft back."""
 
 GEMINI_MODEL = DEFAULT_MODEL
 """Default Vertex AI model ID for the reasoning-backed ADK workflow.
@@ -110,14 +114,34 @@ STRUCTURED_OUTPUT_INSTRUCTIONS = {
         "holds its status, in terms a researcher can act on: which registry "
         "confirmed it, or what the fetch returned."
     ),
+    "generation_evidence_first": (
+        "Return one CandidatePopulation JSON object containing exactly two candidates "
+        "using the evidence_first strategy. For each candidate, generate a reader-facing title, "
+        "comprehensive paragraphs for mechanism_model and validation_protocol (>= 50 words each), "
+        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+    ),
+    "generation_mechanism_first": (
+        "Return one CandidatePopulation JSON object containing exactly two candidates "
+        "using the mechanism_first strategy. For each candidate, generate a reader-facing title, "
+        "comprehensive paragraphs for mechanism_model and validation_protocol (>= 50 words each), "
+        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+    ),
+    "generation_analogy_transfer": (
+        "Return one CandidatePopulation JSON object containing exactly two candidates "
+        "using the analogy_transfer strategy. For each candidate, generate a reader-facing title, "
+        "comprehensive paragraphs for mechanism_model and validation_protocol (>= 50 words each), "
+        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+    ),
+    "generation_competing_explanation": (
+        "Return one CandidatePopulation JSON object containing exactly two candidates "
+        "using the competing_explanation strategy. For each candidate, generate a reader-facing title, "
+        "comprehensive paragraphs for mechanism_model and validation_protocol (>= 50 words each), "
+        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+    ),
     "generation": (
-        "Return one CandidatePopulation JSON object containing exactly eight "
-        "candidates: two each from evidence_first, mechanism_first, "
-        "analogy_transfer, and competing_explanation. Include IDs, claims, "
-        "rationales, predictions, alternatives, falsifiers, dependencies, "
-        "risks, go_no_go_tests, and evidence_ids for every candidate. Include "
-        "top-level comparison_criteria covering evidence, feasibility, "
-        "information gain, impact, cost/time, reproducibility, and safety."
+        "Return one CandidatePopulation JSON object containing exactly eight candidates. "
+        "Each candidate must define a reader-facing title, distinct claim, rationale, mechanism_model, "
+        "validation_protocol, predictions, alternatives, falsifier, categorized evidence, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
     ),
     "reflection": "Return one ReviewSet JSON object with one evidence_correctness review per candidate.",
     "novelty_review": "Return one ReviewSet JSON object with one novelty review per candidate.",
@@ -250,12 +274,18 @@ class DeterministicProvider:
     deterministic = True
 
     def complete(self, *, role: str, prompt: str) -> str:
+        if role.endswith("_critic"):
+            return "SATISFIED"
         question = prompt.split("Research question:", 1)[-1].split("\n", 1)[0].strip()
         templates = {
             "goal_manager": f"Research objective: {question}\n\nConstraints to confirm with the researcher:\n- target system, population/material, and available measurements\n- success metric, baseline, resources, timeline, safety/ethics\n\nDeliverable: a falsifiable hypothesis and an auditable experiment plan.",
             "evidence_discovery": "Evidence discovery status: OFFLINE / UNVERIFIED.\n\nSearch questions to run with the live Google Search specialist:\n- What primary studies directly test the proposed mechanism?\n- What negative findings, replications, corrections, or retractions exist?\n- Which official datasets, standards, or registered protocols apply?\n\nNo source has been discovered or verified by the deterministic provider.",
             "source_verification": "Source verification status: NO SOURCES PROVIDED.\n\nA live verifier must open the original source, resolve its DOI/PMID or dataset identifier, inspect the exact supporting passage, and check correction/retraction status. Search snippets cannot satisfy an evidence gate.",
             "generation": "Eight candidate records were created using evidence-first, mechanism-first, analogy/transfer, and competing-explanation strategies. All are proposals pending verified evidence; inspect the typed CandidatePopulation artifact for their predictions, alternatives, dependencies, risks, falsifiers, go/no-go tests, and cross-candidate comparison criteria.",
+            "generation_evidence_first": "Eight candidate records were created using evidence-first strategy. All are proposals pending verified evidence; inspect the typed CandidatePopulation artifact for their predictions, alternatives, dependencies, risks, falsifiers, go/no-go tests, and cross-candidate comparison criteria.",
+            "generation_mechanism_first": "Eight candidate records were created using mechanism-first strategy. All are proposals pending verified evidence; inspect the typed CandidatePopulation artifact for their predictions, alternatives, dependencies, risks, falsifiers, go/no-go tests, and cross-candidate comparison criteria.",
+            "generation_analogy_transfer": "Eight candidate records were created using analogy/transfer strategy. All are proposals pending verified evidence; inspect the typed CandidatePopulation artifact for their predictions, alternatives, dependencies, risks, falsifiers, go/no-go tests, and cross-candidate comparison criteria.",
+            "generation_competing_explanation": "Eight candidate records were created using competing-explanation strategy. All are proposals pending verified evidence; inspect the typed CandidatePopulation artifact for their predictions, alternatives, dependencies, risks, falsifiers, go/no-go tests, and cross-candidate comparison criteria.",
             "reflection": "Critical review:\n- Novelty is unverified; search primary literature and negative results before claiming it.\n- Causal claims need controls, randomization/blinding where applicable, and independent replication.\n- Specify effect size, power calculation, preregistered exclusions, and adverse-event monitoring.\n\nRecommendation: advance only candidates that remain feasible after these checks.",
             "novelty_review": "Novelty review:\n- Compare each candidate with verified prior art rather than search-result similarity.\n- Treat missing primary sources and inaccessible dates as insufficient evidence.\n- Preserve potentially valuable minority hypotheses while novelty remains unresolved.",
             "methods_statistics": "Methods and statistics review:\n- Declare the research mode and intended claim before choosing a design.\n- Define constructs, estimand or proof obligation, sampling/precision rationale, controls, missing-data handling, uncertainty, robustness checks, and stopping rules.\n- Separate exploratory analysis from confirmatory tests and require an independent replication or validation path.\n\nStatus: CONDITIONAL; domain-specific calculations require validated inputs.",
@@ -408,7 +438,162 @@ class Specialist:
     role: str
     instruction: str
 
+    def _build_actor_prompt(
+        self, session: Session, checklist: str, prior: str, feedback: str
+    ) -> str:
+        from .disciplines import get_discipline_profile
+
+        discipline = getattr(session, "discipline", None) or "general_interdisciplinary"
+        profile = get_discipline_profile(discipline)
+        actor_instructions = profile.get_actor_guidance(self.stage)
+        discipline_checklist_items = profile.get_stage_checklist(self.stage)
+        discipline_checklist = (
+            "\n".join(f"- {item}" for item in discipline_checklist_items)
+            if discipline_checklist_items
+            else ""
+        )
+        discipline_checklist_section = (
+            f"Discipline-specific scientific-method checklist ({profile.name}):\n{discipline_checklist}\n"
+            if discipline_checklist
+            else ""
+        )
+        return (
+            f"You are the Lead Scientific Specialist for the role '{self.role}' "
+            f"at the '{self.stage}' stage of the Co-Scientist system.\n"
+            f"Research question: {session.question}\n"
+            f"Declared research mode: {session.research_mode}\n"
+            f"Scientific discipline: {profile.name}\n"
+            f"Required scientific-method checks:\n{checklist}\n"
+            f"{discipline_checklist_section}"
+            f"Role instruction: {self.instruction}\n"
+            f"Prior work:\n{prior}\n"
+            f"{citation_rule(session)}\n"
+            f"Human feedback: {feedback}\n"
+            f"{actor_instructions}\n"
+            "Produce a highly professional, scientifically rigorous, and complete result "
+            "for this role. Ensure all claims, controls, falsifiers, and mechanisms "
+            "are domain-specific and testable. Do not use placeholder text or truncate fields. "
+            "When a structured contract is requested, return one JSON object and do not wrap it in prose.\n\n"
+            # Immediately above the contract, because what the language clause
+            # mostly does is carve out the parts of the contract it must not
+            # touch: the field names and the enumerated values. Put it at the
+            # top of the prompt instead and several hundred lines of prior work
+            # separate the exception from the rule it excepts.
+            f"{session_language_clause(session)}"
+            f"{output_contract(self.role)}"
+        )
+
+    def _build_critic_prompt(
+        self, session: Session, content: str, round_num: int, checklist: str
+    ) -> str:
+        from .disciplines import get_discipline_profile
+
+        discipline = getattr(session, "discipline", None) or "general_interdisciplinary"
+        profile = get_discipline_profile(discipline)
+        critic_rubric = profile.get_critic_rubric(self.stage)
+        discipline_checklist_items = profile.get_stage_checklist(self.stage)
+        discipline_checklist = (
+            "\n".join(f"- {item}" for item in discipline_checklist_items)
+            if discipline_checklist_items
+            else ""
+        )
+        discipline_checklist_section = (
+            f"Discipline-specific scientific-method checklist ({profile.name}):\n{discipline_checklist}\n"
+            if discipline_checklist
+            else ""
+        )
+        return (
+            f"You are the Lead Scientific Critic and Quality Reviewer for the '{self.role}' specialist "
+            f"at the '{self.stage}' stage of the Co-Scientist system.\n"
+            f"Research Question: {session.question}\n"
+            f"Declared Research Mode: {session.research_mode}\n"
+            f"Scientific Discipline: {profile.name}\n"
+            f"Required Scientific-Method Checklist:\n{checklist}\n"
+            f"{discipline_checklist_section}"
+            f"Stage Requirements and Role Purpose: {self.instruction}\n\n"
+            f"--- CURRENT ACTOR DRAFT (Round {round_num}/10) ---\n{content}\n\n"
+            "Evaluate this draft with maximum scientific rigor against the following criteria:\n"
+            "1. Completeness & Schema Compliance: Does it provide all required fields, tables, or JSON contracts without omissions or truncation?\n"
+            "2. Scientific Rigor & Plausibility: Are mechanisms, controls, falsifiers, or citations domain-specific, plausible, and testable?\n"
+            f"3. Domain Quality Rubric & Rigor Pillars ({profile.name}):\n{critic_rubric}\n"
+            "4. Epistemic Integrity: Are hypotheses clearly distinguished from verified empirical claims?\n\n"
+            "If the draft fully satisfies all scientific and structural requirements, reply with EXACTLY:\n"
+            "SATISFIED\n\n"
+            "If the draft has ANY deficiencies, omissions, or areas requiring improvement, provide a concise, actionable bulleted critique of what the Actor must change. Do NOT output SATISFIED if changes are needed."
+        )
+
+    def _refined_by_critic(
+        self,
+        session: Session,
+        provider: Provider,
+        actor_prompt: str,
+        content: str,
+        checklist: str,
+        typed: TypedPayload,
+    ) -> tuple[str, TypedPayload]:
+        """Let a domain critic send the draft back until it stops objecting.
+
+        Bounded by :data:`CRITIC_ROUNDS` rather than run to exhaustion. Each
+        round costs two model calls, and there are seventeen specialists across
+        nine stages: at ten rounds a single run can make three hundred calls
+        nobody is waiting on productively, and the rounds that change anything
+        are the early ones.
+
+        A deterministic provider is skipped entirely. Its answers are fixtures,
+        so a critique of one is a critique of a constant, and looping would
+        replace the fixture with revision prose every offline test then fails
+        to recognise.
+
+        Every revision is re-validated. A round that improves the prose but
+        breaks the payload is not an improvement, and without the re-check the
+        artifact would carry the last draft's text beside the first draft's
+        typed contract.
+        """
+        if getattr(provider, "deterministic", False) or CRITIC_ROUNDS < 1:
+            return content, typed
+        model = ROLE_CONTRACTS.get(self.role)
+        for round_number in range(1, CRITIC_ROUNDS + 1):
+            critique = provider.complete(
+                role=f"{self.role}_critic",
+                prompt=self._build_critic_prompt(
+                    session, content, round_number, checklist
+                ),
+            ).strip()
+            verdict = critique.upper()
+            if verdict.startswith("SATISFIED") or "NO MAJOR CRITI" in verdict:
+                break
+            revision = provider.complete(
+                role=self.role,
+                prompt=(
+                    f"{actor_prompt}\n\n"
+                    f"--- PREVIOUS DRAFT (round {round_number}) ---\n{content}\n\n"
+                    f"--- SCIENTIFIC REVIEWER CRITIQUE ---\n{critique}\n\n"
+                    "Address every point in the critique above and produce a "
+                    "revised, superior draft. Return only the complete revised "
+                    "result, in the same form the role asked for."
+                ),
+            )
+            retyped = typed_specialist_payload(session, self.role, revision)
+            if model is not None and retyped.source == "deterministic_fallback":
+                break
+            content, typed = revision, retyped
+        return content, typed
+
     def run(self, session: Session, provider: Provider, feedback: str = "") -> Artifact:
+        # Before anything is dispatched, because the discipline decides which
+        # actor guidance and which critic rubric the prompts below are built
+        # from. Scope reclassifies from the catch-all: by then the question has
+        # been read once more and the reading is often sharper.
+        if not getattr(session, "discipline", None) or (
+            self.stage == "scope"
+            and getattr(session, "discipline", "general_interdisciplinary")
+            == "general_interdisciplinary"
+        ):
+            classified = classify_discipline(session.question)
+            if classified != "general_interdisciplinary" or not getattr(
+                session, "discipline", None
+            ):
+                session.discipline = classified
         if self.role == "ranking" and not getattr(provider, "deterministic", False):
             # Asking a model to report a tournament yields Elo numbers for
             # matches nobody played. Play them instead: the ratings then follow
@@ -418,9 +603,6 @@ class Specialist:
         for artifact in session.artifacts:
             if artifact.status != ArtifactStatus.ACCEPTED:
                 continue
-            # Typed artifacts are immutable collaboration memory. Preserve their
-            # complete payload rather than silently clipping source leads,
-            # candidate details, reviews, or lineage.
             body = (
                 json.dumps(artifact.payload, ensure_ascii=False)
                 if artifact.payload
@@ -434,23 +616,8 @@ class Specialist:
             f"- {requirement}"
             for requirement in method_requirements(session.research_mode)
         )
-        prompt = (
-            f"Research question: {session.question}\n"
-            f"Declared research mode: {session.research_mode}\n"
-            f"Required scientific-method checks:\n{checklist}\n"
-            f"Role: {self.instruction}\nPrior work:\n{prior}\n"
-            f"{citation_rule(session)}\n"
-            f"Human feedback: {feedback}\n"
-            "Return a rigorous result for this role.\n\n"
-            # Immediately above the contract, because what the language clause
-            # mostly does is carve out the parts of the contract it must not
-            # touch: the field names and the enumerated values. Put it at the
-            # top of the prompt instead and several hundred lines of prior work
-            # separate the exception from the rule it excepts.
-            f"{session_language_clause(session)}"
-            f"{output_contract(self.role)}"
-        )
-        content = provider.complete(role=self.role, prompt=prompt)
+        actor_prompt = self._build_actor_prompt(session, checklist, prior, feedback)
+        content = provider.complete(role=self.role, prompt=actor_prompt)
         typed = typed_specialist_payload(session, self.role, content)
         model = ROLE_CONTRACTS.get(self.role)
         live = not getattr(provider, "deterministic", False)
@@ -471,6 +638,13 @@ class Specialist:
             if retyped.source == "deterministic_fallback":
                 raise ContractViolation(self.role, retyped.error or typed.error, retry)
             content, typed = retry, retyped
+        # Refinement runs on a draft that already satisfies its contract. A
+        # critic asked to improve output the parser rejected is reviewing text
+        # that is about to be thrown away, and it spends two model calls a round
+        # to do it.
+        content, typed = self._refined_by_critic(
+            session, provider, actor_prompt, content, checklist, typed
+        )
         return Artifact(
             stage=self.stage,
             agent=self.role,
@@ -533,7 +707,29 @@ SPECIALISTS = (
         "Inspect permitted original sources, normalize identifiers, and map exact claim support; never treat snippets as verified evidence.",
     ),
     Specialist(
-        "generate", "generation", "Generate diverse, falsifiable candidate hypotheses."
+        "generate",
+        "generation",
+        "Generate diverse, falsifiable candidate hypotheses.",
+    ),
+    Specialist(
+        "generate",
+        "generation_evidence_first",
+        "Generate 2 candidates by bridging established empirical findings with unexplained anomalies or gaps in the Knowledge Base.",
+    ),
+    Specialist(
+        "generate",
+        "generation_mechanism_first",
+        "Generate 2 bottom-up candidates by constructing novel causal pathways, mathematical formulations, or biophysical/computational models.",
+    ),
+    Specialist(
+        "generate",
+        "generation_analogy_transfer",
+        "Generate 2 candidates by transferring validated control mechanisms, algorithms, or structural motifs from adjacent scientific domains.",
+    ),
+    Specialist(
+        "generate",
+        "generation_competing_explanation",
+        "Generate 2 rival candidates that challenge the prevailing consensus or dominant interpretation in the Knowledge Base.",
     ),
     Specialist(
         "reflect",

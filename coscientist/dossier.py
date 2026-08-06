@@ -39,11 +39,15 @@ from .markdown_render import (
     Rule,
     Table,
     cjk_markup,
+    flatten_fragment_links,
     has_cjk,
     inline_markup,
+    number_figures_and_tables,
     parse_blocks,
     parse_inline,
     plain_text,
+    strip_table_of_contents,
+    table_of_contents,
 )
 from .models import Session
 from .narrative import (
@@ -983,9 +987,47 @@ def _idea_deep_dive(
     lines.extend(["### Idea Proposal", "", brief.proposal, "", "### Description", ""])
     for paragraph in brief.description:
         lines.extend([paragraph, ""])
+    lines.extend(_workflow_diagram(brief))
+    lines.extend(_evidence_assessment(brief))
     lines.extend(_revised_form_block(brief))
     lines.extend(_review_block(brief, hoisted_questions))
     lines.extend(_match_summary(brief, hoisted_matches))
+    return lines
+
+
+def _workflow_diagram(brief: IdeaBrief) -> list[str]:
+    """The specialist's own diagram of the idea, where it drew one.
+
+    ``workflow_diagram_mermaid`` was on the contract, asked for in the prompt and
+    returned by the generators, and no exporter read it: every diagram the run
+    produced was carried in the saved session and printed nowhere.
+    """
+    if not brief.mermaid:
+        return []
+    return [
+        "### Proposed Workflow",
+        "",
+        "```mermaid",
+        brief.mermaid,
+        "```",
+        "",
+    ]
+
+
+def _evidence_assessment(brief: IdeaBrief) -> list[str]:
+    """What the proposing specialist thought the literature did to its own idea."""
+    if not brief.evidence_notes:
+        return []
+    lines = ["### Evidence Assessment", ""]
+    current = ""
+    for heading, badge, statement in brief.evidence_notes:
+        if heading != current:
+            if current:
+                lines.append("")
+            current = heading
+            lines.extend([f"**{heading}:**", ""])
+        lines.append(f"- {f'**{badge}** ' if badge else ''}{statement}")
+    lines.append("")
     return lines
 
 
@@ -1598,6 +1640,11 @@ def compile_dossier(session: Session) -> str:
         # entries reading "Top ideas" in one table of contents point at different
         # halves of the report and give a reader no way to tell which is which.
         lines += ["# Top ideas in detail", ""]
+        # Before the fourteen paragraphs that explain how to read the sections,
+        # because a reader who wants one idea should not have to read the manual
+        # to find out which one. Everything in the row is in the idea's own
+        # section below; the row is the handle for reaching it.
+        lines += _candidate_summary_table(briefs)
         for paragraph in DEEP_DIVE_PREAMBLE:
             lines += [paragraph, ""]
         if grounding:
@@ -1615,7 +1662,62 @@ def compile_dossier(session: Session) -> str:
         )
     lines += _advisory_appendix(advisories)
     lines += _provenance_appendix(record)
-    return _em_dashed(_densely_numbered("\n".join(lines).rstrip() + "\n"))
+    report = _em_dashed(_densely_numbered("\n".join(lines).rstrip() + "\n"))
+    # Numbering runs before the contents list, so the index of exhibits it adds
+    # is itself an entry in the contents rather than a section nothing points at.
+    return table_of_contents(number_figures_and_tables(report))
+
+
+_SUMMARY_CELL_CEILING = 140
+
+
+def _cell(text: str, ceiling: int = _SUMMARY_CELL_CEILING) -> str:
+    """One statement, short enough that the row it is in stays one screen wide.
+
+    A pipe inside a cell ends the cell, so any that survived into a claim would
+    silently split the row into columns the header has no names for.
+    """
+    flat = " ".join(plain_text(text).split()).replace("|", "—")
+    if len(flat) <= ceiling:
+        return flat
+    return flat[: ceiling - 1].rstrip(" ,;.") + "…"
+
+
+def _candidate_summary_table(briefs: Sequence) -> list[str]:
+    """Every idea on one page, in the order the tournament ranked them.
+
+    The deep-dive half opened on eight sections of roughly a hundred and fifty
+    lines each, with no way to see what the eight were without reading them. A
+    reader comparing ideas -- which is what a ranked population is for -- had to
+    hold eight claims in their head across nine pages.
+    """
+    if not briefs:
+        return []
+    lines = [
+        "### Executive Candidate Summary",
+        "",
+        "| Rank | Candidate Title | Strategy | Primary Claim | Falsifier Summary | Elo | Evidence |",
+        "| ---: | --- | --- | --- | --- | ---: | --- |",
+    ]
+    for brief in briefs:
+        shortlist = " ★" if brief.shortlisted else ""
+        lines.append(
+            f"| {brief.rank} | **{_cell(brief.title, 70)}**{shortlist} "
+            f"| {_cell(brief.strategy, 24)} "
+            f"| {_cell(brief.facts.get('Core idea', ''))} "
+            f"| {_cell(brief.facts.get('Falsifier', ''))} "
+            f"| {brief.elo} | {brief.support} |"
+        )
+    lines.extend(
+        [
+            "",
+            "A star marks an idea the tournament shortlisted. Elo is the rating it "
+            "finished the tournament on, and the evidence column is the grounding "
+            "verdict explained under Candidate Ideas above.",
+            "",
+        ]
+    )
+    return lines
 
 
 def _em_dashed(report: str) -> str:
@@ -2634,7 +2736,14 @@ def render_pdf(content: str) -> bytes:
 
     _register_pdf_fonts()
     styles = _pdf_styles()
-    blocks = parse_blocks(content)
+    # Both exporters build a native contents list and number the exhibits
+    # themselves, so the Markdown one is dropped rather than set twice; the
+    # numbering pass is idempotent and only fires on markup compiled elsewhere.
+    blocks = parse_blocks(
+        flatten_fragment_links(
+            strip_table_of_contents(number_figures_and_tables(content))
+        )
+    )
     title, question, stamp = _dossier_meta(blocks)
 
     buffer = BytesIO()
@@ -3234,7 +3343,14 @@ def render_docx(content: str) -> bytes:
     section.left_margin = Inches(0.85)
     section.right_margin = Inches(0.85)
 
-    blocks = parse_blocks(content)
+    # Both exporters build a native contents list and number the exhibits
+    # themselves, so the Markdown one is dropped rather than set twice; the
+    # numbering pass is idempotent and only fires on markup compiled elsewhere.
+    blocks = parse_blocks(
+        flatten_fragment_links(
+            strip_table_of_contents(number_figures_and_tables(content))
+        )
+    )
     title, question, stamp = _dossier_meta(blocks)
     document.core_properties.title = title
     document.core_properties.subject = "Scientific research planning dossier"

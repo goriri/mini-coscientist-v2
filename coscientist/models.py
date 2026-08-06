@@ -33,6 +33,20 @@ RESEARCH_MODES = (
     "systematic_review",
     "measurement_field",
 )
+DISCIPLINES = (
+    "chemistry_materials",
+    "biology_medicine",
+    "physics_engineering",
+    "computer_science_ai",
+    "mathematics_statistics",
+    "earth_climate_sciences",
+    "neuroscience_cognitive",
+    "astronomy_astrophysics",
+    "social_science_economics",
+    "environmental_ecology",
+    "pharmacology_toxicology",
+    "general_interdisciplinary",
+)
 
 
 def utc_now() -> str:
@@ -61,6 +75,7 @@ class DecisionAction(StrEnum):
     ACCEPT = "accept"
     REVISE = "revise"
     STOP = "stop"
+    REFINE_SECTION = "refine_section"
 
 
 class ArtifactStatus(StrEnum):
@@ -379,6 +394,7 @@ class SourceLead(Contract):
     id: str = Field(default_factory=lambda: new_id("lead"))
     canonical_url: str
     title: str = ""
+    summary: str = ""
     authors: list[str] = Field(default_factory=list)
     year: int | None = None
     identifiers: dict[str, str] = Field(default_factory=dict)
@@ -476,18 +492,80 @@ class DiscoveryManifest(Contract):
     # every panel downstream, as a corpus that was checked in full.
     leads_sent_to_verification: int = Field(default=0, ge=0)
     leads_beyond_verification_ceiling: int = Field(default=0, ge=0)
+    synthesis_report: str = ""
+
+
+class ResearchDirection(Contract):
+    id: str = Field(default_factory=lambda: new_id("dir"))
+    title: str
+    scope: str
+    mechanism_or_concept: str
+    outcome: str
+    competing_explanations: list[str] = Field(default_factory=list)
+    required_data: list[str] = Field(default_factory=list)
+    search_questions: list[str] = Field(default_factory=list)
+
+
+class EvidenceGap(Contract):
+    id: str = Field(default_factory=lambda: new_id("gap"))
+    direction_id: str
+    description: str
+    decision_impact: Literal["low", "medium", "high", "blocking"] = "medium"
+    resolution_query: str
+
+
+class EvidenceRequest(Contract):
+    id: str = Field(default_factory=lambda: new_id("evreq"))
+    requesting_stage: str
+    requesting_agent: str
+    claim_to_verify: str
+    priority: int = Field(default=1, ge=1, le=5)
+    budget_usd: float = Field(default=1.0, ge=0.0)
+    status: Literal["submitted", "working", "completed", "failed", "rejected"] = (
+        "submitted"
+    )
+    resulting_manifest_version: int | None = None
+
+
+class CitationAnchor(Contract):
+    id: str = Field(default_factory=lambda: new_id("cite"))
+    claim_id: str
+    human_citation_number: int
+    report_location: str
+    display_text: str
+
+
+class KnowledgeBaseManifest(Contract):
+    id: str = Field(default_factory=lambda: new_id("kb"))
+    version: int = 1
+    parent_version: int | None = None
+    directions: list[ResearchDirection] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+    claim_ids: list[str] = Field(default_factory=list)
+    coverage_matrix: dict[str, float] = Field(default_factory=dict)
+    contradiction_graph: list[tuple[str, str]] = Field(default_factory=list)
+    unresolved_gaps: list[EvidenceGap] = Field(default_factory=list)
+    search_cutoff_date: str = Field(default_factory=utc_now)
+    checksum: str = ""
+    evidence_requests: list[EvidenceRequest] = Field(default_factory=list)
 
 
 class Candidate(Contract):
     id: str = Field(default_factory=lambda: new_id("candidate"))
     version: int = 1
     parent_ids: list[str] = Field(default_factory=list)
+    title: str
     claim: str
     rationale: str
+    mechanism_model: str
+    validation_protocol: str
     predictions: list[str] = Field(default_factory=list)
     alternatives: list[str] = Field(default_factory=list)
     falsifier: str
     evidence_ids: list[str] = Field(default_factory=list)
+    evidence_for: list[str] = Field(default_factory=list)
+    evidence_against: list[str] = Field(default_factory=list)
+    evidence_gaps: list[str] = Field(default_factory=list)
     generation_strategy: Literal[
         "evidence_first",
         "mechanism_first",
@@ -497,6 +575,15 @@ class Candidate(Contract):
     dependencies: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     go_no_go_tests: list[str] = Field(default_factory=list)
+    workflow_diagram_mermaid: str = ""
+    # Unscored means unscored. These defaulted to 4, so a generator that returned
+    # no self-assessment still had "4/5 novelty" printed under its name in the
+    # dossier, and a reader had no way to tell a judgement from a filled-in blank.
+    score_novelty: int | None = Field(default=None, ge=1, le=5)
+    score_feasibility: int | None = Field(default=None, ge=1, le=5)
+    score_impact: int | None = Field(default=None, ge=1, le=5)
+    score_correctness: int | None = Field(default=None, ge=1, le=5)
+    score_verification: int | None = Field(default=None, ge=1, le=5)
 
 
 class CandidatePopulation(Contract):
@@ -772,6 +859,7 @@ class Session(Contract):
     # The CLI and the web API validate at the point the value is chosen.
     model: str = DEFAULT_MODEL
     language: str = DEFAULT_LANGUAGE
+    discipline: str = "general_interdisciplinary"
     approval_mode: ApprovalMode = ApprovalMode.HUMAN
     approval_profile: ApprovalProfile = ApprovalProfile.MILESTONE
     input_requirements: list[InputRequirement] = Field(default_factory=list)
@@ -789,6 +877,19 @@ class Session(Contract):
     version: int = 0
     created_at: str = Field(default_factory=utc_now)
     updated_at: str = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def populate_discipline_if_default(self) -> Session:
+        if self.discipline == "general_interdisciplinary" and self.question:
+            try:
+                from .disciplines import classify_discipline
+
+                classified = classify_discipline(self.question)
+                if classified != "general_interdisciplinary":
+                    self.discipline = classified
+            except ImportError:
+                pass
+        return self
 
     def artifact(self, stage: str, *, accepted_only: bool = True) -> Artifact | None:
         return next(
@@ -810,6 +911,7 @@ class Session(Contract):
         migrated = dict(data)
         migrated.setdefault("schema_version", SCHEMA_VERSION)
         migrated.setdefault("context_id", new_id("context"))
+        migrated.setdefault("discipline", "general_interdisciplinary")
         migrated.setdefault("approval_mode", ApprovalMode.HUMAN)
         if "approval_profile" not in migrated:
             migrated["approval_profile"] = (

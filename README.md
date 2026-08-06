@@ -45,10 +45,12 @@ uv run coscientist tui \
   --report battery-brief.md
 ```
 
-The default export is a complete dossier: a concise executive synthesis first,
-followed by candidates, evidence packets, independent reviews, tournament
-comparisons, evolution records, decisions, tasks, checksums, and lineage.
-Markdown, PDF, and editable Google Docs-compatible DOCX exports are included:
+The default export is a complete, enterprise-grade scientific research dossier featuring:
+
+- **Executive Synthesis (Executive Summary)**: Powered by `DossierManifest` from the `meta_reviewer` agent, presenting top recommendations, unresolved fatal flaws, and specific evidence that would change the decision.
+- **Evidence Discovery & Annotated Bibliography**: Displays a Discovery Metrics Banner, clickable links to standalone full-text Deep Research synthesis artifacts (`deep_research_synthesis_report.md` & `.pdf`), the complete embedded Deep Research scientific literature synthesis report, and a structured **Annotated Bibliography & Source Evidence Mapping Table** (`| # | Source Title & Clickable Link | Source Type | Core Finding & Methodological Relevance |`) with real scholarly paper titles and contextual summaries.
+- **Complete Research Lineage**: Includes candidate ideas, evidence packets, five-axis independent reviews, 3-round Swiss/Elo tournament rankings, evolution rounds, proximity maps, decisions, tasks, checksums, and lineage.
+- **Clickable ReportLab PDF & DOCX Exports**: ReportLab PDF exports feature native clickable Table of Contents bookmarks (`#anchors`), visual diagram boxes (`──▶`), zero HTML entities, and a two-pass **Index of Figures and Tables** with verified page numbers.
 
 ```bash
 uv run coscientist run "Can a coating improve cycle life?" \

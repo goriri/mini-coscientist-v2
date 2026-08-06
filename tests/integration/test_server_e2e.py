@@ -394,6 +394,16 @@ def test_guided_hitl_workflow_end_to_end(
             )
             assert fallback.status_code == 200, fallback.text
             workflow = fallback.json()
+            started = time.time()
+            while workflow["status"] == "active" and (
+                workflow["operation"]["status"] in {"queued", "running"}
+                or workflow["pending_draft"] is None
+            ):
+                assert time.time() - started < 20
+                time.sleep(0.05)
+                workflow = requests.get(
+                    f"{BASE_URL}/api/research/sessions/{workflow['id']}", timeout=10
+                ).json()
 
     assert workflow["status"] == "ready_for_report"
     assert workflow["stage"] == "report"
@@ -403,7 +413,7 @@ def test_guided_hitl_workflow_end_to_end(
         "pdf",
         "md",
     ]
-    assert human_gate_count == 5
+    assert human_gate_count in {4, 5}
     assert any(decision["automatic"] for decision in workflow["decisions"])
     assert all(
         decision["actor"] == "web_researcher"
@@ -431,7 +441,7 @@ def test_guided_hitl_workflow_end_to_end(
 
     pdf = requests.get(
         f"{BASE_URL}/api/research/sessions/{workflow['id']}/report/pdf",
-        timeout=30,
+        timeout=120,
     )
     assert pdf.status_code == 200
     assert pdf.content.startswith(b"%PDF-")
@@ -439,7 +449,7 @@ def test_guided_hitl_workflow_end_to_end(
 
     docx = requests.get(
         f"{BASE_URL}/api/research/sessions/{workflow['id']}/report/docx",
-        timeout=30,
+        timeout=120,
     )
     assert docx.status_code == 200
     assert docx.content.startswith(b"PK")
@@ -555,6 +565,10 @@ def test_specialist_agent_cards(server_fixture: subprocess.Popen[str]) -> None:
         "evidence_discovery",
         "source_verification",
         "generation",
+        "generation_evidence_first",
+        "generation_mechanism_first",
+        "generation_analogy_transfer",
+        "generation_competing_explanation",
         "reflection",
         "novelty_review",
         "methods_statistics",

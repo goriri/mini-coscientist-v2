@@ -146,9 +146,15 @@ def _candidates() -> list[Candidate]:
     return [
         Candidate(
             id=f"candidate_{index:04d}",
+            title=claim,
             claim=claim,
             rationale=f"Rationale {index}: the coating alters the interphase in a way "
             "that is measurable before capacity fade appears",
+            mechanism_model=f"Mechanism {index}: the coating scavenges trace water at "
+            "the interphase, and the passivated surface is what slows capacity fade",
+            validation_protocol=f"Protocol {index}: coin cells at three coating "
+            "thicknesses against an uncoated control, cycled to a prespecified "
+            "capacity-retention endpoint with blinded measurement",
             predictions=[f"Prediction {index}a", f"Prediction {index}b"],
             alternatives=[f"Alternative reading {index}"],
             falsifier=f"No difference in first-cycle coulombic efficiency at {index} nm",

@@ -13,6 +13,7 @@ from coscientist.evidence import (
     normalize_report,
 )
 from coscientist.models import EVIDENCE_FACETS, ResearchPlan, Session
+from coscientist.orchestration import _deep_research_enabled
 
 # Shape recorded from a completed Vertex AI Deep Research interaction
 # (agent deep-research-preview-04-2026, project cellular-cider-495602-r9). Vertex
@@ -473,3 +474,42 @@ def test_short_worker_steps_start_then_poll_without_duplicate_interaction():
     assert transport.starts == len(EVIDENCE_FACETS)
     assert transport.polls == len(EVIDENCE_FACETS)
     assert [run.status for run in second.runs] == ["completed"] * len(EVIDENCE_FACETS)
+
+
+def test_gemini_deep_research_transport_uses_adc_when_no_api_key(monkeypatch):
+    """No API key on a project means Vertex with Application Default Credentials."""
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project-adc")
+    # The Deep Research agent is served from "global" and nowhere else, so the
+    # deployment's own region must not be read here: honouring it would point
+    # every interaction at an endpoint that does not host the agent.
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    # The suite stubs project resolution to None so that no test can reach a
+    # billable interaction by accident. This one is about what happens when a
+    # project does resolve, so it puts the real answer back for its own scope.
+    monkeypatch.setattr(
+        "coscientist.evidence.resolve_vertex_project", lambda: "test-project-adc"
+    )
+    calls: list[dict] = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr("google.genai.Client", FakeClient)
+    transport = GeminiDeepResearchTransport()
+
+    assert len(calls) == 1
+    assert calls[0].get("vertexai") is True
+    assert calls[0].get("project") == "test-project-adc"
+    assert calls[0].get("location") == "global"
+    assert transport.backend == "vertex"
+
+
+def test_deep_research_is_on_unless_the_deployment_turns_it_off(monkeypatch):
+    """The default is on; only an explicit off switch substitutes grounded search."""
+    monkeypatch.delenv("COSCIENTIST_DEEP_RESEARCH", raising=False)
+    assert _deep_research_enabled() is True
+
+    monkeypatch.setenv("COSCIENTIST_DEEP_RESEARCH", "off")
+    assert _deep_research_enabled() is False

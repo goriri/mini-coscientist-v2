@@ -47,8 +47,11 @@ def _population() -> CandidatePopulation:
         candidates=[
             Candidate(
                 id=f"candidate_{index:04d}",
+                title=claim,
                 claim=claim,
                 rationale="Surface passivation limits electrolyte reduction.",
+                mechanism_model="Surface passivation limits electrolyte reduction.",
+                validation_protocol="Coin cells against an uncoated control.",
                 predictions=["Capacity fade halves over 500 cycles."],
                 falsifier="Fade is unchanged at matched C-rate.",
             )

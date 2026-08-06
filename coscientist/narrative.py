@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from .citations import CandidateCitations, resolve_population
+from .citations import GROUNDED_STATUSES, CandidateCitations, resolve_population
 from .evidence import GROUNDING_REDIRECT_MARKER
 from .governance import open_blockers
 from .models import (
@@ -445,6 +445,14 @@ DEEP_DIVE_PREAMBLE = (
     "everything under it with it; a prediction every competing idea also makes "
     "distinguishes nothing; and a falsifier stated before the work starts is what "
     "keeps the idea a hypothesis rather than a position.",
+    "Evidence Assessment is the proposing specialist's own reading of the "
+    "literature it worked from: what it takes to argue for the idea, what it takes "
+    "to argue against it, and what it already knew was missing. Each statement "
+    "carries what stands behind it — **[Verified Source]** where it names a "
+    "document this run retrieved and checked, **[Literature Lead]** where it names "
+    "one the search found but nothing confirmed, and **[Unsourced claim]** where it "
+    "names no document at all. A gap carries no label, because a statement that no "
+    "evidence exists is not one that can be grounded.",
     "Identified issues and validated risks are the risks the specialist that "
     "proposed the idea named against its own work. No reviewer was asked to confirm "
     "them, so the list is neither validated nor complete, and a risk missing from it "
@@ -607,6 +615,20 @@ class IdeaBrief:
     """
     revised_unchanged: list[str] = field(default_factory=list)
     """Fields the rewrite left alone, named so the diff above can be read as a diff."""
+    strategy: str = ""
+    """Which of the four generation strategies proposed this idea."""
+    mermaid: str = ""
+    """The specialist's own workflow diagram, when it drew one."""
+    evidence_notes: list[tuple[str, str, str]] = field(default_factory=list)
+    """The idea's categorized evidence, as (heading, grounding label, statement).
+
+    A candidate states what it takes to argue for it, against it, and what is
+    missing. None of the three reached the page: the report printed the citation
+    markers the claim resolved to and dropped the specialist's own reading of
+    them, so a reader could see which paper an idea leaned on but not what the
+    proposer thought it showed -- nor, anywhere, what the proposer already knew
+    was unresolved.
+    """
     revised_is_recommended: bool = False
     """Whether the meta-review actually carries the rewrite printed under this idea.
 
@@ -3692,6 +3714,9 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
                 revised_lead_in=revised_lead_in,
                 revised_form=revised_form,
                 revised_unchanged=revised_unchanged,
+                strategy=candidate.generation_strategy.replace("_", " "),
+                mermaid=candidate.workflow_diagram_mermaid.strip(),
+                evidence_notes=_evidence_notes(record, candidate),
                 revised_is_recommended=recommended,
             )
         )
@@ -3753,6 +3778,67 @@ def _supporting_claims(record: ResearchRecord, candidate: Candidate) -> list[str
             _sentence(f"{_sentence(claim.claim).rstrip('.')} {marker}".strip())
         )
     return stated
+
+
+_LOCATOR = re.compile(r"(?:https?://\S+|\b10\.\d{4,9}/\S+|\bPMID:?\s*\d+)", re.I)
+
+VERIFIED_BADGE = "[Verified Source]"
+LEAD_BADGE = "[Literature Lead]"
+UNSOURCED_BADGE = "[Unsourced claim]"
+
+
+def _grounding_badge(statement: str, verified: set[str], known: set[str]) -> str:
+    """What stands behind one of a candidate's own evidence statements.
+
+    Three labels rather than two, because the third case is the common one and
+    the other two do not cover it: a specialist writes "contradictory findings
+    are reported in the literature" and names no paper. Calling that a
+    literature lead would tell a reader there is something to follow.
+    """
+    locators = {
+        match.group(0).rstrip(".,;)").lower() for match in _LOCATOR.finditer(statement)
+    }
+    if not locators:
+        return UNSOURCED_BADGE
+    if any(any(locator in url for url in verified) for locator in locators):
+        return VERIFIED_BADGE
+    if any(any(locator in url for url in known) for locator in locators):
+        return LEAD_BADGE
+    # A locator the run never retrieved is a claim about a document, not a
+    # record of one.
+    return UNSOURCED_BADGE
+
+
+def _evidence_notes(
+    record: ResearchRecord, candidate: Candidate
+) -> list[tuple[str, str, str]]:
+    """The candidate's own for/against/missing statements, each labelled by grounding."""
+    sources = record.evidence.sources if record.evidence else []
+    known = {source.url.lower() for source in sources if source.url}
+    verified = {
+        source.url.lower()
+        for source in sources
+        if source.url and source.verification_status in GROUNDED_STATUSES
+    }
+    notes: list[tuple[str, str, str]] = []
+    for heading, statements in (
+        ("Evidence for", candidate.evidence_for),
+        ("Evidence against", candidate.evidence_against),
+        ("Evidence gaps", candidate.evidence_gaps),
+    ):
+        for statement in statements:
+            text = _sentence(statement)
+            if not text:
+                continue
+            # A gap is a statement that no evidence exists, so grounding it is
+            # not a question that can be asked of it.
+            badge = (
+                ""
+                if heading == "Evidence gaps"
+                else _grounding_badge(text, verified, known)
+            )
+            notes.append((heading, badge, text))
+    return notes
 
 
 def _shared_qualifications(record: ResearchRecord) -> list[str]:

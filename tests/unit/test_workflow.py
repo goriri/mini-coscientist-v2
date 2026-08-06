@@ -100,8 +100,12 @@ def test_only_discovery_card_has_google_search():
     verifier = next(
         card for card in flow.agent_cards if card.name == "source_verification"
     )
+    # The verifier retrieves through the in-repo fetcher, which records the HTTP
+    # status and the registry lookup. ``load_web_page`` returns page text with no
+    # provenance, and a verifier that only sees text cannot tell a paywall notice
+    # from a paper.
     assert verifier.tools == ["fetch_source_document"]
-    assert len(flow.agent_cards) == 13
+    assert len(flow.agent_cards) == 17
 
 
 def test_stopped_session_cannot_advance():

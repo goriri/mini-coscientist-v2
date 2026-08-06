@@ -45,8 +45,11 @@ def _candidate(candidate_id: str) -> Candidate:
     return Candidate(
         id=candidate_id,
         generation_strategy="mechanism_first",
+        title=f"Hypothesis {candidate_id}",
         claim=f"Hypothesis {candidate_id}.",
         rationale="Because the mechanism predicts it.",
+        mechanism_model="The coating blocks the reaction that drives fade.",
+        validation_protocol="Coin cells against an uncoated control.",
         predictions=["Capacity retention improves."],
         falsifier="Retention does not improve.",
     )

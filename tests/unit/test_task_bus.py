@@ -37,8 +37,11 @@ def _session() -> Session:
     population = CandidatePopulation(
         candidates=[
             Candidate(
+                title="A conformal alumina coating suppresses decomposition.",
                 claim="A conformal alumina coating suppresses electrolyte decomposition.",
                 rationale="Surface passivation limits electrolyte reduction.",
+                mechanism_model="Surface passivation limits electrolyte reduction.",
+                validation_protocol="Coin cells against an uncoated control.",
                 predictions=["Capacity fade halves over 500 cycles."],
                 falsifier="Fade is unchanged at matched C-rate.",
             )

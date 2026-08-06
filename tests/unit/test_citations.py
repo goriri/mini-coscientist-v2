@@ -18,8 +18,11 @@ def _candidate(candidate_id: str, *evidence_ids: str) -> Candidate:
     return Candidate(
         id=candidate_id,
         generation_strategy="evidence_first",
+        title="A 2 nm alumina coating slows transition-metal dissolution.",
         claim="A 2 nm alumina coating slows transition-metal dissolution.",
         rationale="The layer blocks HF attack on the cathode surface.",
+        mechanism_model="The layer blocks HF attack on the cathode surface.",
+        validation_protocol="Coin cells against an uncoated control.",
         predictions=["Coated cells hold 80% capacity at cycle 500."],
         falsifier="Coated cells fade at or below the uncoated rate.",
         evidence_ids=list(evidence_ids),

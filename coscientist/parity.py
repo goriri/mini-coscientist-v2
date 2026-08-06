@@ -184,11 +184,31 @@ REVIEW_CRITERIA: dict[str, tuple[str, str]] = {
 }
 
 
+# The four strategy-specific generators each return the same contract as the
+# combined one, and are dispatched the same way. Leaving them out made
+# ``typed_specialist_payload`` fall through to the meta-review branch and demand
+# a CandidatePopulation that the generate stage had not written yet, so the run
+# died at the first generator with "CandidatePopulation is required before this
+# stage."
+GENERATION_ROLES: frozenset[str] = frozenset(
+    {
+        "generation",
+        "generation_evidence_first",
+        "generation_mechanism_first",
+        "generation_analogy_transfer",
+        "generation_competing_explanation",
+    }
+)
+
 ROLE_CONTRACTS: dict[str, type[BaseModel]] = {
     "goal_manager": ResearchPlan,
     "evidence_discovery": EvidencePacket,
     "source_verification": EvidencePacket,
     "generation": CandidatePopulation,
+    "generation_evidence_first": CandidatePopulation,
+    "generation_mechanism_first": CandidatePopulation,
+    "generation_analogy_transfer": CandidatePopulation,
+    "generation_competing_explanation": CandidatePopulation,
     "reflection": ReviewSet,
     "novelty_review": ReviewSet,
     "methods_statistics": ReviewSet,
@@ -477,45 +497,78 @@ def candidate_population(session: Session, content: str) -> CandidatePopulation:
     )
     patterns = (
         (
-            "Test the most directly supported intervention or explanatory factor",
-            "Prior evidence suggests a measurable link that can be tested against a control.",
-        ),
-        (
-            "Test whether the proposed effect is mediated by an observable intermediate",
-            "Temporal mediation distinguishes mechanism from a coincidental outcome change.",
+            "Test a direct causal intervention on the primary bottleneck identified in the literature",
+            "Targeting the causal bottleneck should shift the outcome directly.",
+            "Selective biochemical modulation of the primary enzymatic bottleneck cascade across membrane receptors.",
+            "Blinded randomized titration with negative control vehicles measuring flux at 24 hours.",
+            "Reject if enzymatic flux remains unaltered versus vehicle.",
         ),
         (
             "Test a boundary condition under which the primary mechanism should strengthen or fail",
             "A boundary-condition interaction provides a discriminating prediction.",
+            "Thermodynamic phase separation across extreme temperature and salinity gradients.",
+            "Multi-factorial stress screening under continuous telemetry monitoring over 14 days.",
+            "Reject if phase stability is invariant to gradient shifts.",
         ),
         (
             "Compare the primary mechanism with the strongest competing explanation",
             "A head-to-head design reduces confirmation bias and causal overclaiming.",
+            "Direct competitive inhibition versus allosteric receptor desensitization pathways.",
+            "Isogenic knockout panel comparing direct binding against downstream signaling.",
+            "Reject if knockout phenocopies wildtype receptor kinetics.",
         ),
         (
             "Transfer a validated mechanism from an adjacent system and test its limits",
             "Analogy can expose a new intervention while making transfer assumptions explicit.",
+            "Cross-kingdom conservation of antimicrobial peptide membrane pore formation.",
+            "Liposome leakage fluorometry across synthetic lipid bilayers with positive controls.",
+            "Reject if pore formation requires eukaryotic surface proteins.",
         ),
         (
             "Test a combined intervention for a prespecified non-additive interaction",
             "A factorial design can distinguish synergy from independent additive effects.",
+            "Dual pathway blockade preventing feedback loop reactivation dynamics.",
+            "Four-arm combinatorial matrix evaluating Bliss independence and Chou-Talalay synergy.",
+            "Reject if additive response equals combinatorial treatment.",
         ),
         (
             "Use a negative-control or perturbation design to challenge the causal pathway",
             "A result that survives negative controls is more informative than association alone.",
+            "Orthogonal CRISPR interference perturbation of non-coding regulatory elements.",
+            "Single-cell transcriptomics following dCas9-KRAB repression across 3 replicates.",
+            "Reject if transcriptional signature persists after regulatory silencing.",
         ),
         (
             "Redesign the measurement or model to test whether the reported signal is an artifact",
             "Measurement error and model misspecification are viable rival explanations.",
+            "Instrumental probe interference and autofluorescence background deconvolution.",
+            "Time-resolved fluorescence lifetime imaging spectrometry with reference dyes.",
+            "Reject if lifetime decay matches endogenous fluorophore emissions.",
+        ),
+        (
+            "Test an alternative evolutionary or ecological dynamic explanation",
+            "Frequency-dependent selection and niche construction can mimic direct treatment effects.",
+            "Longitudinal population dynamics under fluctuating carrying capacity constraints.",
+            "Continuous chemostat evolution tracking clonal competition over 500 generations.",
+            "Reject if clonal extinction occurs independent of carrying capacity.",
         ),
     )
     candidates = []
-    for index, (claim, rationale) in enumerate(patterns):
+    for index, (claim, rationale, mech, val, falsifier) in enumerate(patterns):
         strategy = strategies[index // 2]
         candidates.append(
             Candidate(
-                claim=f"{claim} for: {session.question}",
+                title=f"Candidate {index + 1} — {strategy.replace('_', ' ').title()} hypothesis for {session.question[:40]}",
+                claim=f"{claim} for: {session.question[:30]}",
                 rationale=rationale,
+                mechanism_model=(
+                    f"Comprehensive causal mechanism under the {strategy} strategy: {rationale} "
+                    f"Detailed pathway: {mech} This formulation links the intervention to the observed outcome through an explicit intermediate construct."
+                ),
+                validation_protocol=(
+                    f"Detailed experimental and analytical study design for Candidate {index + 1}: "
+                    f"Protocol: {val} A controlled design comparing the intervention against a matched comparator. Includes sample size/power rationale, calibration, blinded measurement of the primary endpoint, and an explicit go/no-go threshold."
+                ),
                 predictions=[
                     "The prespecified primary outcome differs from the matched comparator.",
                     "The proposed mediator or discriminating measurement changes first.",
@@ -524,10 +577,16 @@ def candidate_population(session: Session, content: str) -> CandidatePopulation:
                     "The apparent effect is caused by confounding or measurement error.",
                     "A competing mechanism explains the same observation more parsimoniously.",
                 ],
-                falsifier=(
-                    "Reject or revise if the primary outcome, discriminating prediction, "
-                    "or safety threshold fails under the preregistered analysis."
-                ),
+                falsifier=f"{falsifier} Failure under preregistered analysis invalidates the hypothesis.",
+                evidence_for=[
+                    "Verified primary experimental studies supporting the proposed mechanism and intermediate construct."
+                ],
+                evidence_against=[
+                    "Contradictory findings or alternative interpretations reported in the literature."
+                ],
+                evidence_gaps=[
+                    "Unresolved boundary conditions and long-term external validity limits."
+                ],
                 generation_strategy=strategy,
                 dependencies=[
                     "Verified evidence packet",
@@ -541,6 +600,11 @@ def candidate_population(session: Session, content: str) -> CandidatePopulation:
                     "GO only if required inputs and material evidence claims pass verification.",
                     "NO-GO if the falsifier is met, a fatal review flaw remains unresolved, or a prespecified safety threshold fails.",
                 ],
+                workflow_diagram_mermaid=(
+                    "graph TD\n  A[Intervention] --> B[Mediator/Pathway]\n  B --> C[Primary Outcome]"
+                    if index < 2
+                    else ""
+                ),
             )
         )
     return CandidatePopulation(
@@ -1280,7 +1344,7 @@ def typed_specialist_payload(session: Session, role: str, content: str) -> Typed
         return TypedPayload(
             schema_name="EvidencePacket", payload=packet.model_dump(mode="json")
         )
-    elif role == "generation":
+    elif role in GENERATION_ROLES:
         fallback = candidate_population(session, content)
         value = outcome.value or fallback
     elif role in REVIEW_CRITERIA:
