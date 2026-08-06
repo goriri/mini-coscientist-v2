@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from dataclasses import dataclass
@@ -29,6 +30,8 @@ from .models import Artifact, ArtifactStatus, Session
 from .normalization import strip_unstorable_characters
 from .parity import ROLE_CONTRACTS, TypedPayload, typed_specialist_payload
 from .retrieval import fetch_source_document
+
+logger = logging.getLogger(__name__)
 
 CRITIC_ROUNDS = int(os.environ.get("COSCIENTIST_CRITIC_ROUNDS", "2"))
 """How many times a domain critic may send a specialist's draft back."""
@@ -259,6 +262,19 @@ class ContractViolation(RuntimeError):
         self.role = role
         self.error = error
         self.content = content
+
+
+def _excerpt(content: str, budget: int = 4000) -> str:
+    """Both ends of a specialist response, for a log line.
+
+    The tail is the half that answers the question a failed contract asks
+    first -- an answer cut off by the output-token ceiling ends mid-string,
+    and nothing about its opening says so.
+    """
+    if len(content) <= budget:
+        return content
+    half = budget // 2
+    return f"{content[:half]}\n...[{len(content) - budget} chars elided]...\n{content[-half:]}"
 
 
 class DeterministicProvider:
@@ -670,6 +686,23 @@ class Specialist:
             )
             retyped = typed_specialist_payload(session, self.role, retry)
             if retyped.source == "deterministic_fallback":
+                # Logged before it is raised. This exception ends the stage and
+                # the researcher sees only the validation summary, which names a
+                # field and not the answer that was missing it -- a generator
+                # failed this way four times running and there was nothing
+                # anywhere to say what the model had actually returned.
+                logger.error(
+                    "The %s specialist failed its contract twice.\n"
+                    "First attempt (%d chars): %s\n%s\n"
+                    "Repair attempt (%d chars): %s\n%s",
+                    self.role,
+                    len(content),
+                    typed.error,
+                    _excerpt(content),
+                    len(retry),
+                    retyped.error,
+                    _excerpt(retry),
+                )
                 raise ContractViolation(self.role, retyped.error or typed.error, retry)
             content, typed = retry, retyped
         # Refinement runs on a draft that already satisfies its contract. A

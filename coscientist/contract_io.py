@@ -726,10 +726,17 @@ def parse_contract(
     much content it actually carries, because a contract whose fields all have
     defaults would otherwise accept the first stray inner object as a valid but
     empty payload.
+
+    The reported error comes from the widest fragment that failed, not the last
+    one tried. Fragments are every ``{`` in the response, so a long answer ends
+    on some deeply nested object, and reporting its error described the wrong
+    thing entirely: a generator whose real fault lay inside one candidate was
+    reported to the researcher -- and to the repair prompt -- as
+    "candidates: missing", which was true only of the innermost scrap.
     """
     if not content or not content.strip():
         return ParseOutcome(error="empty specialist response")
-    last_error = "no JSON object found in the specialist response"
+    widest_error = (-1, "no JSON object found in the specialist response")
     best: tuple[int, int, ParseOutcome] | None = None
     for fragment in _candidate_fragments(content):
         repairs: list[str] = []
@@ -751,7 +758,11 @@ def parse_contract(
             try:
                 value = model.model_validate(candidate)
             except ValidationError as exc:
-                last_error = summarize_errors(exc)
+                # ``>=`` so the coerced attempt, which is the closer of the two
+                # and names what repair could not fix, supersedes the raw one
+                # for the same fragment.
+                if consumed >= widest_error[0]:
+                    widest_error = (consumed, summarize_errors(exc))
                 continue
             score = (_informativeness(value), consumed)
             if best is None or score > best[:2]:
@@ -759,7 +770,7 @@ def parse_contract(
             break
     if best is not None and best[0] > 0:
         return best[2]
-    return ParseOutcome(error=last_error)
+    return ParseOutcome(error=widest_error[1])
 
 
 def summarize_errors(exc: ValidationError, limit: int = 10) -> str:

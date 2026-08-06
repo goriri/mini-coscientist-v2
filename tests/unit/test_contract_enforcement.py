@@ -11,7 +11,7 @@ from coscientist.agents import (
     output_contract,
 )
 from coscientist.contract_io import parse_contract, schema_instruction
-from coscientist.models import ApprovalProfile, ReviewSet
+from coscientist.models import ApprovalProfile, CandidatePopulation, ReviewSet
 from coscientist.orchestration import CoScientistWorkflow
 from coscientist.parity import ROLE_CONTRACTS
 
@@ -132,3 +132,31 @@ def test_a_review_set_keeps_the_reviews_a_specialist_actually_wrote():
         "insufficient_evidence",
     }
     assert outcome.repairs
+
+
+def test_the_reported_error_describes_the_whole_answer_not_its_last_scrap():
+    """A generator's real fault was reported as the innermost object's fault.
+
+    Fragments are every ``{`` in the response, tried in document order, and the
+    error kept was whichever came last -- some nested dict deep inside a
+    candidate. Four production runs died with "candidates: missing" when the
+    population was right there and one field inside it was wrong. The repair
+    prompt was handed the same wrong description, so it corrected nothing.
+    """
+    outcome = parse_contract(
+        json.dumps(
+            {
+                "candidates": [
+                    {
+                        "title": "Coating suppresses interfacial growth",
+                        "mechanism_model": "A conformal oxide layer.",
+                    }
+                ]
+            }
+        ),
+        CandidatePopulation,
+    )
+    assert not outcome.ok
+    assert "candidates: missing" not in outcome.error
+    # The population was found; what is missing is a field inside it.
+    assert outcome.error.startswith("candidates.")
