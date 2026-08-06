@@ -308,7 +308,7 @@ try {
   for (let gate = 0; gate < 5; gate += 1) {
     await waitFor(
       cdp,
-      "!!document.querySelector('.approval-card:not(.resolved) [data-decision=\"accept\"]:not(:disabled)') || !!document.querySelector('.approval-card:not(.resolved) [data-decision=\"exploratory_evidence\"]')",
+      "!!document.querySelector('.approval-card:not(.resolved) [data-decision=\"accept\"]:not(:disabled)') || !!document.querySelector('.approval-card:not(.resolved) [data-decision=\"exploratory_evidence\"]') || !!document.querySelector('.approval-card:not(.resolved) .governance-finding')",
       `Approval or evidence-integrity gate ${gate + 1} was unavailable.`,
       30000,
     );
@@ -318,6 +318,34 @@ try {
     if (needsEvidenceFallback) {
       await cdp.evaluate(
         "document.querySelector('.approval-card:not(.resolved) [data-decision=\"exploratory_evidence\"]').click()",
+      );
+    }
+    // A fatal safety finding is a state the reflect stage is designed to reach,
+    // and it used to be the end of the run in the browser. Overriding rather
+    // than withdrawing, so the population the later gates assert on is the one
+    // the tournament ranked; confirm() is answered because CDP cannot.
+    while (
+      await cdp.evaluate(
+        "!!document.querySelector('.approval-card:not(.resolved) .governance-finding')",
+      )
+    ) {
+      const reviewId = await cdp.evaluate(`(() => {
+        const ask = window.confirm;
+        window.confirm = () => true;
+        const finding = document.querySelector(".approval-card:not(.resolved) .governance-finding");
+        finding.querySelector(".governance-adjudicator").value = "E2E Safety Officer";
+        finding.querySelector(".governance-justification").value = "Automated end-to-end check; no bench work follows this run.";
+        finding.querySelector('[data-decision="override_governance"]').click();
+        window.confirm = ask;
+        return finding.dataset.reviewId;
+      })()`);
+      // Per finding, not per block: the workflow deliberately answers one at a
+      // time, so a session with two flaws stays blocked after the first.
+      await waitFor(
+        cdp,
+        `fetch("/api/research/sessions/${workflowId}").then(r => r.json()).then(w => !w.governance_blockers.some(item => item.review_id === ${JSON.stringify(reviewId)}))`,
+        `Governance finding ${reviewId} at gate ${gate + 1} could not be adjudicated.`,
+        30000,
       );
     }
     await waitFor(

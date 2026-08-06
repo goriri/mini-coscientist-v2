@@ -1871,6 +1871,81 @@ button {
   font: 600 var(--text-md) var(--serif);
 }
 
+/* A fatal safety finding is the one gate that cannot be cleared by clicking
+   the primary button, so it does not get the same neutral surface as the
+   others. */
+.governance-warning,
+.governance-finding {
+  border-color: rgb(155 59 40 / 45%);
+  background: rgb(155 59 40 / 6%);
+}
+
+.governance-finding {
+  margin-top: 11px;
+  padding: 10px;
+  border: 1px solid rgb(155 59 40 / 45%);
+  border-radius: 5px;
+}
+
+.governance-finding strong {
+  display: block;
+  margin-bottom: 2px;
+  font: 600 var(--text-md) var(--serif);
+}
+
+.governance-reviewer {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.governance-flaws,
+.governance-objections {
+  margin: 0 0 6px;
+  padding-left: 18px;
+  font-size: var(--text-sm);
+}
+
+.governance-flaws li {
+  color: #9b3b28;
+  font-weight: 650;
+}
+
+.governance-objections li {
+  color: var(--muted);
+}
+
+.governance-label {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.governance-adjudicator,
+.governance-justification {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel);
+  font: var(--text-md)/1.45 var(--serif);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.input-actions button.danger {
+  color: #9b3b28;
+  border-color: rgb(155 59 40 / 45%);
+}
+
 .notify-toggle {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);

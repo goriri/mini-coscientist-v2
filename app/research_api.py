@@ -23,6 +23,7 @@ from app.evidence_tasks import enqueue_evidence_step
 from coscientist.agents import A2AProvider, DeterministicProvider
 from coscientist.dossier import render_docx, render_pdf
 from coscientist.evidence import EvidenceStillRunning
+from coscientist.governance import latest_population, open_blockers
 from coscientist.ledger import (
     ConcurrentSessionUpdate,
     PostgresResearchLedger,
@@ -36,7 +37,12 @@ from coscientist.model_catalog import (
     MODEL_CHOICES,
     MODEL_IDS,
 )
-from coscientist.models import ApprovalProfile, Artifact, ArtifactStatus
+from coscientist.models import (
+    ApprovalProfile,
+    Artifact,
+    ArtifactStatus,
+    CandidatePopulation,
+)
 from coscientist.orchestration import CoScientistWorkflow
 from coscientist.presentation import build_stage_presentation
 
@@ -98,10 +104,18 @@ class ResearchDecision(BaseModel):
         "edit",
         "continue",
         "refine_section",
+        # The web had no answer to a governance block at all. The reflect stage
+        # sets that status by design, the CLI and the TUI can clear it, and a
+        # researcher in the browser could only watch: Accept returns silently,
+        # the status never changes, and the session is finished. These two are
+        # the same two answers the TUI offers, one finding at a time.
+        "withdraw_hypothesis",
+        "override_governance",
     ]
     feedback: str = ""
     content: str = Field(default="", max_length=200000)
     artifact_id: str | None = None
+    review_id: str | None = None
     candidate_id: str | None = None
     section: str | None = None
     input_type: str | None = None
@@ -206,6 +220,39 @@ def _stage_preview_metadata(workflow: CoScientistWorkflow) -> list[dict]:
     ]
 
 
+def _governance_blockers(workflow: CoScientistWorkflow) -> list[dict]:
+    """Every fatal safety finding still waiting for a human answer.
+
+    The flaw itself travels with the blocker, not just its id. A researcher is
+    being asked to either drop a hypothesis or put their name to keeping one
+    that a reviewer called dangerous, and that decision cannot be made from a
+    review identifier.
+    """
+    blockers = open_blockers(workflow.session)
+    if not blockers:
+        return []
+    population = latest_population(workflow.session)
+    claims: dict[str, str] = {}
+    if population is not None and population.payload:
+        claims = {
+            item.id: item.title or item.claim
+            for item in CandidatePopulation.model_validate(
+                population.payload
+            ).candidates
+        }
+    return [
+        {
+            "review_id": item.review_id,
+            "candidate_id": item.candidate_id,
+            "candidate_title": claims.get(item.candidate_id, item.candidate_id),
+            "reviewer": item.review.reviewer,
+            "fatal_flaws": list(item.review.fatal_flaws),
+            "objections": list(item.review.objections),
+        }
+        for item in blockers
+    ]
+
+
 def _snapshot(workflow: CoScientistWorkflow) -> dict:
     session = workflow.session
     discovery_artifact = next(
@@ -259,6 +306,7 @@ def _snapshot(workflow: CoScientistWorkflow) -> dict:
             for item in workflow.pending_artifact_reviews
         ],
         "input_requirements": requirements,
+        "governance_blockers": _governance_blockers(workflow),
         "decisions": decisions,
         "task_summary": {
             "total": len(session.tasks),
@@ -756,6 +804,34 @@ def decide_research_session(
             elif request.action == "exploratory_evidence":
                 workflow.accept_exploratory_evidence(actor=request.actor)
                 _schedule_advance(session_id, background_tasks)
+            elif request.action in {"withdraw_hypothesis", "override_governance"}:
+                if not request.review_id:
+                    raise ValueError(
+                        "review_id is required to answer a governance finding."
+                    )
+                justification = request.feedback.strip()
+                if not justification:
+                    raise ValueError(
+                        "A written justification is recorded with every "
+                        "governance decision."
+                    )
+                # The default web actor is "web_researcher". An override that
+                # keeps a hypothesis a reviewer called fatal has to name the
+                # person who kept it, so anonymity is refused here rather than
+                # written into the dossier.
+                if request.actor.strip() in {"", "web_researcher"}:
+                    raise ValueError(
+                        "Name the person adjudicating this finding; the name is "
+                        "recorded in the dossier beside the flaw."
+                    )
+                workflow.adjudicate_governance(
+                    request.review_id,
+                    "withdraw"
+                    if request.action == "withdraw_hypothesis"
+                    else "override",
+                    adjudicator=request.actor.strip(),
+                    justification=justification,
+                )
             elif request.action == "provide_input":
                 if not request.input_type or not request.input_reference:
                     raise ValueError("Input type and reference are required.")

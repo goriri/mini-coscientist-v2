@@ -21,6 +21,16 @@ function loadSessionHistory() {
   }
 }
 
+// Remembered only so a second finding in the same block does not have to be
+// signed again from scratch. The name is still shown in an editable field on
+// every finding, because whoever answers this one may not be who answered the
+// last one.
+const ADJUDICATOR_KEY = "coscientist.adjudicator";
+
+function rememberedAdjudicator() {
+  return localStorage.getItem(ADJUDICATOR_KEY) || "";
+}
+
 const NOTIFY_KEY = "coscientist.stageAlerts";
 // Below this, the stage finished while the researcher was still looking at the
 // tab they switched to, and a notification is an interruption rather than a
@@ -1185,6 +1195,7 @@ function renderApprovalCard(workflow) {
   }
 
   const requirements = unresolvedRequirements(workflow);
+  const blockers = workflow.governance_blockers || [];
   const artifactCount = workflow.pending_artifacts.length;
   const decisionRequired = workflow.requires_human_approval;
   const operation = workflow.operation || { status: "idle", detail: "" };
@@ -1269,6 +1280,15 @@ function renderApprovalCard(workflow) {
           </div>`
         : ""
     }
+    ${
+      blockers.length
+        ? `<div class="input-requirement governance-warning">
+            <strong>Safety and governance review recorded a fatal flaw</strong>
+            <p>Nothing advances until every finding below is answered. Withdrawing drops the hypothesis and rebuilds the population without it; overriding keeps it and accepts the flaw. Your name and your reason are recorded and reprinted in the dossier beside the flaw.</p>
+          </div>`
+        : ""
+    }
+    <div class="governance-list"></div>
     <div class="artifact-list"></div>
     ${
       operationActive || operationFailed
@@ -1283,7 +1303,9 @@ function renderApprovalCard(workflow) {
           <textarea class="revision-field" rows="2" placeholder="Or describe what the agent should revise…"></textarea>
           <div class="approval-actions">
             <button class="primary" type="button" data-decision="accept" ${
-              requirements.length || artifactCount ? "disabled" : ""
+              requirements.length || artifactCount || blockers.length
+                ? "disabled"
+                : ""
             }>Accept &amp; continue</button>
             <button type="button" data-decision="toggle_edit">Edit draft directly</button>
             <button type="button" data-decision="revise">Ask agent to revise</button>
@@ -1311,6 +1333,39 @@ function renderApprovalCard(workflow) {
       </div>
     `;
     requirementList.append(block);
+  });
+
+  const governanceList = card.querySelector(".governance-list");
+  const adjudicator = rememberedAdjudicator();
+  blockers.forEach((item) => {
+    const block = document.createElement("div");
+    block.className = "governance-finding";
+    block.dataset.reviewId = item.review_id;
+    block.innerHTML = `
+      <strong>${escapeHtml(item.candidate_title)}</strong>
+      <p class="governance-reviewer">${escapeHtml(item.reviewer.replaceAll("_", " "))} · ${escapeHtml(item.candidate_id)}</p>
+      <ul class="governance-flaws">
+        ${item.fatal_flaws.map((flaw) => `<li>${escapeHtml(flaw)}</li>`).join("")}
+      </ul>
+      ${
+        item.objections.length
+          ? `<ul class="governance-objections">${item.objections
+              .map((objection) => `<li>${escapeHtml(objection)}</li>`)
+              .join("")}</ul>`
+          : ""
+      }
+      <label class="governance-label">Adjudicator
+        <input class="governance-adjudicator" type="text" placeholder="Your name" value="${escapeHtml(adjudicator)}" />
+      </label>
+      <label class="governance-label">Reason, recorded verbatim
+        <textarea class="governance-justification" rows="2" placeholder="Why this hypothesis is withdrawn, or why the flaw is acceptable…"></textarea>
+      </label>
+      <div class="input-actions">
+        <button type="button" data-decision="withdraw_hypothesis">Withdraw hypothesis</button>
+        <button class="danger" type="button" data-decision="override_governance">Override and accept the flaw</button>
+      </div>
+    `;
+    governanceList.append(block);
   });
 
   const artifactList = card.querySelector(".artifact-list");
@@ -1656,6 +1711,35 @@ async function handleDecisionClick(event) {
       toast("The edited draft cannot be empty");
       return;
     }
+  }
+  if (action === "withdraw_hypothesis" || action === "override_governance") {
+    const finding = button.closest(".governance-finding");
+    const name = finding.querySelector(".governance-adjudicator").value.trim();
+    const reason = finding
+      .querySelector(".governance-justification")
+      .value.trim();
+    if (!name) {
+      toast("Name the person answering this finding");
+      finding.querySelector(".governance-adjudicator").focus();
+      return;
+    }
+    if (!reason) {
+      toast("A written reason is recorded with every governance decision");
+      finding.querySelector(".governance-justification").focus();
+      return;
+    }
+    if (
+      action === "override_governance" &&
+      !window.confirm(
+        "Overriding keeps a hypothesis the reviewer called fatally flawed. " +
+          "It stays in the dossier, and so does this decision, under your name.",
+      )
+    )
+      return;
+    payload.review_id = finding.dataset.reviewId;
+    payload.actor = name;
+    payload.feedback = reason;
+    localStorage.setItem(ADJUDICATOR_KEY, name);
   }
   if (action === "provide_input") {
     payload.input_type = button.dataset.inputType;
