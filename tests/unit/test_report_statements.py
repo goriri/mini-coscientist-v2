@@ -23,6 +23,7 @@ from coscientist.narrative import (
     _blocks_as_prose,
     _coherence,
     _evidence_statements,
+    _section_three,
     _sentence,
     synthesize_overview,
 )
@@ -146,6 +147,67 @@ def test_copies_that_agree_keep_the_direction_they_agree_on():
 
 def test_a_finding_with_no_text_is_not_carried_as_an_empty_entry():
     assert not _evidence_statements(_record(_statement("   ")))
+
+
+# --- the relation clause is a property of the group, not of each finding ------
+
+
+def _directions_section(*statements: DiscoveryStatement) -> str:
+    return "\n".join(_section_three(_record(*statements)).core)
+
+
+ALPHA = "An alumina coating raises retention by ten points."
+BETA = "A titania coating raises retention by four points."
+GAMMA = "Retention falls once the coating passes forty nanometres."
+
+
+def test_a_relation_the_findings_share_is_stated_once_over_them():
+    """ "Discovery returned this finding more than once and read it differently each
+    time" stood under eleven consecutive findings of a live report, with the same
+    sentence for the neutral ones four times further down."""
+    said = _directions_section(
+        _statement(ALPHA, relation="contradicts"),
+        _statement(BETA, relation="contradicts"),
+        _statement(GAMMA, relation="contradicts"),
+    )
+
+    assert said.count("arguing against the hypothesis") == 1
+    assert "Discovery recorded the next three findings as arguing against" in said
+    assert "Discovery recorded this finding as arguing against" not in said
+
+
+def test_a_relation_carried_by_one_finding_stays_under_that_finding():
+    """A lead-in over a group of one is a paragraph saying what the next one says."""
+    said = _directions_section(
+        _statement(ALPHA),
+        _statement(BETA, relation="contradicts"),
+    )
+
+    assert "Discovery recorded this finding as arguing against" in said
+    assert "Discovery recorded the next" not in said
+
+
+def test_the_findings_that_share_a_relation_are_printed_together():
+    """Scattered through the section, a reader looking for the case against the goal
+    has to read every finding to find the three that make it."""
+    said = _directions_section(
+        _statement(ALPHA, relation="contradicts"),
+        _statement(BETA),
+        _statement(GAMMA, relation="contradicts"),
+    )
+
+    assert said.index(BETA) < said.index(ALPHA) < said.index(GAMMA)
+
+
+def test_each_way_the_findings_were_read_gets_its_own_lead_in():
+    said = _directions_section(
+        _statement(ALPHA, relation="neutral"),
+        _statement(BETA, relation="neutral"),
+        _statement(GAMMA, relation="contradicts"),
+    )
+
+    assert "Discovery recorded the next two findings as bearing on the question" in said
+    assert "Discovery recorded this finding as arguing against" in said
 
 
 def _directions(record: ResearchRecord) -> list[str]:

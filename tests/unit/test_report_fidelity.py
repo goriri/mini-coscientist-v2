@@ -29,6 +29,7 @@ from coscientist.models import (
     TournamentState,
 )
 from coscientist.narrative import (
+    _UNSTATED,
     IdeaBrief,
     IdeaReview,
     ResearchRecord,
@@ -121,6 +122,7 @@ def _brief(
     facts: dict[str, str] | None = None,
     candidate_id: str = "",
     revised_form: list[tuple[str, str]] | None = None,
+    contradicting_claims: list[str] | None = None,
 ) -> IdeaBrief:
     return IdeaBrief(
         title=title,
@@ -142,6 +144,7 @@ def _brief(
         ties=0,
         shortlisted=shortlisted,
         revised_form=list(revised_form or []),
+        contradicting_claims=list(contradicting_claims or []),
     )
 
 
@@ -925,6 +928,81 @@ def test_a_citation_that_argues_against_its_own_idea_is_declared():
     assert _contradicting_claims(record, candidate) == [
         "Thick coatings reduce ionic conductivity."
     ]
+
+
+CUTS_AGAINST = (
+    "Even coatings of one nanometre were detrimental to the cycling performance "
+    "of LNMO."
+)
+
+
+# Every optional field left at its unstated fallback, so the chapters print only
+# what these tests are about.
+FACTS = {"Core idea": "A coating helps.", **_UNSTATED}
+
+
+def _section_four_text(briefs) -> tuple[str, list[str]]:
+    from coscientist.narrative import _section_four
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    four = _section_four(record, briefs)
+    return " ".join(four.core), [
+        paragraph
+        for subsection in four.subsections
+        for paragraph in subsection.paragraphs
+    ]
+
+
+def test_a_finding_that_cuts_against_more_than_one_idea_is_stated_once():
+    """Ninety identical words -- the finding and the two sentences that read it --
+    stood under three of the eight chapters of a live report."""
+    briefs = [
+        _brief(
+            name,
+            [],
+            facts=FACTS,
+            contradicting_claims=[CUTS_AGAINST] if shared else None,
+        )
+        for name, shared in (("Alpha", True), ("Beta", True), ("Gamma", False))
+    ]
+
+    core, chapters = _section_four_text(briefs)
+
+    assert core.count(CUTS_AGAINST) == 1
+    assert "Cited by Alpha and Beta." in core
+    assert not any(CUTS_AGAINST in paragraph for paragraph in chapters)
+    assert sum("stated at the head of this section" in p for p in chapters) == 2
+
+
+def test_a_finding_that_cuts_against_one_idea_stays_under_that_idea():
+    briefs = [
+        _brief("Alpha", [], facts=FACTS, contradicting_claims=[CUTS_AGAINST]),
+        _brief("Beta", [], facts=FACTS),
+    ]
+
+    core, chapters = _section_four_text(briefs)
+
+    assert CUTS_AGAINST not in core
+    assert any(CUTS_AGAINST in paragraph for paragraph in chapters)
+    assert not any("stated at the head of this section" in p for p in chapters)
+
+
+def test_an_idea_citing_both_a_shared_finding_and_its_own_says_both():
+    own = "Coatings thicker than five nanometres raise the overpotential."
+    briefs = [
+        _brief("Alpha", [], facts=FACTS, contradicting_claims=[CUTS_AGAINST, own]),
+        _brief("Beta", [], facts=FACTS, contradicting_claims=[CUTS_AGAINST]),
+    ]
+
+    core, chapters = _section_four_text(briefs)
+
+    assert core.count(CUTS_AGAINST) == 1
+    assert own not in core
+    alpha = " ".join(chapters)
+    assert own in alpha
+    # The chapter counts only the findings it prints, not the hoisted one as well.
+    assert "One claim this idea cites" in alpha
+    assert "One finding this idea cites" in alpha
 
 
 def test_a_count_that_opens_a_sentence_is_spelled_out():
@@ -1817,10 +1895,44 @@ def test_a_criterion_that_separates_nothing_says_so_once():
     ]
 
     six = " ".join(_section_six(record, briefs).core)
-    assert "came in at 2, so it separates nothing and cannot be used" in six
+    assert "Every review on this criterion came in at 2." in six
+    # The verdict is made once over all the criteria, below the paragraphs, and the
+    # flat one is named there rather than carrying its own copy of it.
+    assert six.count("Correctness left the ideas level or within a point") == 1
     assert "The spread is narrow enough" not in six
     # With no highest and no lowest, the same set is not named twice as two things.
     assert "tied highest" not in six
+
+
+def test_the_criteria_worth_choosing_on_are_named_once_below_the_paragraphs():
+    """ "wide enough to separate the field" closed four of five criterion paragraphs
+    on a live run, the words identical and only the counts in front of them changing,
+    and which criteria a choice may rest on had to be collected paragraph by
+    paragraph."""
+    from coscientist.narrative import _section_six
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    briefs = [
+        _brief(
+            name,
+            [
+                _idea_review(section="Correctness", score=wide),
+                _idea_review(section="Novelty", score=wide),
+                _idea_review(section="Feasibility", score=4),
+            ],
+        )
+        for name, wide in (("A", 5), ("B", 2))
+    ]
+
+    six = " ".join(_section_six(record, briefs).core)
+
+    assert "Correctness and novelty spread the ideas by at least two points" in six
+    assert six.count("wide enough to choose on") == 1
+    assert (
+        "Feasibility did not, and a choice between the ideas should not be justified "
+        "on it." in six
+    )
+    assert "wide enough to separate the field" not in six
 
 
 def test_reviews_agreeing_at_a_capped_score_are_not_reported_as_a_clearance():

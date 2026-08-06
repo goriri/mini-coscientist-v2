@@ -398,12 +398,16 @@ def _assert_no_record_ids(body: str) -> None:
     """No internal id in the prose, including inside a specialist's own sentence.
 
     The one place an id is allowed is the grounding warning, which has to name the
-    exact id it is complaining about for the warning to be actionable.
+    exact id it is complaining about for the warning to be actionable. So is an id
+    the run cannot resolve, wherever it is set in code font: there is nothing to name
+    it after, and describing it instead printed the same phrase once per id inside a
+    single pair of brackets.
     """
     warning = "Warning: this idea cites evidence that does not exist"
     prose = "\n".join(
         line for line in body.splitlines() if not line.startswith(warning)
     )
+    prose = re.sub(r"`[^`\n]*`", "", prose)
     leaked = re.findall(
         r"\b(?:candidate|cand|claim|source|src|review|rev|hypothesis|lead|stmt"
         r"|statement)[0-9]*_\w+\b",
@@ -880,6 +884,74 @@ def _brief_with(*matches: SimpleNamespace) -> SimpleNamespace:
     return SimpleNamespace(
         matches=list(matches), wins=len(matches), losses=0, ties=0, win_rate=100
     )
+
+
+def _debated_match(round_number: int, opponent: str, turn: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        **{
+            **vars(_undebated_match(round_number, "The mechanism was stronger.")),
+            "opponent_title": opponent,
+            "debate_turns": [turn],
+            "judge": "llm_debate",
+            "confidence": 0.7,
+        }
+    )
+
+
+def test_an_exchange_is_reproduced_under_one_of_the_two_ideas_that_played_it():
+    """A match has two sides and each idea has a chapter, so every transcript was
+    printed twice -- about six thousand words of a live report, and nothing on the
+    second copy said it was the same exchange the reader had already met."""
+    turn = (
+        "Expert A: The coating thickness argument does not survive the transport data."
+    )
+    first = SimpleNamespace(
+        **{
+            **vars(_brief_with(_debated_match(2, "Second idea", turn))),
+            "title": "First idea",
+        }
+    )
+    second = SimpleNamespace(
+        **{
+            **vars(_brief_with(_debated_match(2, "First idea", turn))),
+            "title": "Second idea",
+        }
+    )
+
+    transcribed: set = set()
+    blocks = [
+        "\n".join(_match_summary(brief, frozenset(), transcribed))
+        for brief in (first, second)
+    ]
+
+    assert blocks[0].count("does not survive the transport data") == 1
+    assert "does not survive the transport data" not in blocks[1]
+    assert "#### Debate against First idea" in blocks[1], (
+        "the second chapter still has to say the match happened"
+    )
+    assert "reproduced there rather than in both chapters" in blocks[1]
+    assert "Judge" in blocks[1], "each side keeps its own result row"
+
+
+def test_the_same_pair_meeting_twice_keeps_both_exchanges():
+    """The Swiss rounds and the top round robin can put two ideas together twice, and
+    the second meeting is a different argument."""
+    first = SimpleNamespace(
+        **{
+            **vars(
+                _brief_with(
+                    _debated_match(1, "Second idea", "Expert A: Round one point."),
+                    _debated_match(4, "Second idea", "Expert A: Round four point."),
+                )
+            ),
+            "title": "First idea",
+        }
+    )
+
+    block = "\n".join(_match_summary(first, frozenset(), set()))
+
+    assert "Round one point" in block
+    assert "Round four point" in block
 
 
 def test_one_judge_over_the_whole_tournament_is_named_once_above_the_ideas():
@@ -1471,7 +1543,10 @@ def test_an_id_quoted_inside_specialist_prose_is_replaced_by_what_it_names(
     assert "the unverified claim drawn from" in body, (
         "a resolvable id lost its referent"
     )
-    assert "a record this session does not hold" in body
+    # Set as the identifier it is. Three unresolvable ids described in words read
+    # "(a record this session does not hold, a record this session does not hold, a
+    # record this session does not hold)", which names none of them.
+    assert "`claim_absent`" in body
 
 
 def test_an_id_capitalised_at_the_start_of_a_sentence_still_resolves(
@@ -1493,7 +1568,7 @@ def test_an_id_capitalised_at_the_start_of_a_sentence_still_resolves(
         "Claim_2 is the only support offered for the central mechanism"
     ]
     body = compile_dossier(rich_session).split(_APPENDIX)[0]
-    assert "a record this session does not hold" not in body
+    assert "`Claim_2`" not in body
     assert "The unverified claim drawn from" in body, (
         "the sentence lost its opening capital"
     )
@@ -2320,14 +2395,15 @@ def test_a_source_id_quoted_by_the_manifest_is_named_not_printed(
                 "title": "Protective coatings for lithium-ion cycle life",
                 "sections": [],
                 "evidence_that_would_change_decision": [
-                    "Full-text verification of src_1 to confirm the parameters "
+                    "Full-text verification of source_1 to confirm the parameters "
                     "it reports"
                 ],
             },
         )
     )
     body = compile_dossier(rich_session).split(_APPENDIX)[0]
-    assert "src_1" not in body
+    assert "source_1" not in body
+    assert "Full-text verification of the source" in body
     _assert_no_record_ids(body)
 
 

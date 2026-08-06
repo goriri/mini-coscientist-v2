@@ -887,9 +887,19 @@ def shared_match_notes(briefs: Sequence[IdeaBrief]) -> tuple[list[str], frozense
 
 
 def _match_summary(
-    brief: IdeaBrief, hoisted: frozenset[str] = frozenset()
+    brief: IdeaBrief,
+    hoisted: frozenset[str] = frozenset(),
+    transcribed: set[tuple[int, frozenset[str]]] | None = None,
 ) -> list[str]:
-    """The tournament block, with the debate transcripts the ranking was decided on."""
+    """The tournament block, with the debate transcripts the ranking was decided on.
+
+    ``transcribed`` carries the matches already reproduced. A match has two sides and
+    the report gives each idea a chapter, so every exchange was printed twice, once
+    under each -- about six thousand words of a live report, and a reader who
+    recognised the second copy had no way to be sure it was the same one. Passing it
+    is what makes the second chapter point at the first instead; omitting it prints
+    every transcript, which is what a single idea's block should do.
+    """
     lines = [
         "### Tournament",
         "",
@@ -928,6 +938,24 @@ def _match_summary(
         if not match.debate_turns and not match.unreadable_turns:
             continue
         lines.extend([f"#### Debate against {match.opponent_title}", ""])
+        # Keyed on the round as well as the pair, because two ideas can meet twice:
+        # once in the Swiss rounds and again in the top round robin.
+        seen = (match.round_number, frozenset({brief.title, match.opponent_title}))
+        if transcribed is not None and seen in transcribed:
+            lines.extend(
+                [
+                    "This is the same exchange as the one under "
+                    f"{match.opponent_title}, read from the other side, and it is "
+                    "reproduced there rather than in both chapters. The verdict "
+                    "below is how it went for this idea.",
+                    "",
+                    _verdict_line(match),
+                    "",
+                ]
+            )
+            continue
+        if transcribed is not None:
+            transcribed.add(seen)
         if match.debate_turns:
             # One bullet per contribution rather than per recorded turn: a turn is
             # often a whole exchange, and printing it whole put three experts and a
@@ -1063,6 +1091,7 @@ def _idea_deep_dive(
     grounding_hoisted: bool = False,
     hoisted_questions: frozenset[tuple[str, str, str]] = frozenset(),
     hoisted_matches: frozenset[str] = frozenset(),
+    transcribed: set[tuple[int, frozenset[str]]] | None = None,
 ) -> list[str]:
     lines = [
         f"## {brief.title}",
@@ -1096,7 +1125,7 @@ def _idea_deep_dive(
     lines.extend(_evidence_assessment(brief))
     lines.extend(_revised_form_block(brief))
     lines.extend(_review_block(brief, hoisted_questions))
-    lines.extend(_match_summary(brief, hoisted_matches))
+    lines.extend(_match_summary(brief, hoisted_matches, transcribed))
     return lines
 
 
@@ -1826,6 +1855,9 @@ def compile_dossier(session: Session) -> str:
         lines += questions
         lines += shared_coherence_notes(briefs)
         lines += match_notes
+    # Shared across the chapters, so the second idea of a pair points at the first
+    # rather than reprinting the exchange they both played in.
+    transcribed: set[tuple[int, frozenset[str]]] = set()
     for brief in briefs:
         lines += _idea_deep_dive(
             record,
@@ -1833,6 +1865,7 @@ def compile_dossier(session: Session) -> str:
             grounding_hoisted=brief.support in hoisted,
             hoisted_questions=frozenset(hoisted_questions),
             hoisted_matches=hoisted_matches,
+            transcribed=transcribed,
         )
     lines += _advisory_appendix(advisories)
     lines += _provenance_appendix(record)

@@ -174,6 +174,21 @@ def test_an_id_written_in_front_of_the_sentence_it_cites_is_dropped():
     assert badge == LEAD_BADGE
 
 
+def test_a_statement_id_carrying_its_pass_number_is_named_like_any_other():
+    """An underscore is a word character, so there is no boundary in front of the
+    "stmt" in "pass4_stmt_5" and the pattern matched nothing. Chapters five and six
+    of a live report printed these raw while every other chapter named the finding."""
+    ((_heading, _badge, said),) = _notes(
+        evidence_against=["The thickness limit is set by pass4_stmt_5."]
+    )
+
+    assert "pass4_stmt_5" not in said
+    assert said == (
+        "The thickness limit is set by the finding that increased coating thickness "
+        "causes severe mass transfer resistance at the particle surface."
+    )
+
+
 def test_a_prefix_that_names_no_record_is_left_where_the_specialist_put_it():
     """ "Cycle_life: retention held" is a phrase with a colon after it, not a citation.
     Only a prefix the run can resolve is furniture the report may cut."""

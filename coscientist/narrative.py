@@ -1756,13 +1756,18 @@ def _load_governance(record: ResearchRecord, retired: dict[str, Candidate]) -> N
 # live transcript therefore read "relies on verified evidence (claim_11_1,
 # source_11_2)", and a live idea cited "(lead_0f651732f8364b01)".
 _RECORD_ID = re.compile(
-    r"\b(?:claim|source|src|candidate|cand|review|rev|hypothesis|lead|stmt|statement)"
+    # A discovery statement is filed under the pass that found it, "pass4_stmt_5",
+    # and an underscore is a word character: there is no boundary in front of the
+    # "stmt", so the pattern never saw one of these. Chapters five and six of a live
+    # report printed them raw, in the middle of a reviewer's sentence, while every
+    # other chapter named the finding.
+    r"\b(?:pass[0-9]*_)?"
+    r"(?:claim|source|src|candidate|cand|review|rev|hypothesis|lead|stmt|statement)"
     r"[0-9]*(?:_[0-9a-zA-Z]+)+\b",
     # A reviewer that opens a sentence with an id capitalises it, and "Claim_1 and
     # the source ... already explore dry-coating methods" reached a live report.
     re.IGNORECASE,
 )
-_MISSING_RECORD = "a record this session does not hold"
 
 
 def _standing(status: str) -> str:
@@ -1937,7 +1942,15 @@ def _name_ids_in_prose(record: ResearchRecord) -> None:
     folded = {key.lower(): value for key, value in names.items()}
 
     def _named(match: re.Match[str]) -> str:
-        name = folded.get(match.group(0).lower(), _MISSING_RECORD)
+        # An id this run cannot place is set as the identifier it is, the way the
+        # integrity lines set theirs. Described instead, it collapsed: a live review
+        # read "cites several invalid evidence IDs (a record this session does not
+        # hold, a record this session does not hold, a record this session does not
+        # hold)", where the reader cannot tell how many distinct ids that is, whether
+        # any two are the same, or which one to go and look for.
+        if match.group(0).lower() not in folded:
+            return f"`{match.group(0)}`"
+        name = folded[match.group(0).lower()]
         # An id that opened the sentence takes the sentence's capital with it.
         opens = match.start() == 0 or match.string[: match.start()].rstrip().endswith(
             (".", "!", "?", ":")
@@ -4555,8 +4568,49 @@ _RELATION_CLAUSES = {
     "differently each time, so nothing on the record says which way it cuts.",
 }
 
+_RELATION_LEAD_INS = {
+    "contradicts": "Discovery recorded the next {count} as arguing against the "
+    "hypothesis the question puts, not for it.",
+    "neutral": "Discovery recorded the next {count} as bearing on the question "
+    "without arguing either way, so they are context rather than support.",
+    _DISPUTED_RELATION: "Discovery returned each of the next {count} more than once "
+    "and read it differently each time, so nothing on the record says which way "
+    "they cut.",
+}
 
-def _cited(record: ResearchRecord, statement: _EvidenceStatement) -> str:
+
+def _grouped_by_relation(
+    statements: Sequence[_EvidenceStatement],
+) -> list[tuple[str, list[_EvidenceStatement]]]:
+    """The findings gathered under each way discovery read them, default first.
+
+    The relation clause is a property of the group and not of the finding, and
+    printed under each finding it was the same sentence eleven times running on a
+    live run -- with the four neutral ones and the four contradicting ones doing the
+    same thing further down the section. Gathering them lets the clause be said once,
+    and gives a reader looking for the case against the goal somewhere to look.
+    """
+    order = ["", *_RELATION_CLAUSES]
+    groups: dict[str, list[_EvidenceStatement]] = {key: [] for key in order}
+    for statement in statements:
+        relation = statement.relation if statement.relation in _RELATION_CLAUSES else ""
+        groups[relation].append(statement)
+    return [(key, groups[key]) for key in order if groups[key]]
+
+
+def _relation_lead_in(relation: str, count: int) -> str:
+    """The clause a group of findings shares, stated once over the group."""
+    return (
+        _RELATION_LEAD_INS[relation].format(count=_plural(count, "finding"))
+        + " That is said here once rather than repeated under each of them."
+    )
+
+
+def _cited(
+    record: ResearchRecord,
+    statement: _EvidenceStatement,
+    hoisted: frozenset[str] = frozenset(),
+) -> str:
     marker = record.citations.marker(statement.urls)
     text = statement.text if not marker else f"{statement.text.rstrip('.')} {marker}."
     # Which way a finding cuts is the one thing about it a reader cannot recover from
@@ -4569,7 +4623,15 @@ def _cited(record: ResearchRecord, statement: _EvidenceStatement) -> str:
     # on the live runs were neutral, printed in a section a reader opens looking for
     # the case for the goal, so a finding discovery had marked as neither for nor
     # against was read as one more piece of support.
-    clause = _RELATION_CLAUSES.get(statement.relation, "")
+    #
+    # Where the findings that share a relation are printed together, the clause is
+    # made over the group instead and ``hoisted`` names it, so the group's members
+    # carry no copy of it.
+    clause = (
+        ""
+        if statement.relation in hoisted
+        else _RELATION_CLAUSES.get(statement.relation, "")
+    )
     # The qualification discovery wrote against the finding travels with the finding.
     # Held back to the appendix, or dropped as these were, a result recorded as
     # holding for one chemistry at one temperature is read here as a general one.
@@ -5174,29 +5236,38 @@ def _section_three(record: ResearchRecord) -> _Draft:
                     "here once and not repeated under each."
                 )
             )
-        for statement in statements[:4]:
-            core.append(_cited(record, statement))
-        # The tail used to be optional elaboration, and the reference list is built
-        # from the citation markers the report actually emits. So when the word
-        # budget dropped that paragraph, the one source cited only there vanished
-        # from the references -- while the deep dives went on discussing it by title,
-        # leaving a source named four times in the document and listed nowhere. The
-        # findings are folded into one sentence rather than four paragraphs, which
-        # bounds the length without letting a source fall out of the bibliography.
-        if statements[4:]:
-            # One paragraph each, as above. Folded into a single sentence they ran to
-            # a 350-word block in which six findings, their qualifications and their
-            # relations to the question were separated by nothing a reader could see,
-            # and folding saved no words -- the length is the same either way.
-            core.append(
-                f"Discovery returned {_plural(len(statements[4:]), 'further finding')}, "
-                + ("which carries " if len(statements) == 5 else "which carry ")
-                + "the same standing as those above and "
-                + ("is" if len(statements) == 5 else "are")
-                + " stated here so that nothing the report cites is missing from its "
-                "references."
-            )
-            core.extend(_cited(record, statement) for statement in statements[4:])
+        for relation, group in _grouped_by_relation(statements):
+            # A group of one is the finding's own sentence either way, and a lead-in
+            # over it would be a second paragraph saying what the first says.
+            hoisted = frozenset({relation} if relation and len(group) > 1 else ())
+            if hoisted:
+                core.append(_relation_lead_in(relation, len(group)))
+            head = group if relation else group[:4]
+            core.extend(_cited(record, statement, hoisted) for statement in head)
+            # The tail used to be optional elaboration, and the reference list is
+            # built from the citation markers the report actually emits. So when the
+            # word budget dropped that paragraph, the one source cited only there
+            # vanished from the references -- while the deep dives went on discussing
+            # it by title, leaving a source named four times in the document and
+            # listed nowhere. The findings are introduced by one sentence rather than
+            # dropped, which bounds nothing but says why the list runs on.
+            if not relation and group[4:]:
+                # One paragraph each, as above. Folded into a single sentence they ran
+                # to a 350-word block in which six findings, their qualifications and
+                # their relations to the question were separated by nothing a reader
+                # could see, and folding saved no words -- the length is the same.
+                one = len(group[4:]) == 1
+                core.append(
+                    f"Discovery returned {_plural(len(group[4:]), 'further finding')}, "
+                    + ("which carries " if one else "which carry ")
+                    + "the same standing as those above and "
+                    + ("is" if one else "are")
+                    + " stated here so that nothing the report cites is missing from "
+                    "its references."
+                )
+                core.extend(
+                    _cited(record, statement, hoisted) for statement in group[4:]
+                )
     else:
         core.append(_NO_EVIDENCE)
     clusters = record.landscape.clusters if record.landscape else []
@@ -5319,6 +5390,42 @@ def _shortlist_prerequisites(brief: IdeaBrief) -> str:
     return " ".join(parts)
 
 
+def _shared_contradiction_notice(
+    briefs: Sequence[IdeaBrief], shared: Sequence[str]
+) -> str:
+    """A finding several ideas cite against themselves, stated once with those ideas.
+
+    What the reader needs from it does not change between chapters -- the finding, and
+    that a case resting on it has to answer it -- and naming the ideas together is
+    something no one chapter can do.
+    """
+    one = len(shared) == 1
+    lead = (
+        f"{_opening(len(shared), 'finding')} cited below "
+        + ("was" if one else "were")
+        + " recorded by the evidence stage as cutting against the research question "
+        "rather than for it, and more than one idea rests part of its case on "
+        + ("it" if one else "them")
+        + ". "
+        + ("It is" if one else "They are")
+        + " stated here, with the ideas that cite "
+        + ("it" if one else "them")
+        + ", rather than under each of those ideas in turn. An idea citing "
+        + ("it" if one else "one of them")
+        + " has to account for the finding rather than pass over it."
+    )
+    stated = [
+        f"{_sentence(claim)} Cited by "
+        + _joined_titles(
+            [brief.title for brief in briefs if claim in brief.contradicting_claims],
+            fallback="no idea",
+        )
+        + "."
+        for claim in shared
+    ]
+    return " ".join([lead, *stated])
+
+
 def _section_four(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft:
     """The candidate ideas, one numbered subsection and one comparison grid each."""
     title = f"Candidate Ideas{_for_the_goal(record.session)}"
@@ -5343,6 +5450,17 @@ def _section_four(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
     )
     if grounding:
         core.append(grounding)
+    # The same contradicting finding was cited by three of the eight ideas on a live
+    # run, and each of those chapters printed the finding in full under the same two
+    # sentences of explanation: ninety identical words, three times, inside one
+    # section. Stated once over the ideas that share it, each chapter says only that
+    # it is one of them.
+    cited_against = Counter(
+        claim for brief in briefs for claim in brief.contradicting_claims
+    )
+    shared_against = [claim for claim in cited_against if cited_against[claim] > 1]
+    if shared_against:
+        core.append(_shared_contradiction_notice(briefs, shared_against))
     if withdrawals:
         # Renumbering around a withdrawn idea would leave the reader counting seven
         # where eight were written, which reads as a smaller run rather than a cut one.
@@ -5450,18 +5568,35 @@ def _section_four(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
         # A citation that cuts against the idea carrying it is the one thing about an
         # idea's grounding a reader cannot recover from a support verdict, because the
         # verdict counts citations rather than reading them.
-        if brief.contradicting_claims:
+        hoisted_against = [
+            claim for claim in brief.contradicting_claims if claim in shared_against
+        ]
+        own_against = [
+            claim for claim in brief.contradicting_claims if claim not in shared_against
+        ]
+        if hoisted_against:
+            one = len(hoisted_against) == 1
+            paragraphs.append(
+                f"{_opening(len(hoisted_against), 'finding')} this idea cites "
+                + ("was" if one else "were")
+                + " recorded by the evidence stage as cutting against the research "
+                "question rather than for it, and "
+                + ("it is" if one else "they are")
+                + " stated at the head of this section with the other ideas that cite "
+                + ("it." if one else "them.")
+            )
+        if own_against:
             paragraphs.append(
                 # The relation is to the research question, not to this idea, and the
                 # paragraph used to say "contradicting it" with "it" reading as the
                 # idea. On a live run the contradicting finding was that overly thick
                 # coatings reduce performance, printed under an idea about dry versus
                 # wet coating at 2 wt%, which it neither supports nor refutes.
-                f"{_opening(len(brief.contradicting_claims), 'claim')} this idea cites "
-                + ("was" if len(brief.contradicting_claims) == 1 else "were")
+                f"{_opening(len(own_against), 'claim')} this idea cites "
+                + ("was" if len(own_against) == 1 else "were")
                 + " recorded by the evidence stage as cutting against the research "
                 "question rather than for it: "
-                + _join(brief.contradicting_claims, fallback="none.")
+                + _join(own_against, fallback="none.")
                 # "The citation is genuine and the finding is real" was printed
                 # unconditionally, two paragraphs under a support verdict that had
                 # just said none of this idea's citations had been checked against
@@ -5680,6 +5815,33 @@ def _section_five(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
     return _Draft(5, "Comparison of Candidate Ideas", core, extra, grids=grids)
 
 
+def _separating_criteria(separating: Sequence[str], level: Sequence[str]) -> str:
+    """Which criteria a choice between the ideas may rest on, said once over all.
+
+    The verdict belongs to the set of criteria and not to any one of them: what a
+    reader wants from this section is which of the five are worth choosing on, and
+    that answer was previously spread across five paragraphs in the same words.
+    """
+    named = (_listed(list(separating)), _listed(list(level)))
+    opened = tuple(text[:1].upper() + text[1:] for text in named)
+    if not separating:
+        return (
+            f"{opened[1]} left the ideas level or within a point of each other, so "
+            "no criterion here separates the field and no choice between the ideas "
+            "should be justified on these scores."
+        )
+    lead = (
+        f"{opened[0]} spread the ideas by at least two points, which is wide enough "
+        "to choose on."
+    )
+    if not level:
+        return lead
+    return (
+        f"{lead} {opened[1]} did not, and a choice between the ideas should not be "
+        "justified on " + ("it." if len(level) == 1 else "them.")
+    )
+
+
 def _section_six(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft:
     by_criterion: dict[str, list[tuple[str, int]]] = {}
     for brief in briefs:
@@ -5721,52 +5883,51 @@ def _section_six(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft:
         f"into one number, so this section unpacks them again. {example} "
         f"{feeds}".strip()
     ]
+    # Which criteria separated the field, so the verdict can be given over all of
+    # them at once. Printed under each paragraph it was the same closing sentence
+    # four times in five on a live run -- "wide enough to separate the field", with
+    # only the counts in front of it changing -- and a reader who wants to know which
+    # criteria are worth choosing on had to collect the answer paragraph by paragraph.
+    separating: list[str] = []
+    level: list[str] = []
     for criterion, scored in by_criterion.items():
         top = max(score for _, score in scored)
         bottom = min(score for _, score in scored)
         average = sum(score for _, score in scored) / len(scored)
         at_top = [title for title, score in scored if score == top]
         at_bottom = [title for title, score in scored if score == bottom]
+        (separating if top - bottom > 1 else level).append(criterion.lower())
         if top == bottom:
             # With every review on the same score there is no highest and no lowest,
             # and printing both produced "Seven of the ideas tied highest at 3, and 7
             # of the ideas tied lowest at 3" -- the same set named twice, as two
-            # different things. The flat case also fell through to the narrow-spread
-            # verdict, which then said a second time that the criterion separated
-            # nothing; here the one sentence carries the fact and what follows from it.
-            body = (
-                f"Every review on this criterion came in at {top}, so it separates "
-                "nothing and cannot be used to justify a choice between the ideas."
-            )
+            # different things.
+            body = f"Every review on this criterion came in at {top}."
         else:
             # Closing on a bare "the spread is wide enough to be doing real work"
             # printed the identical sentence under three of the five criteria, which
             # reads as a template rather than as a judgement. Saying how wide, and how
             # many ideas sit at the top of it, is what distinguishes one spread.
+            #
+            # What sits at the top of the spread is an idea. Calling it a review named
+            # the instrument rather than the thing measured, two clauses after the same
+            # set was introduced as "four of the ideas". A point on a five-point review
+            # scale is a count of grades and not a measured quantity the way an Elo
+            # point is, so it is spelled -- "a spread of 2 points with two ideas at the
+            # top of it" wrote the same kind of number both ways inside one clause.
             body = (
                 f"{_placed(at_top, top, 'highest', opening=True)}, and "
-                f"{_placed(at_bottom, bottom, 'lowest')}. "
-                + (
-                    "The spread is narrow enough that this criterion did not separate "
-                    "the field and should not be used to justify a choice between them."
-                    if top - bottom <= 1
-                    # What sits at the top of the spread is an idea. Calling it a
-                    # review named the instrument rather than the thing measured, two
-                    # clauses after the same set was introduced as "four of the ideas".
-                    # A point on a five-point review scale is a count of grades and not
-                    # a measured quantity the way an Elo point is, so it is spelled --
-                    # "a spread of 2 points with two ideas at the top of it" wrote the
-                    # same kind of number both ways inside one clause. The spread is at
-                    # least two here; one point falls to the narrow case above.
-                    else f"That is a spread of {_number_word(top - bottom).lower()} "
-                    f"points with {_plural(len(at_top), 'idea')} at the top of it, "
-                    "wide enough to separate the field."
-                )
+                f"{_placed(at_bottom, bottom, 'lowest')}. That is a spread of "
+                f"{_number_word(top - bottom).lower()} "
+                f"{'point' if top - bottom == 1 else 'points'} with "
+                f"{_plural(len(at_top), 'idea')} at the top of it."
             )
         core.append(
             f"On {criterion.lower()}, the ideas averaged {average:.1f} out of five. "
             + body
         )
+    if by_criterion:
+        core.append(_separating_criteria(separating, level))
     # Recurrence is what makes this paragraph worth printing, so it is measured
     # rather than assumed. Sorting the distinct objections and taking the first four
     # printed four objections raised once each against one idea apiece, under a
