@@ -15,6 +15,7 @@ pipeline does not reach the reader, and a truncated report says it is truncated.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from types import SimpleNamespace
 
 from coscientist.evidence import SUMMARY_CHARACTER_LIMIT, _report_summary
@@ -22,6 +23,7 @@ from coscientist.models import (
     DeepResearchRun,
     DiscoveryNarrative,
     DiscoveryStatement,
+    SourceLead,
 )
 from coscientist.narrative import _deep_research_prose, _knowledge_summary
 
@@ -55,14 +57,23 @@ def _narrative(**fields) -> DiscoveryNarrative:
 
 
 def _record(
-    *narratives: DiscoveryNarrative, checked: bool = True, ran: int | None = None
+    *narratives: DiscoveryNarrative,
+    checked: bool = True,
+    ran: int | None = None,
+    leads: Sequence[SourceLead] = (),
+    numbers: dict[str, int] | None = None,
 ) -> SimpleNamespace:
     """``ran`` is how many passes the manifest recorded, which need not be how many
-    of them came back with a report to print."""
+    of them came back with a report to print. ``leads`` and ``numbers`` are what a
+    pass turned up and which of it the running text has cited by the time this
+    section is built."""
     passes = len(narratives) if ran is None else ran
+    assigned = numbers or {}
     return SimpleNamespace(
+        citations=SimpleNamespace(numbered=assigned.get),
         discovery=SimpleNamespace(
             narratives=list(narratives),
+            source_leads=list(leads),
             runs=[
                 DeepResearchRun(pass_number=number, status="completed")
                 for number in range(1, passes + 1)
@@ -197,7 +208,7 @@ def test_the_reader_is_told_the_removed_citation_markers_were_pass_local():
 
 def test_a_pass_that_grounded_nothing_says_so_under_its_own_report():
     section = _knowledge_summary(_record(_narrative(statements=[])))
-    assert "nothing from it was carried into the evidence base" in section
+    assert "no finding from it was carried into the evidence base" in section
 
 
 def test_the_note_about_ungrounded_passes_is_made_once_over_the_passes_it_holds_for():
@@ -216,6 +227,53 @@ def test_the_note_about_ungrounded_passes_is_made_once_over_the_passes_it_holds_
     assert "*No statement in passes 1 and 3 could be tied to a source" in section
     # Said above the reports rather than after the last of them.
     assert section.index("No statement in passes") < section.index("### Pass 1")
+
+
+def _lead(url: str, *passes: int) -> SourceLead:
+    return SourceLead(canonical_url=url, originating_passes=list(passes))
+
+
+def test_a_pass_whose_findings_went_nowhere_is_not_said_to_have_gone_uncited():
+    """ "Nothing from those passes was carried into the evidence base or cited
+    elsewhere in this report" stood over four passes whose leads the appendix two
+    pages down reports as cited nine times between them. A pass contributes a
+    statement and a source separately, and only the statement failed here."""
+    section = _knowledge_summary(
+        _record(
+            _narrative(statements=[], pass_number=1),
+            _narrative(pass_number=2),
+            _narrative(statements=[], pass_number=3),
+            leads=[
+                _lead("https://example.org/a", 1),
+                _lead("https://example.org/b", 2),
+            ],
+            numbers={"https://example.org/a": 4},
+        )
+    )
+
+    assert "or cited elsewhere in this report" not in section
+    assert "no finding from those passes was carried into the evidence base" in section
+    assert (
+        "Sources they returned are cited here even so, where a finding another pass "
+        "recorded rests on one." in section
+    )
+
+
+def test_nothing_is_claimed_for_a_pass_whose_leads_carry_no_number_yet():
+    """A number is assigned the first time the running text cites a URL, so a lead
+    with none here may still be cited further down: the absence proves nothing and
+    the sentence says nothing."""
+    section = _knowledge_summary(
+        _record(
+            _narrative(statements=[], pass_number=1),
+            _narrative(pass_number=2),
+            _narrative(statements=[], pass_number=3),
+            leads=[_lead("https://example.org/a", 1)],
+        )
+    )
+
+    assert "cited here even so" not in section
+    assert "no finding from those passes was carried into the evidence base" in section
 
 
 def test_an_unchecked_search_still_opens_with_whose_claim_this_is():

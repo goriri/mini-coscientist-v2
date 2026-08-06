@@ -9794,6 +9794,36 @@ def _silent_pass(run: DeepResearchRun) -> str:
     return _SILENT_PASS.get(run.status, "ran and recorded no report")
 
 
+def _leads_of_theirs_are_cited(
+    record: ResearchRecord, passes: Sequence[int], *, plural: bool
+) -> str:
+    """Said where a pass whose findings went nowhere still turned up a cited source.
+
+    The note used to close "so nothing from those passes was carried into the
+    evidence base or cited elsewhere in this report", over four passes whose leads
+    the appendix two pages down reports as cited nine times between them. A pass
+    contributes a statement and a source separately, and only the statement failed.
+
+    Only the positive is stated. A number is assigned to a URL the first time the
+    running text cites it, so a lead not yet numbered when this section is built may
+    still be cited further down, and the absence of one proves nothing.
+    """
+    wanted = set(passes)
+    leads = record.discovery.source_leads if record.discovery else []
+    if not any(
+        record.citations.numbered(lead.canonical_url) is not None
+        and wanted.intersection(lead.originating_passes)
+        for lead in leads
+    ):
+        return ""
+    return (
+        " Sources "
+        + ("they returned" if plural else "it returned")
+        + " are cited here even so, where a finding another pass recorded rests on "
+        "one."
+    )
+
+
 def _knowledge_summary(record: ResearchRecord) -> str:
     narratives = [
         narrative
@@ -9881,10 +9911,11 @@ def _knowledge_summary(record: ResearchRecord) -> str:
             parts.append(
                 "*No statement in passes "
                 + _names([str(number) for number in unsourced])
-                + " could be tied to a source the provider also returned, so nothing "
-                "from those passes was carried into the evidence base or cited "
-                "elsewhere in this report. Their reports stand below as what each "
-                "pass reported and nothing more.*"
+                + " could be tied to a source the provider also returned, so no "
+                "finding from those passes was carried into the evidence base."
+                + _leads_of_theirs_are_cited(record, unsourced, plural=True)
+                + " Their reports stand below as what each pass reported and "
+                "nothing more.*"
             )
         for number in sorted(written | empty):
             narrative = written.get(number)
@@ -9921,9 +9952,11 @@ def _knowledge_summary(record: ResearchRecord) -> str:
             if not narrative.statements and not hoisted:
                 parts.append(
                     "*No statement in this pass could be tied to a source the "
-                    "provider also returned, so nothing from it was carried into "
-                    "the evidence base or cited elsewhere in this report. It is "
-                    "printed here as what the pass reported and nothing more.*"
+                    "provider also returned, so no finding from it was carried "
+                    "into the evidence base."
+                    + _leads_of_theirs_are_cited(record, [number], plural=False)
+                    + " It is printed here as what the pass reported and nothing "
+                    "more.*"
                 )
         return "\n\n".join(parts)
     if _evidence_statements(record):
