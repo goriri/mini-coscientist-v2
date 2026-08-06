@@ -3247,6 +3247,49 @@ def _chapter_tails(blocks: list) -> dict[int, int]:
     return tails
 
 
+_CAPTION = re.compile(r"^(?:Table|Figure) \d+\.")
+
+
+def _captions(block) -> bool:
+    """Whether this paragraph is the numbered caption for the exhibit beside it."""
+    return isinstance(block, Para) and bool(
+        _CAPTION.match(plain_text(block.text).strip())
+    )
+
+
+def _introduces(block, following) -> bool:
+    """Whether this paragraph is the sentence that announces the block under it.
+
+    "Evidence gaps:" was the last line of page 51 and the four gaps it announces
+    were on page 52; "Discovery recorded two qualifications on it:" ended page 7 the
+    same way. A colon is a promise about the next line, so it cannot be the last
+    thing on a leaf.
+    """
+    if not isinstance(block, Para) or not plain_text(block.text).rstrip().endswith(":"):
+        return False
+    return isinstance(following, ListBlock | Table)
+
+
+def _keep_a_heading_with_what_it_heads(story: list) -> list:
+    """Bind a heading past the space under it to the thing that space is above.
+
+    reportlab binds a heading to the one flowable that follows it, and for every
+    diagram in the report that flowable is the six-point spacer the drawing is padded
+    with -- so the bind was satisfied by the padding and four "Proposed Workflow"
+    headings printed as the last line of a page with their flowchart overleaf.
+    """
+    from reportlab.platypus import Spacer
+
+    for index, flowable in enumerate(story):
+        if not flowable.getKeepWithNext():
+            continue
+        for follower in story[index + 1 :]:
+            if not isinstance(follower, Spacer):
+                break
+            follower.__dict__["keepWithNext"] = 1
+    return story
+
+
 def _story_from_blocks(
     blocks: list,
     styles: dict,
@@ -3265,6 +3308,7 @@ def _story_from_blocks(
         index += 1
         if index < skip_until:
             continue
+        following = blocks[index + 1] if index + 1 < len(blocks) else None
         if index in tails:
             skip_until = tails[index]
             story.append(
@@ -3289,7 +3333,10 @@ def _story_from_blocks(
                     story.append(PageBreak())
             story.append(_para(_markup(block.text), styles[f"h{block.level}"]))
         elif isinstance(block, Para):
-            story.append(_para(_markup(block.text), styles["body"]))
+            paragraph = _para(_markup(block.text), styles["body"])
+            if _introduces(block, following) or _captions(block):
+                paragraph.keepWithNext = 1
+            story.append(paragraph)
         elif isinstance(block, ListBlock):
             story.extend(_list_flowables(block, styles))
         elif isinstance(block, Table):
@@ -3321,7 +3368,7 @@ def _story_from_blocks(
                     story.extend(
                         _story_from_blocks([nested], styles, available, shared=shared)
                     )
-    return story
+    return _keep_a_heading_with_what_it_heads(story)
 
 
 def _make_doc_template(buffer, title: str, header: str, totals: dict):

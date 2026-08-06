@@ -749,3 +749,64 @@ def test_the_shortlist_star_reaches_the_rendered_page():
     )
 
     assert "A 2 nm Coating *" in text
+
+
+DIAGRAM = """graph TD
+    A[High Voltage] --> B{Cathode Surface}
+    B -->|Uncoated| C[Oxygen Evolution]
+    C --> D[TM Migration]
+    B -->|Coated| G[Al-O-TM Bonds]
+    G --> I[Suppressed Migration]
+"""
+
+
+def _story(markdown: str) -> list:
+    from coscientist.dossier import _pdf_styles, _register_pdf_fonts, _story_from_blocks
+    from coscientist.markdown_render import parse_blocks
+
+    _register_pdf_fonts()
+    return _story_from_blocks(parse_blocks(markdown), _pdf_styles(), 460.0)
+
+
+def test_a_heading_is_bound_past_its_padding_to_the_figure_it_heads():
+    """Four "Proposed Workflow" headings printed at the foot of a page with the
+    flowchart they head overleaf. The heading style keeps with the next flowable and
+    always had -- but for a diagram that next flowable is the six-point spacer the
+    drawing is padded with, so the bind was satisfied by the padding and reportlab
+    was free to break underneath it.
+    """
+    from reportlab.graphics.shapes import Drawing
+    from reportlab.platypus import Spacer
+
+    story = _story("### Proposed Workflow\n\n```mermaid\n" + DIAGRAM + "```\n")
+    kept = [flowable.getKeepWithNext() for flowable in story]
+
+    assert isinstance(story[1], Spacer) and isinstance(story[2], Drawing), (
+        "the padding this test is about is no longer where the fix reaches"
+    )
+    assert kept[:3] == [1, 1, 0], "the heading is bound no further than its own padding"
+
+
+def test_a_lead_in_is_bound_to_the_list_it_announces():
+    """ "Evidence gaps:" was the last line of page 51 and the four gaps it announces
+    were on page 52. A colon is a promise about the next line."""
+    story = _story("**Evidence gaps:**\n\n- The vacancy energy is unmeasured.\n")
+
+    assert story[0].getKeepWithNext(), "the lead-in can still be left on its own"
+
+
+def test_a_caption_is_bound_to_the_exhibit_it_names():
+    story = _story(
+        "**Table 4.** Match summary.\n\n| Judge | Verdict |\n| --- | --- |\n| A | Held |\n"
+    )
+
+    assert story[0].getKeepWithNext(), "the caption can still be left on its own"
+
+
+def test_a_paragraph_that_announces_nothing_is_not_bound_to_what_follows():
+    """Binding every paragraph would push text down the page for no reason: the fix
+    is for the ones that promise something, not for prose that happens to precede a
+    table."""
+    story = _story("The tournament ran three rounds.\n\n| A |\n| --- |\n| 1 |\n")
+
+    assert not story[0].getKeepWithNext()
