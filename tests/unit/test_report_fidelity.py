@@ -2104,7 +2104,10 @@ def test_reviews_agreeing_at_a_capped_score_are_not_reported_as_a_clearance():
         {},
     )
     assert "That agreement is not a clearance" not in spread[0]
-    assert "a disqualification rather than a grade" in spread[0]
+    assert spread[0].endswith(
+        "a disagreement of more than a point, and the novelty review records a fatal "
+        "flaw against the idea."
+    )
 
 
 def test_what_a_spread_means_is_explained_above_the_ideas_not_under_each(
@@ -2133,11 +2136,44 @@ def test_what_a_spread_means_is_explained_above_the_ideas_not_under_each(
     for brief in spread:
         # What stays under the idea is this idea's spread, not what a spread is.
         assert any(
-            "a disagreement of more than a point." in line for line in brief.coherence
+            "a disagreement of more than a point" in line for line in brief.coherence
         )
         assert not any(
             note in line for note in brief.coherence_notes for line in brief.coherence
         )
+
+
+def test_why_a_flawed_review_widens_a_spread_is_said_once_and_not_under_each_idea():
+    """Six of the seven ideas in a live chapter carried the identical "Part of that
+    spread is a disqualification rather than a grade:", and the clause that differed —
+    which reviews had recorded the flaw — sat at the end of it, where a reader six
+    repetitions in has stopped looking. That is a rule about spreads, so it is raised
+    as a standing note and printed with the other rules above the ideas."""
+    from coscientist.narrative import (
+        _COHERENCE_NOTES,
+        COHERENCE_DISQUALIFICATION_NOTE,
+        _coherence,
+    )
+
+    lines, notes = _coherence(
+        [
+            _idea_review(section="Impact", score=5, recommendation="advance"),
+            _idea_review(
+                section="Novelty",
+                score=2,
+                recommendation="reject",
+                fatal_flaws=["It replicates a published study."],
+            ),
+        ],
+        {},
+    )
+
+    # What stays under the idea is which review refused it.
+    assert "the novelty review records a fatal flaw" in lines[0]
+    assert "a disqualification rather than a grade" not in lines[0]
+    assert COHERENCE_DISQUALIFICATION_NOTE in notes
+    # Hoisting is by membership of this tuple, which is what the caller prints once.
+    assert COHERENCE_DISQUALIFICATION_NOTE in _COHERENCE_NOTES
 
 
 def test_the_fatal_flaws_nobody_ruled_on_are_counted_beside_the_one_somebody_did():

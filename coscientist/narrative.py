@@ -2243,6 +2243,83 @@ def shared_support_notices(
     )
 
 
+def shared_grounding_reach(
+    record: ResearchRecord, briefs: Sequence[IdeaBrief]
+) -> list[str]:
+    """Which findings carry more than one idea, which no idea's own section can say.
+
+    Each idea names the findings it cites under Supporting Arguments, and on a live
+    run three ideas named the same single finding there. Read one section at a time
+    that is three grounded ideas; read together it is one finding holding up three of
+    the seven, and a fault in it takes all three. The overlap is a fact about the
+    field rather than about any idea, so it is stated once, above them.
+    """
+    below = [brief.candidate_id for brief in briefs]
+    if len(below) < 2:
+        return []
+    candidates = {candidate.id: candidate for candidate in record.candidates}
+    sources = {
+        item.id: item for item in (record.evidence.sources if record.evidence else [])
+    }
+    # Only the findings an idea is built on. A claim the evidence stage marked as
+    # contradicting the idea citing it is reported under that idea as what it is, and
+    # two ideas contradicted by one finding are not two ideas resting on it.
+    supporting = {
+        claim.id: claim
+        for claim in (record.evidence.claims if record.evidence else [])
+        if claim.relation == "supports"
+    }
+    citing: dict[str, set[str]] = {}
+    unnumbered: set[str] = set()
+    for candidate_id in dict.fromkeys(below):
+        candidate = candidates.get(candidate_id)
+        if not candidate:
+            continue
+        for claim_id in dict.fromkeys(candidate.evidence_ids):
+            claim = supporting.get(claim_id)
+            source = sources.get(claim.source_id or "") if claim else None
+            marker = (
+                record.citations.marker([source.url], annotate=False) if source else ""
+            )
+            if marker:
+                citing.setdefault(marker, set()).add(candidate_id)
+            elif claim:
+                unnumbered.add(claim_id)
+    shared = sorted(
+        ((marker, ids) for marker, ids in citing.items() if len(ids) > 1),
+        key=lambda item: (-len(item[1]), item[0]),
+    )
+    if not shared:
+        return []
+    # A shared finding this report gave no reference number to cannot be pointed at
+    # from here, and a list that quietly drops it reads as the whole overlap.
+    withheld = ""
+    if unnumbered:
+        counted = _plural(len(unnumbered), "further cited finding")
+        single = len(unnumbered) == 1
+        withheld = (
+            f" {counted[:1].upper()}{counted[1:]} "
+            + ("carries" if single else "carry")
+            + " no reference number in this report, so "
+            + ("it is" if single else "they are")
+            + " not counted above."
+        )
+    return [
+        f"Of the {_number_word(len(set(below))).lower()} ideas below, more than one "
+        "rests on the same finding: "
+        + _names(
+            [
+                f"{marker} by {_number_word(len(ids)).lower()} of them"
+                for marker, ids in shared
+            ]
+        )
+        + ". Each idea's Supporting Arguments section names the findings that idea "
+        "cites and not the other ideas citing them, so a fault in a shared finding "
+        "reaches further than the section reporting it." + withheld,
+        "",
+    ]
+
+
 def shared_review_questions(
     briefs: Sequence[IdeaBrief],
 ) -> tuple[list[str], set[tuple[str, str, str]]]:
@@ -3833,6 +3910,11 @@ COHERENCE_SPREAD_NOTE = (
     "on one dimension and weak on another rather than uniformly graded, and the "
     "review sections under it are to be read separately rather than averaged."
 )
+COHERENCE_DISQUALIFICATION_NOTE = (
+    "Where a review under such a spread records a fatal flaw, part of that spread is "
+    "a disqualification rather than a grade: the bottom of the span is one section "
+    "refusing the idea, not one section marking it down."
+)
 COHERENCE_EVIDENCE_NOTE = (
     "Where the lowest review of an idea is the evidence and correctness review, the "
     "disagreement is about the grounding rather than the design, and reading the "
@@ -3849,6 +3931,7 @@ COHERENCE_FALSIFIER_NOTE = (
 # precedes the exception it is qualified by.
 _COHERENCE_NOTES = (
     COHERENCE_SPREAD_NOTE,
+    COHERENCE_DISQUALIFICATION_NOTE,
     COHERENCE_EVIDENCE_NOTE,
     COHERENCE_FALSIFIER_NOTE,
 )
@@ -3886,7 +3969,10 @@ def _coherence(
         # more than a point" are one fact, and set as two sentences the second read as
         # a second finding. It is kept in the words the explanation above the ideas
         # uses, so the reader can see which rule this idea has just met.
-        agreement = "a disagreement of more than a point."
+        # Left unterminated: where a review under it records a flaw, that fact joins
+        # this clause rather than opening a sentence of its own, and the full stop goes
+        # on below once it is known which of the two shapes this idea has.
+        agreement = "a disagreement of more than a point"
         notes.append(COHERENCE_SPREAD_NOTE)
     elif len(asked) > 1:
         agreement = (
@@ -3923,12 +4009,21 @@ def _coherence(
         # to a consensus, so the two cases say different things. That the scale caps
         # such a review at two is in the methodology section and again in the preamble
         # above the ideas, so it is not said a third time here.
+        #
+        # Under a spread this carries the flaw and nothing else. "Part of that spread
+        # is a disqualification rather than a grade" is a rule about spreads, not a
+        # fact about this idea, and printed under six of seven ideas it buried the one
+        # clause that differed between them; it is hoisted into the standing note.
         agreement += (
-            f" Part of that spread is a disqualification rather than a grade: {records}."
+            f", and {records}"
             if spread > 1
             else f" That agreement is not a clearance: {records}, and nothing in this "
             "run answered it."
         )
+        if spread > 1:
+            notes.append(COHERENCE_DISQUALIFICATION_NOTE)
+    if spread > 1:
+        agreement += "."
     lines = [
         # The count is prose and the scores are data, which is the convention the
         # Executive Verdict twelve lines above already follows: it wrote "across

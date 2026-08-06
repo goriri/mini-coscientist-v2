@@ -80,6 +80,7 @@ from .narrative import (
     evidence_integrity_lines,
     load_record,
     shared_coherence_notes,
+    shared_grounding_reach,
     shared_review_questions,
     shared_support_notices,
     synthesize_overview,
@@ -1978,6 +1979,10 @@ def compile_dossier(session: Session) -> str:
             lines += [paragraph, ""]
         if grounding:
             lines += [grounding, ""]
+        # After the verdict on each idea's own grounding and before the reviews: a
+        # reader who has just been told three ideas are grounded is owed the fact
+        # that it is one finding grounding them.
+        lines += shared_grounding_reach(record, briefs)
         lines += questions
         lines += shared_coherence_notes(briefs)
         lines += match_notes

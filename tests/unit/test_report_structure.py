@@ -1580,6 +1580,41 @@ def test_a_hoisted_grounding_verdict_is_still_named_beside_its_own_idea(
     assert body.count("Its grounding is marked unverified.") == len(shared)
 
 
+def test_a_finding_more_than_one_idea_rests_on_is_reported_as_carrying_them_both(
+    rich_session: Session,
+):
+    """Three ideas of a live run printed the same lone finding under Supporting
+    Arguments. Each section was correct and none of them could say what the three
+    together say: one finding is holding up three of the seven, and a fault in it
+    takes all three. That is a fact about the field, so it goes above the ideas."""
+    from coscientist.narrative import shared_grounding_reach
+
+    record = load_record(rich_session)
+    briefs = build_idea_briefs(record)
+    stated = shared_grounding_reach(record, briefs)[0]
+
+    assert stated.startswith("Of the six ideas below, more than one rests on the same ")
+    assert "[2] by two of them" in stated
+    assert "reaches further than the section reporting it" in stated
+    # Once, above the ideas -- not under each idea that cites the finding.
+    assert compile_dossier(rich_session).count(stated) == 1
+
+
+def test_a_field_whose_ideas_share_no_finding_says_nothing_about_sharing(
+    rich_session: Session,
+):
+    """The overlap is only worth a paragraph where there is one."""
+    from coscientist.narrative import shared_grounding_reach
+
+    record = load_record(rich_session)
+    briefs = build_idea_briefs(record)
+    # Every idea on a finding nobody else cites.
+    for index, candidate in enumerate(record.population.candidates):
+        candidate.evidence_ids = [f"claim_{index}"]
+
+    assert shared_grounding_reach(record, briefs) == []
+
+
 def test_a_missing_evidence_id_is_never_presented_as_grounding(
     rich_session: Session, body: str
 ):
