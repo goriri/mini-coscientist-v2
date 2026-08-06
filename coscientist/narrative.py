@@ -3087,7 +3087,11 @@ def _idea_facts(candidate: Candidate) -> dict[str, str]:
 
 
 def _revised_form(
-    record: ResearchRecord, candidate: Candidate, *, recommended: bool = False
+    record: ResearchRecord,
+    candidate: Candidate,
+    *,
+    recommended: bool = False,
+    accepted_flaw: AdjudicationNote | None = None,
 ) -> tuple[str, list[tuple[str, str]], list[str]]:
     """The rewrite of this idea as a diff against the form that was ranked.
 
@@ -3112,6 +3116,26 @@ def _revised_form(
         if reviews
         else " No re-review of the rewrite is on the record."
     )
+    # A rewrite may say it disposes of the flaw a person accepted: one wrote that
+    # substituting the precursor achieves the same layer "while eliminating the safety
+    # fatal flaw", twenty lines above a conclusion saying the flaw was allowed to
+    # stand and nothing in the run removes it. Both are true of different texts, and
+    # nothing said which each was about.
+    if accepted_flaw:
+        checked += (
+            " The fatal flaw accepted for this idea was accepted against the form "
+            "ranked above, and the safety and governance review "
+            + (
+                "was re-run against the rewrite."
+                if any(
+                    review.criterion in {"safety_governance", "impact_safety"}
+                    for review in reviews
+                )
+                else "was not re-run against the rewrite — so where the rewrite says "
+                "it removes that flaw, that is the rewrite's own claim and nothing in "
+                "this run has tested it."
+            )
+        )
     # The diff is against the form that was ranked, so it spans every round of the
     # rewrite, and naming the last round alone told the reader a two-round rewrite
     # happened in one -- with the round-one critiques left off the list it says the
@@ -4410,7 +4434,7 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
             )
         }
         revised_lead_in, revised_form, revised_unchanged = _revised_form(
-            record, candidate, recommended=recommended
+            record, candidate, recommended=recommended, accepted_flaw=accepted_flaw
         )
         revision = record.revision_of(candidate.id)
         revised_facts = _idea_facts(revision.candidate) if revision else None

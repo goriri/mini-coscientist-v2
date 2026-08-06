@@ -30,6 +30,7 @@ from coscientist.models import (
 )
 from coscientist.narrative import (
     _UNSTATED,
+    AdjudicationNote,
     IdeaBrief,
     IdeaReview,
     ResearchRecord,
@@ -2898,3 +2899,59 @@ def test_a_reason_that_is_nothing_but_a_connective_is_left_as_recorded():
     from coscientist.debate import standalone_opening
 
     assert standalone_opening("However,") == "However,"
+
+
+# --- a rewrite's claim about an accepted flaw is the rewrite's claim ----------
+
+
+def _accepted_flaw() -> AdjudicationNote:
+    return AdjudicationNote(
+        candidate_id="cand_a",
+        title="A TiO2 coating",
+        resolution="override",
+        adjudicator="Automated verification run",
+        justification="Proceeding under containment.",
+        fatal_flaws=["The HF precursor cannot be contained at atmospheric pressure."],
+    )
+
+
+def test_a_rewrite_saying_it_removes_an_accepted_flaw_is_not_left_to_stand_alone():
+    """A live chapter carried a rewrite that achieves the same layer "while eliminating
+    the safety fatal flaw" twenty lines above a conclusion saying the flaw was allowed
+    to stand and no work in the run removes it. Both are true of different texts, and
+    nothing on the page said which each was about."""
+    from coscientist.narrative import _revised_form
+
+    lead_in, _, _ = _revised_form(
+        _twice_revised(), _candidate("cand_a"), accepted_flaw=_accepted_flaw()
+    )
+
+    assert "accepted against the form ranked above" in lead_in
+    assert "was not re-run against the rewrite" in lead_in
+    assert "that is the rewrite's own claim and nothing in this run has tested it" in (
+        lead_in
+    )
+
+
+def test_a_rewrite_the_safety_review_did_see_is_reported_as_seen():
+    from coscientist.narrative import _revised_form
+
+    record = _twice_revised()
+    record.evolution.rereviews = [
+        _review("cand_a_v3", criterion="safety_governance", recommendation="advance")
+    ]
+
+    lead_in, _, _ = _revised_form(
+        record, _candidate("cand_a"), accepted_flaw=_accepted_flaw()
+    )
+
+    assert "was re-run against the rewrite." in lead_in
+    assert "nothing in this run has tested it" not in lead_in
+
+
+def test_an_idea_with_no_accepted_flaw_says_nothing_about_one():
+    from coscientist.narrative import _revised_form
+
+    lead_in, _, _ = _revised_form(_twice_revised(), _candidate("cand_a"))
+
+    assert "fatal flaw" not in lead_in
