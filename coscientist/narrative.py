@@ -800,6 +800,14 @@ class IdeaBrief:
     """
     revised_unchanged: list[str] = field(default_factory=list)
     """Fields the rewrite left alone, named so the diff above can be read as a diff."""
+    authors_own_sections: list[tuple[str, str]] = field(default_factory=list)
+    """The sections the specialist headed inside its own mechanism field, as written.
+
+    The generation prompt asks for a technical narrative, a motivation, a table and a
+    critical judgment, and every one of them comes back inside one prose field. Run
+    together they made the Mechanism cell of the comparison grid a 1,475-character
+    essay that opened "Motivation and Supporting Evidence:" and contained no mechanism.
+    """
     self_rating_title: str = ""
     """The heading the specialist gave the table it appended to the mechanism."""
     self_rating: list[list[str]] = field(default_factory=list)
@@ -3249,6 +3257,10 @@ def _category_path(record: ResearchRecord, candidate: Candidate) -> str:
 # an unstated one: "It cannot start until its inputs exist: no external dependency was
 # recorded" is a sentence that answers itself, and only the caller knows to avoid it.
 _UNSTATED = {
+    "Mechanism and rationale": (
+        "The specialist wrote no mechanism apart from the sections it headed itself, "
+        "which are printed under this idea in its own words."
+    ),
     "Discriminating predictions": "The specialist stated no discriminating prediction.",
     "Alternative explanations": "No competing explanation was recorded for this idea.",
     "Falsifier": "Not stated by the specialist.",
@@ -3265,13 +3277,56 @@ def _stated(facts: dict[str, str], field_name: str) -> bool:
     return facts.get(field_name) != _UNSTATED[field_name]
 
 
+# The parts every generation prompt asks a specialist to write, after the technical
+# narrative and either side of the table. The specialist heads them in its own
+# Markdown inside one prose field, and the flattener turns a heading over prose into
+# a label in front of it -- so the Mechanism cell of the comparison grid opened
+# "Motivation and Supporting Evidence:" and ran 1,475 characters to the end of a
+# "Critical Scientific Judgment:", with no mechanism anywhere in it. Matched
+# case-insensitively and printed in the canonical spelling here, because the label a
+# specialist writes is its own and the heading over it is the report's.
+AUTHORS_OWN_PARTS = (
+    "Motivation and Supporting Evidence",
+    "Critical Scientific Judgment",
+)
+_AUTHORS_OWN_PART = re.compile(
+    r"^[ \t]{0,3}(?:#{1,6}[ \t]*)?\**[ \t]*(?:\d+[.)][ \t]*)?"
+    r"(" + "|".join(AUTHORS_OWN_PARTS) + r")"
+    r"[ \t]*\**[ \t]*:?[ \t]*\**[ \t]*",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _authors_own_parts(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """A prose field split from the sections the specialist headed inside it.
+
+    Returned as (what came before the first of them, the sections). Nothing is
+    dropped: the sections are printed under the idea, in the specialist's own words
+    and under the specialist's own labels, rather than run together inside a cell
+    labelled Mechanism.
+    """
+    source = str(text or "")
+    marks = list(_AUTHORS_OWN_PART.finditer(source))
+    if not marks:
+        return source, []
+    canonical = {name.lower(): name for name in AUTHORS_OWN_PARTS}
+    parts: list[tuple[str, str]] = []
+    for index, mark in enumerate(marks):
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(source)
+        if body := source[mark.end() : end].strip():
+            parts.append((canonical[mark.group(1).lower()], body))
+    return source[: marks[0].start()].rstrip(), parts
+
+
 def _mechanism(candidate: Candidate) -> str:
-    """The mechanism the specialist wrote, without the table it appended to it.
+    """The mechanism the specialist wrote, without what it wrote after the mechanism.
 
     The table is printed under the idea it belongs to, as the specialist's own
-    rating rather than as part of the mechanism it was written after.
+    rating rather than as part of the mechanism it was written after, and the
+    sections the specialist headed itself are printed under their own headings.
     """
-    return _sentence(_authors_own_table(candidate.rationale)[0])
+    lead, _ = _authors_own_parts(_authors_own_table(candidate.rationale)[0])
+    return _sentence(lead, fallback=_UNSTATED["Mechanism and rationale"])
 
 
 def _idea_facts(candidate: Candidate) -> dict[str, str]:
@@ -4799,7 +4854,8 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
         )
         revision = record.revision_of(candidate.id)
         revised_facts = _idea_facts(revision.candidate) if revision else None
-        _, rating_title, rating = _authors_own_table(candidate.rationale)
+        without_table, rating_title, rating = _authors_own_table(candidate.rationale)
+        _, authors_own = _authors_own_parts(without_table)
         briefs.append(
             IdeaBrief(
                 title=record.title_for(candidate.id),
@@ -4846,6 +4902,7 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
                 revised_lead_in=revised_lead_in,
                 revised_form=revised_form,
                 revised_unchanged=revised_unchanged,
+                authors_own_sections=authors_own,
                 self_rating_title=rating_title,
                 self_rating=rating,
                 strategy=candidate.generation_strategy.replace("_", " "),

@@ -75,6 +75,7 @@ from .narrative import (
     _number_word,
     _opening,
     _plural,
+    _sentence,
     build_idea_briefs,
     evidence_integrity_cases,
     evidence_integrity_lines,
@@ -1248,12 +1249,49 @@ def _idea_deep_dive(
     lines.extend(["### Idea Proposal", "", brief.proposal, "", "### Description", ""])
     for paragraph in brief.description:
         lines.extend([paragraph, ""])
+    lines.extend(_authors_own_sections(brief))
     lines.extend(_self_rating(brief))
     lines.extend(_workflow_diagram(brief))
     lines.extend(_evidence_assessment(brief))
     lines.extend(_revised_form_block(brief))
     lines.extend(_review_block(brief, hoisted_questions))
     lines.extend(_match_summary(brief, hoisted_matches, transcribed))
+    return lines
+
+
+def _authors_own_sections(brief: IdeaBrief) -> list[str]:
+    """The sections the proposing specialist headed inside its own mechanism field.
+
+    The generation prompt asks for four parts and the schema gives them one prose
+    field to arrive in, so the report read the lot out as the mechanism: one live
+    Mechanism cell opened "Motivation and Supporting Evidence:", ran 1,475 characters
+    through a "Critical Scientific Judgment:" and never said what the mechanism was.
+    Kept whole and printed under the labels the specialist gave them, in its voice.
+    """
+    if not brief.authors_own_sections:
+        return []
+    lines = [
+        "### The Specialist's Own Sections",
+        "",
+        "The specialist that proposed this idea headed "
+        + (
+            "a section of its own"
+            if len(brief.authors_own_sections) == 1
+            else f"{_number_word(len(brief.authors_own_sections)).lower()} sections of "
+            "its own"
+        )
+        + " inside the mechanism above. "
+        + (
+            "It is reproduced"
+            if len(brief.authors_own_sections) == 1
+            else "They are reproduced"
+        )
+        + " here under the specialist's own label: this is the proposer arguing for "
+        "its own idea, not a finding of the run.",
+        "",
+    ]
+    for label, body in brief.authors_own_sections:
+        lines.extend([f"**{label}.** {_sentence(body)}", ""])
     return lines
 
 

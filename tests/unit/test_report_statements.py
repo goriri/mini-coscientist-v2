@@ -20,6 +20,7 @@ from coscientist.models import (
 from coscientist.narrative import (
     IdeaReview,
     ResearchRecord,
+    _authors_own_parts,
     _blocks_as_prose,
     _coherence,
     _evidence_statements,
@@ -465,3 +466,76 @@ def _brief_without_a_rating():
         ties=0,
         shortlisted=False,
     )
+
+
+FOUR_PART = """The coating suppresses lattice oxygen release at high states of charge.
+
+## Motivation and Supporting Evidence
+
+Literature shows a bare cell has 43% shorter cycle life than a coated one.
+
+## Critical Scientific Judgment
+
+The annealing step can form a resistive rock-salt phase at the boundary.
+"""
+
+
+def test_the_sections_a_specialist_headed_itself_are_not_read_as_the_mechanism():
+    """A live Mechanism cell opened "Motivation and Supporting Evidence:", ran 1,475
+    characters through a "Critical Scientific Judgment:" and never said what the
+    mechanism was. Four parts are asked for and one prose field is given to hold them."""
+    lead, parts = _authors_own_parts(FOUR_PART)
+
+    assert lead.strip() == (
+        "The coating suppresses lattice oxygen release at high states of charge."
+    )
+    assert [label for label, _ in parts] == [
+        "Motivation and Supporting Evidence",
+        "Critical Scientific Judgment",
+    ]
+    assert parts[0][1].startswith("Literature shows a bare cell")
+    assert parts[1][1].startswith("The annealing step")
+
+
+def test_the_labels_are_recognised_however_the_specialist_wrote_them():
+    """Numbered, bolded, inline or as a heading -- the prompt numbers them and the
+    specialists answer in whichever of those shapes they please."""
+    _, parts = _authors_own_parts(
+        "It suppresses oxygen release.\n\n"
+        "**2. Motivation and Supporting Evidence:** The literature agrees.\n\n"
+        "#### critical scientific judgment\n\nThe anneal is the risk.\n"
+    )
+
+    assert [label for label, _ in parts] == [
+        # Printed in the canonical spelling: the words are the specialist's, the
+        # capitalisation of a heading in this report is the report's.
+        "Motivation and Supporting Evidence",
+        "Critical Scientific Judgment",
+    ]
+    assert parts[0][1] == "The literature agrees."
+
+
+def test_a_mechanism_with_no_headed_sections_is_left_exactly_as_written():
+    text = "High-nickel cathodes suffer from instability. The coating blocks it."
+    assert _authors_own_parts(text) == (text, [])
+
+
+def test_a_specialist_that_wrote_only_headed_sections_is_not_given_a_mechanism():
+    """The lead is empty here, and the Mechanism cell has to say so rather than
+    print the motivation section under a label that is not what it is."""
+    from coscientist.models import Candidate
+    from coscientist.narrative import _UNSTATED, _idea_facts
+
+    facts = _idea_facts(
+        Candidate(
+            id="cand_a",
+            title="A coating",
+            claim="A coating helps.",
+            rationale="## Motivation and Supporting Evidence\n\nThe literature agrees.",
+            mechanism_model="",
+            validation_protocol="",
+            falsifier="Retention is unchanged.",
+        )
+    )
+
+    assert facts["Mechanism and rationale"] == _UNSTATED["Mechanism and rationale"]
