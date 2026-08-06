@@ -45,6 +45,8 @@ from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 
+from .normalization import strip_unstorable_characters, strip_unstorable_values
+
 MAX_DOCUMENT_BYTES = 6_000_000
 MAX_DOCUMENT_CHARS = 120_000
 MAX_REDIRECT_HOPS = 6
@@ -449,16 +451,23 @@ class SourceRetriever:
                 body = response.content[:MAX_DOCUMENT_BYTES]
                 if response.status_code != 200:
                     result.error = f"HTTP {response.status_code}"
+                # Sanitized as the bytes become text, at the point where the open
+                # web enters this process. A PDF is a container for arbitrary
+                # bytes and one of them was a NUL, which PostgreSQL will not
+                # store: the row this text eventually reaches is a research
+                # record, and losing it costs a paid verification pass.
                 elif "pdf" in result.content_type:
-                    result.text = pdf_to_text(body)[:MAX_DOCUMENT_CHARS]
+                    result.text = strip_unstorable_characters(pdf_to_text(body))[
+                        :MAX_DOCUMENT_CHARS
+                    ]
                     if not result.text:
                         result.error = "The PDF carried no extractable text layer."
                 else:
                     markup = body.decode(response.encoding or "utf-8", "replace")
                     text, title, meta = html_to_text(markup)
-                    result.text = text[:MAX_DOCUMENT_CHARS]
-                    result.title = title
-                    result.citation_meta = meta
+                    result.text = strip_unstorable_characters(text)[:MAX_DOCUMENT_CHARS]
+                    result.title = strip_unstorable_characters(title)
+                    result.citation_meta = strip_unstorable_values(meta)
                 self._document_cache[url] = result
                 return result
         result.error = f"Exceeded {MAX_REDIRECT_HOPS} redirects without a document."
@@ -784,19 +793,24 @@ async def fetch_source_document(url: str, claimed_title: str = "") -> dict[str, 
         outcome = await assess_source(
             client, retriever, url, claimed_title=claimed_title
         )
-    return {
-        "tier": outcome.tier,
-        "reason": outcome.reason,
-        "requested_url": outcome.url,
-        "final_url": outcome.document.final_url,
-        "http_status": outcome.document.status,
-        "registry_title": outcome.metadata.title,
-        "registry_authors": outcome.metadata.authors,
-        "registry_year": outcome.metadata.year,
-        "registry_container": outcome.metadata.container,
-        "doi": outcome.metadata.doi,
-        "registries": outcome.metadata.registries,
-        "retracted": outcome.metadata.is_retracted,
-        "text": outcome.document.text[:TOOL_TEXT_BUDGET_CHARS],
-        "text_truncated": len(outcome.document.text) > TOOL_TEXT_BUDGET_CHARS,
-    }
+    # Sanitized on the way out. Everything below came off the open web -- a PDF's
+    # extracted text, a registry's title field -- and ADK writes the tool
+    # response into a PostgreSQL row, which one NUL is enough to reject.
+    return strip_unstorable_values(
+        {
+            "tier": outcome.tier,
+            "reason": outcome.reason,
+            "requested_url": outcome.url,
+            "final_url": outcome.document.final_url,
+            "http_status": outcome.document.status,
+            "registry_title": outcome.metadata.title,
+            "registry_authors": outcome.metadata.authors,
+            "registry_year": outcome.metadata.year,
+            "registry_container": outcome.metadata.container,
+            "doi": outcome.metadata.doi,
+            "registries": outcome.metadata.registries,
+            "retracted": outcome.metadata.is_retracted,
+            "text": outcome.document.text[:TOOL_TEXT_BUDGET_CHARS],
+            "text_truncated": len(outcome.document.text) > TOOL_TEXT_BUDGET_CHARS,
+        }
+    )

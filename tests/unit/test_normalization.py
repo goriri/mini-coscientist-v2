@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from coscientist.evidence import _content_text
-from coscientist.normalization import strip_unstorable_characters
+from coscientist.normalization import (
+    strip_unstorable_characters,
+    strip_unstorable_values,
+)
 
 
 def test_a_nul_in_a_report_is_dropped_rather_than_carried_into_a_commit():
@@ -34,3 +37,30 @@ def test_deep_research_text_is_sanitized_where_it_enters():
     assert _content_text("report\x00body") == "reportbody"
     assert _content_text({"text": "part\x00one"}) == "partone"
     assert _content_text([{"text": "a\x00"}, {"text": "\x00b"}]) == "a\nb"
+
+
+def test_a_structure_is_sanitized_all_the_way_down():
+    """A tool response is a dict of strings, lists and nested dicts."""
+    payload = {
+        "tier": "verified",
+        "text": "page\x00one",
+        "registry_authors": ["A\x00uthor", "Second"],
+        "nested": {"title": "T\ud800itle"},
+        "http_status": 200,
+        "retracted": False,
+    }
+    assert strip_unstorable_values(payload) == {
+        "tier": "verified",
+        "text": "pageone",
+        "registry_authors": ["Author", "Second"],
+        "nested": {"title": "Title"},
+        "http_status": 200,
+        "retracted": False,
+    }
+
+
+def test_a_fetched_document_is_sanitized_before_a_specialist_ever_sees_it():
+    """A PDF is a container for arbitrary bytes, and one of them was a NUL."""
+    import json
+
+    assert json.dumps(strip_unstorable_values({"text": "a\x00b"})) == '{"text": "ab"}'

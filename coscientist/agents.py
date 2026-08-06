@@ -376,7 +376,12 @@ class A2AProvider:
             await http_client.aclose()
         if not responses:
             raise RuntimeError(f"A2A specialist '{role}' returned no text artifact.")
-        content = self._without_prompt_echo(responses, prompt)
+        # Sanitized on the way back too. A specialist quotes the documents it
+        # read, so what it returns can carry the same characters its sources
+        # did, and this content becomes an artifact row of our own.
+        content = strip_unstorable_characters(
+            self._without_prompt_echo(responses, prompt)
+        )
         if resolved:
             content += "\n\nGrounding URLs (resolved to the document each one opens):\n"
             content += "\n".join(f"- {url}" for url in resolved)

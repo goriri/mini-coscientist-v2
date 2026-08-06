@@ -56,6 +56,24 @@ def strip_unstorable_characters(text: str) -> str:
     return _UNSTORABLE.sub("", text)
 
 
+def strip_unstorable_values(value: Any) -> Any:
+    """Apply :func:`strip_unstorable_characters` to every string in a structure.
+
+    For what a tool hands back to a specialist. ``fetch_source_document``
+    returns the retrieved document's own text, and a PDF is a container for
+    arbitrary bytes: ADK persists the tool response as part of the event, so one
+    NUL in one fetched paper failed the commit and took the source-verification
+    turn down with it.
+    """
+    if isinstance(value, str):
+        return strip_unstorable_characters(value)
+    if isinstance(value, dict):
+        return {key: strip_unstorable_values(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [strip_unstorable_values(item) for item in value]
+    return value
+
+
 def repair_json_string(content: str) -> str:
     """Attempt a bounded, one-pass deterministic AST/regex repair of malformed JSON."""
     cleaned = content.strip()
