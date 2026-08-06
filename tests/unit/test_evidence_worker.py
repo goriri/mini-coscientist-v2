@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+from time import sleep as real_sleep
+
 import pytest
 
 from app import research_api
@@ -92,3 +95,72 @@ def test_a_worker_that_lost_its_lease_stops(ledger, monkeypatch):
     research_api._advance_in_background(session_id, kind="evidence")
 
     assert len(attempts) == 1
+
+
+def test_the_lease_is_renewed_while_a_long_stage_is_still_working(ledger, monkeypatch):
+    """The evidence stage is one call that runs for many minutes.
+
+    It outlived its five-minute lease, so the expiry sweep declared a working
+    worker dead and started a second one beside it every five minutes: attempt
+    five, twenty-five minutes in, still on Deep Research pass seven and no
+    closer to a gate.
+    """
+    flow = CoScientistWorkflow("Question", ledger=ledger)
+    session_id = flow.session.id
+    ledger.set_operation(session_id, "queued", "Waiting", "next")
+
+    monkeypatch.setattr(research_api, "OPERATION_LEASE_SECONDS", 1)
+    monkeypatch.setattr(research_api, "OPERATION_HEARTBEAT_SECONDS", 0.05)
+
+    def slow_stage(workflow):
+        # Three lease lifetimes' worth of work.
+        real_sleep(3.2)
+
+    monkeypatch.setattr(research_api, "_draft_next_gate", slow_stage)
+
+    swept: list[bool] = []
+    original = ResearchLedger.requeue_expired_operation
+
+    def sweep(self, session):
+        expired = original(self, session)
+        swept.append(expired)
+        return expired
+
+    monkeypatch.setattr(ResearchLedger, "requeue_expired_operation", sweep)
+
+    worker = threading.Thread(
+        target=research_api._advance_in_background,
+        args=(session_id,),
+        kwargs={"kind": "next"},
+    )
+    worker.start()
+    # What a browser polling the session does throughout.
+    while worker.is_alive():
+        real_sleep(0.2)
+        ledger.requeue_expired_operation(session_id)
+    worker.join()
+
+    assert swept and not any(swept), "a working worker was declared dead"
+    assert ledger.operation(session_id)["status"] == "completed"
+
+
+def test_the_heartbeat_leaves_the_researchers_message_alone(ledger, monkeypatch):
+    """It has nothing to add to what the worker last said it was doing."""
+    flow = CoScientistWorkflow("Question", ledger=ledger)
+    session_id = flow.session.id
+    ledger.set_operation(session_id, "queued", "Waiting", "evidence")
+    assert ledger.claim_operation(session_id, "worker-a", detail="Polling pass 3")
+
+    stop = threading.Event()
+    beat = threading.Thread(
+        target=research_api._hold_operation_lease,
+        args=(session_id, "worker-a", stop),
+        daemon=True,
+    )
+    monkeypatch.setattr(research_api, "OPERATION_HEARTBEAT_SECONDS", 0.05)
+    beat.start()
+    real_sleep(0.2)
+    stop.set()
+    beat.join(timeout=2)
+
+    assert ledger.operation(session_id)["detail"] == "Polling pass 3"

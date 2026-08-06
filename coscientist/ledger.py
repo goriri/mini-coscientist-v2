@@ -290,17 +290,21 @@ class ResearchLedger:
         session_id: str,
         owner: str,
         *,
-        detail: str,
+        detail: str | None = None,
         lease_seconds: int = 300,
     ) -> bool:
-        """Extend this worker's lease, and say what it is waiting on.
+        """Extend this worker's lease, and optionally say what it is waiting on.
 
-        A worker that waits longer than its lease -- polling Deep Research is
-        minutes of waiting -- would otherwise be declared dead by
-        ``requeue_expired_operation`` and have a second worker started beside
-        it. Returns False if the lease has already been taken away, which is the
-        signal to stop rather than to carry on writing to a session somebody
-        else now owns.
+        A worker that works or waits longer than its lease -- an evidence stage
+        polls every Deep Research pass to completion inside one call -- would
+        otherwise be declared dead by ``requeue_expired_operation`` and have a
+        second worker started beside it. Returns False if the lease has already
+        been taken away, which is the signal to stop rather than to carry on
+        writing to a session somebody else now owns.
+
+        ``detail`` left unset keeps the message already on the operation, so a
+        heartbeat can hold the lease without overwriting what the worker last
+        told the researcher it was doing.
         """
         now = datetime.now(UTC)
         expires = (now + timedelta(seconds=lease_seconds)).isoformat()
@@ -308,7 +312,8 @@ class ResearchLedger:
             cursor = connection.execute(
                 """
                 UPDATE workflow_operations
-                SET detail = ?, lease_expires_at = ?, updated_at = ?
+                SET detail = COALESCE(?, detail), lease_expires_at = ?,
+                    updated_at = ?
                 WHERE session_id = ? AND status = 'running' AND lease_owner = ?
                 """,
                 (detail, expires, now.isoformat(), session_id, owner),
@@ -659,7 +664,7 @@ class PostgresResearchLedger:
         session_id: str,
         owner: str,
         *,
-        detail: str,
+        detail: str | None = None,
         lease_seconds: int = 300,
     ) -> bool:
         """Extend this worker's lease. See :meth:`ResearchLedger.renew_operation`."""
@@ -667,7 +672,7 @@ class PostgresResearchLedger:
             cursor.execute(
                 """
                 UPDATE research_workflow_operations
-                SET detail = %s,
+                SET detail = COALESCE(%s, detail),
                     lease_expires_at = NOW() + (%s * INTERVAL '1 second'),
                     updated_at = NOW()
                 WHERE session_id = %s AND status = 'running' AND lease_owner = %s

@@ -50,6 +50,17 @@ _STATE_DIR = Path(
 _locks_guard = threading.Lock()
 _session_locks: dict[str, threading.Lock] = {}
 
+OPERATION_LEASE_SECONDS = 300
+"""How long a worker owns a session before it is presumed dead.
+
+Short on purpose. A crashed instance costs a researcher this much waiting, and
+a worker that is alive keeps the lease by renewing it rather than by having
+asked for a long one up front.
+"""
+
+OPERATION_HEARTBEAT_SECONDS = 60
+"""How often a working worker renews. Five renewals to a lease."""
+
 
 class CreateResearchSession(BaseModel):
     question: str = Field(min_length=3, max_length=12000)
@@ -306,8 +317,56 @@ def _advance_in_background(session_id: str, *, kind: str, feedback: str = "") ->
         "evidence": "Deep Research is starting or polling a stored interaction.",
     }
     owner = f"worker-{secrets.token_hex(8)}"
-    if not _ledger().claim_operation(session_id, owner, detail=details[kind]):
+    if not _ledger().claim_operation(
+        session_id, owner, detail=details[kind], lease_seconds=OPERATION_LEASE_SECONDS
+    ):
         return
+    stop_heartbeat = threading.Event()
+    threading.Thread(
+        target=_hold_operation_lease,
+        args=(session_id, owner, stop_heartbeat),
+        name=f"lease-{session_id}",
+        daemon=True,
+    ).start()
+    try:
+        _run_advance(session_id, owner, kind=kind, feedback=feedback, details=details)
+    finally:
+        stop_heartbeat.set()
+
+
+def _hold_operation_lease(session_id: str, owner: str, stop: threading.Event) -> None:
+    """Renew the lease for as long as the worker is still on the session.
+
+    A stage is one long call: discovery polls every Deep Research pass to
+    completion inside it, which is many minutes against a five-minute lease.
+    Without this the expiry sweep declared a working worker dead and started a
+    second one beside it every five minutes, so the evidence stage restarted
+    forever instead of finishing -- attempt five, twenty-five minutes in, still
+    at pass seven.
+
+    The message is left alone. What the researcher is being told is whatever the
+    worker last set, and a heartbeat has nothing to add to it.
+    """
+    while not stop.wait(OPERATION_HEARTBEAT_SECONDS):
+        try:
+            if not _ledger().renew_operation(
+                session_id, owner, lease_seconds=OPERATION_LEASE_SECONDS
+            ):
+                # The lease is somebody else's now, or the session is gone.
+                return
+        except Exception:
+            logger.exception("Could not renew the operation lease for %s", session_id)
+            return
+
+
+def _run_advance(
+    session_id: str,
+    owner: str,
+    *,
+    kind: str,
+    feedback: str,
+    details: dict[str, str],
+) -> None:
     # Deep Research answers in minutes, and each poll that comes back "still
     # running" schedules the next one. Where Cloud Tasks is configured that next
     # poll is a task and this worker returns; where it is not, the worker waits
