@@ -5100,6 +5100,36 @@ def _section_three(record: ResearchRecord) -> _Draft:
                 "a shared name is not a shared failure mode."
             )
         )
+        # The clustering stage may put one idea under two mechanisms, and nothing
+        # said so. A live report opened "three distinct clusters" and then gave
+        # their sizes as two, two and one over four ideas -- and printed the same
+        # hypothesis under two different converging pairs further down, each pair
+        # described as the two ideas resting on a single shared mechanism.
+        repeated = [
+            candidate_id
+            for candidate_id, count in Counter(
+                candidate_id
+                for cluster in clusters
+                for candidate_id in cluster.candidate_ids
+            ).items()
+            if count > 1
+        ]
+        if repeated:
+            core.append(
+                _opening(len(repeated), "idea appears", "ideas appear")
+                + " in more than one cluster: "
+                + _joined_titles(
+                    [record.title_for(item) for item in repeated], fallback="none"
+                )
+                + ". The sizes above count "
+                + ("it" if len(repeated) == 1 else "each of them")
+                + " once per cluster, so they total more than the number of ideas "
+                "mapped, and a result against any of the mechanisms "
+                + ("it was" if len(repeated) == 1 else "they were")
+                + " placed under reaches "
+                + ("it" if len(repeated) == 1 else "them")
+                + "."
+            )
     extra = []
     if record.landscape and record.landscape.coverage_gaps:
         extra.append(
@@ -7047,6 +7077,19 @@ _RESTATEMENT_STOPWORDS = _TITLE_MINOR_WORDS | frozenset(
 )
 
 
+# A sentence about the machinery that wrote the report rather than about the
+# field it reports on. The discovery normalizer used to record "No citation-linked
+# statements could be normalized." as an uncertainty, and it was printed first
+# among seven real open questions -- the one bullet in the section that no
+# experiment could ever close. The producer stopped writing it, but a session
+# recorded before that still holds it and this is where those are read.
+_PIPELINE_DIAGNOSTIC = re.compile(
+    r"\bnormaliz|citation-linked statement|\bJSON\b|\bschema\b|"
+    r"\bthe (?:extractor|parser|normalizer)\b",
+    re.IGNORECASE,
+)
+
+
 def _open_questions(record: ResearchRecord) -> tuple[list[str], str]:
     """What the run left unresolved, minus what the recommendations already listed.
 
@@ -7070,6 +7113,7 @@ def _open_questions(record: ResearchRecord) -> tuple[list[str], str]:
         _sentence(item)
         for narrative in (record.discovery.narratives if record.discovery else [])
         for item in list(narrative.uncertainties) + list(narrative.disagreements)
+        if not _PIPELINE_DIAGNOSTIC.search(item)
     ]
     open_gaps = [
         gap

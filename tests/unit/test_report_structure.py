@@ -2404,6 +2404,54 @@ def test_a_cluster_mechanism_is_stated_once_and_not_in_three_sections():
     assert "Physical Barrier Coatings" in overview.unexpected_connections[0]
 
 
+def test_an_idea_placed_under_two_mechanisms_is_said_to_be_counted_twice():
+    """A live report opened "three distinct clusters", gave their sizes as two, two
+    and one over four ideas, and printed the same hypothesis under two converging
+    pairs further down -- each pair described as two ideas resting on one shared
+    mechanism. Nothing said the sizes double-count it."""
+    from coscientist.models import ResearchCluster, ResearchLandscape
+    from coscientist.narrative import ResearchRecord, _section_three
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.titles = {
+        "cand_a": "A Thin Alumina Coating",
+        "cand_b": "A Thin Zirconia Coating",
+        "cand_c": "A Doped Cathode Surface",
+    }
+    record.landscape = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Physical Barrier Coatings",
+                candidate_ids=["cand_a", "cand_b"],
+                shared_mechanism="A coating suppresses the interfacial reaction.",
+                shared_outcome="Retention holds past five hundred cycles.",
+            ),
+            ResearchCluster(
+                name="Surface Chemistry",
+                candidate_ids=["cand_b", "cand_c"],
+                shared_mechanism="Surface chemistry sets the reaction rate.",
+                shared_outcome="Retention holds past five hundred cycles.",
+            ),
+        ]
+    )
+
+    printed = "\n".join(_section_three(record).core)
+
+    assert "One idea appears in more than one cluster: A Thin Zirconia Coating." in (
+        printed
+    )
+    assert "count it once per cluster" in printed
+    assert "total more than the number of ideas mapped" in printed
+
+    record.landscape.clusters[1].candidate_ids = ["cand_a", "cand_b"]
+    both = "\n".join(_section_three(record).core)
+    assert "Two ideas appear in more than one cluster:" in both
+    assert "count each of them once per cluster" in both
+
+    record.landscape.clusters[1].candidate_ids = ["cand_c"]
+    assert "more than one cluster" not in "\n".join(_section_three(record).core)
+
+
 def test_open_questions_does_not_reprint_the_recommendation_it_follows():
     """Section 9 lists the evidence that would change the recommendation, and Open
     Questions took the same list from the same artifact and printed it again as
@@ -2513,6 +2561,42 @@ def test_the_facets_the_pass_scored_zero_on_are_one_bullet_and_not_seven():
     assert partial == [
         "The discovery pass found no adequate evidence under two facets it scores: "
         "negative or null results and methodological detail."
+    ]
+
+
+def test_a_normalizer_complaint_is_not_printed_as_a_scientific_open_question():
+    """ "No citation-linked statements could be normalized." opened a live report's
+    Open Questions, above seven questions about the field -- a bullet about the
+    report's own machinery, and the one entry in the section no experiment could
+    close. The producer stopped writing it; a session recorded before that still
+    holds it, and this is where those are read."""
+    from coscientist.models import DiscoveryManifest, DiscoveryNarrative
+    from coscientist.narrative import ResearchRecord, _open_questions
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.discovery = DiscoveryManifest(
+        question="Can a coating help?",
+        narratives=[
+            DiscoveryNarrative(
+                question="Can a coating help?",
+                summary="A report.",
+                uncertainties=[
+                    "No citation-linked statements could be normalized.",
+                    "Cycle life past one thousand cycles is unmeasured.",
+                ],
+                disagreements=[
+                    "The extractor returned no JSON matching the schema.",
+                    "Two groups report opposite thickness optima.",
+                ],
+            )
+        ],
+    )
+
+    questions, _ = _open_questions(record)
+
+    assert questions == [
+        "Cycle life past one thousand cycles is unmeasured.",
+        "Two groups report opposite thickness optima.",
     ]
 
 
