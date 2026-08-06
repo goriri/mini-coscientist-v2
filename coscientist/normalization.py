@@ -33,6 +33,29 @@ class NormalizationError(ValueError):
     """Raised when specialist output cannot be normalized or fails semantic checks."""
 
 
+_UNSTORABLE = re.compile("[\x00\ud800-\udfff]")
+
+
+def strip_unstorable_characters(text: str) -> str:
+    """Remove the characters PostgreSQL refuses to store in JSON.
+
+    A Deep Research report came back carrying a NUL. Every specialist turn is
+    persisted by ADK as a JSON event, and PostgreSQL rejects ``\\u0000`` inside
+    JSON outright -- ``asyncpg.exceptions.UntranslatableCharacterError:
+    unsupported Unicode escape sequence``. The commit failed, the discovery
+    specialist's call failed with it, and the evidence stage reported nothing
+    discovered after seven completed passes and twenty-one dollars of research.
+
+    Lone surrogates go the same way: they survive in a Python string, and are
+    then unencodable as UTF-8 the moment anything tries to write them.
+
+    Dropping them is safe in a way that failing is not. Neither character
+    carries meaning in a research report, and the alternative on this path is
+    losing the whole wave.
+    """
+    return _UNSTORABLE.sub("", text)
+
+
 def repair_json_string(content: str) -> str:
     """Attempt a bounded, one-pass deterministic AST/regex repair of malformed JSON."""
     cleaned = content.strip()

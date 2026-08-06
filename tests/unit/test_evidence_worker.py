@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from time import sleep as real_sleep
 
 import pytest
@@ -164,3 +165,75 @@ def test_the_heartbeat_leaves_the_researchers_message_alone(ledger, monkeypatch)
     beat.join(timeout=2)
 
     assert ledger.operation(session_id)["detail"] == "Polling pass 3"
+
+
+def test_a_stage_that_outlives_its_lease_is_not_declared_dead(ledger, monkeypatch):
+    """Discovery polls every Deep Research pass inside one call.
+
+    That is many minutes against a five-minute lease. Without a heartbeat the
+    expiry sweep started a second worker beside the first every five minutes,
+    and the evidence stage restarted forever instead of finishing.
+    """
+    monkeypatch.setattr(research_api, "OPERATION_LEASE_SECONDS", 1)
+    monkeypatch.setattr(research_api, "OPERATION_HEARTBEAT_SECONDS", 0.05)
+    flow = CoScientistWorkflow("Question", ledger=ledger)
+    session_id = flow.session.id
+    ledger.set_operation(session_id, "queued", "Waiting", "next")
+
+    def slow(workflow):
+        # Three lease lifetimes' worth of work.
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            assert not ledger.requeue_expired_operation(session_id), (
+                "a working worker was declared dead"
+            )
+            time.sleep(0.05)
+
+    monkeypatch.setattr(research_api, "_draft_next_gate", slow)
+
+    research_api._advance_in_background(session_id, kind="next")
+
+    assert ledger.operation(session_id)["status"] == "completed"
+
+
+def test_the_heartbeat_leaves_the_message_the_worker_wrote(ledger, monkeypatch):
+    """The researcher is reading it. A beat has nothing to add."""
+    monkeypatch.setattr(research_api, "OPERATION_HEARTBEAT_SECONDS", 0.05)
+    flow = CoScientistWorkflow("Question", ledger=ledger)
+    session_id = flow.session.id
+    ledger.set_operation(session_id, "queued", "Waiting", "evidence")
+
+    seen: list[str] = []
+
+    def drafts(workflow):
+        if not seen:
+            seen.append("first")
+            raise EvidenceStillRunning("still running")
+        seen.append(ledger.operation(session_id)["detail"])
+
+    monkeypatch.setattr(research_api, "_draft_next_gate", drafts)
+    # Real sleeping, so the heartbeat gets several beats inside the wait. Held
+    # by reference first: research_api.time is the time module, so patching it
+    # would replace the sleep this lambda is about to call with itself.
+    sleep = time.sleep
+    monkeypatch.setattr(research_api.time, "sleep", lambda seconds: sleep(0.3))
+
+    research_api._advance_in_background(session_id, kind="evidence")
+
+    assert "Deep Research is still running" in seen[1]
+
+
+def test_a_worker_stops_beating_once_its_stage_is_done(ledger, monkeypatch):
+    """Otherwise a finished session keeps a lease nothing is holding."""
+    monkeypatch.setattr(research_api, "OPERATION_LEASE_SECONDS", 1)
+    monkeypatch.setattr(research_api, "OPERATION_HEARTBEAT_SECONDS", 0.05)
+    flow = CoScientistWorkflow("Question", ledger=ledger)
+    session_id = flow.session.id
+    ledger.set_operation(session_id, "queued", "Waiting", "next")
+    monkeypatch.setattr(research_api, "_draft_next_gate", lambda workflow: None)
+
+    research_api._advance_in_background(session_id, kind="next")
+
+    before = ledger.operation(session_id)["lease_expires_at"]
+    time.sleep(0.3)
+    assert ledger.operation(session_id)["lease_expires_at"] == before

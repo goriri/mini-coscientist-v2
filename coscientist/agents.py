@@ -26,6 +26,7 @@ from .model_catalog import (
     specialist_agent_name,
 )
 from .models import Artifact, ArtifactStatus, Session
+from .normalization import strip_unstorable_characters
 from .parity import ROLE_CONTRACTS, TypedPayload, typed_specialist_payload
 from .retrieval import fetch_source_document
 
@@ -352,7 +353,12 @@ class A2AProvider:
             message = Message(
                 message_id=f"msg-{uuid.uuid4()}",
                 role=Role.user,
-                parts=[Part(root=TextPart(text=prompt))],
+                # Sanitized at the door, because the far side of this call
+                # writes the message to PostgreSQL as a JSON event and a NUL in
+                # it fails the commit -- taking the specialist's whole turn with
+                # it. Prompts carry quoted external prose, and a Deep Research
+                # report did arrive with one.
+                parts=[Part(root=TextPart(text=strip_unstorable_characters(prompt)))],
             )
             responses: list[str] = []
             grounding_urls: list[str] = []

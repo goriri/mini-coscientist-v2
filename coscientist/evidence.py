@@ -41,6 +41,7 @@ from .models import (
     SourceLead,
     SourceRecord,
 )
+from .normalization import strip_unstorable_characters
 from .retrieval import RetrievalOutcome, SourceRetriever, assess_sources
 
 DEEP_RESEARCH_AGENT = "deep-research-preview-04-2026"
@@ -1008,12 +1009,18 @@ def _content_text(value: Any) -> str:
     Vertex returns ``steps[].content`` as a list of typed parts such as
     ``{"type": "text", "text": ..., "annotations": [...]}`` while other shapes
     return a bare string, so both are accepted rather than assumed.
+
+    Text is stripped of the characters PostgreSQL will not store, here at the
+    one door every scrap of Deep Research prose comes through, because what is
+    downstream of it is a specialist call whose event log is a Postgres row.
     """
     if isinstance(value, str):
-        return value if value.strip() else ""
+        return strip_unstorable_characters(value) if value.strip() else ""
     if isinstance(value, dict):
         text = value.get("text")
-        return text if isinstance(text, str) and text.strip() else ""
+        if isinstance(text, str) and text.strip():
+            return strip_unstorable_characters(text)
+        return ""
     if isinstance(value, list):
         parts = [_content_text(item) for item in value]
         return "\n".join(part for part in parts if part)

@@ -53,6 +53,18 @@ _session_locks: dict[str, threading.Lock] = {}
 OPERATION_LEASE_SECONDS = 300
 """How long a worker owns a session before it is presumed dead.
 
+Short on purpose. A container that is torn down mid-stage should be noticed in
+minutes, not in however long the longest stage can run -- and the heartbeat
+below is what keeps a worker that is merely slow from being presumed dead.
+"""
+
+OPERATION_HEARTBEAT_SECONDS = 60
+"""How often the heartbeat renews. Well inside the lease, so a missed beat is
+survivable and only a stopped worker actually expires."""
+
+OPERATION_LEASE_SECONDS = 300
+"""How long a worker owns a session before it is presumed dead.
+
 Short on purpose. A crashed instance costs a researcher this much waiting, and
 a worker that is alive keeps the lease by renewing it rather than by having
 asked for a long one up front.
@@ -450,7 +462,10 @@ def _run_advance(
             # lease was taken away, and this worker stops rather than writing to
             # a session another one now owns.
             if not _ledger().renew_operation(
-                session_id, owner, detail=waiting, lease_seconds=delay + 300
+                session_id,
+                owner,
+                detail=waiting,
+                lease_seconds=OPERATION_LEASE_SECONDS,
             ):
                 return
             time.sleep(delay)
