@@ -353,6 +353,17 @@ class CitationRegistry:
         )
         return checked, len(self._leads)
 
+    def document_for(self, url: str) -> str:
+        """The entry this URL is numbered under, or "" where the registry has none.
+
+        A source the evidence stage admitted is not one-for-one with an entry in the
+        reference list: the list folds two leads onto one document and it never saw
+        a source the packet recorded without a link. Anything comparing the two
+        populations has to go through the fold to compare them at all.
+        """
+        resolved = self._canonical.get(url, url)
+        return resolved if resolved in self._leads else ""
+
     @property
     def cited_standing(self) -> tuple[int, int]:
         """The same count over the entries that were actually numbered and printed.
@@ -7541,7 +7552,12 @@ def _section_eight(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draf
         "against the field, and where the meta-review's account of the round and "
         "the reviews themselves disagree."
     ]
-    if record.citations:
+    # Whether the run gathered any literature, not whether any of it has been
+    # numbered yet. Truthiness on the registry is the count of entries numbered so
+    # far, so a run that gathered eighty documents and cited none of them was told
+    # "Discovery resolved no external source for this goal, which is the single most
+    # consequential finding in this report" -- over a knowledge base of eighty.
+    if record.citations.verification_standing[1]:
         core.append(
             # The count used to be stated here as the number of sources cited, taken
             # from the citation registry. A source is numbered the moment the builder

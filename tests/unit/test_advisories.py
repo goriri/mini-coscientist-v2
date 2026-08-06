@@ -202,3 +202,69 @@ def test_a_report_with_no_accepted_artifacts_still_compiles_its_chapter():
 
     assert CHAPTER in report
     assert "Nothing in this document is a finding" in report
+
+
+def test_the_waived_gate_says_why_its_total_is_not_the_references_total():
+    """Two counts of two populations, four chapters apart, opening the same way.
+
+    Section eight counts the documents the literature search reached and the waiver
+    counts the sources the evidence stage admitted. On a live run those were eighty
+    and seventy-seven, both introduced as "Twenty-five of the", and nothing anywhere
+    said they were counts of different things.
+    """
+    from coscientist.advisories import _waived_gate_advisory
+    from coscientist.models import EvidencePacket, SourceLead, SourceRecord
+    from coscientist.narrative import CitationRegistry
+
+    session = Session(question="Does a coating change cycle life?")
+    session.exploratory_evidence_accepted = True
+    record = ResearchRecord(session=session)
+    record.evidence = EvidencePacket(
+        question=session.question,
+        sources=[
+            SourceRecord(url="https://a.example/paper", verification_status="verified"),
+            SourceRecord(url="https://b.example/paper"),
+            # Recorded without a link, so the reference list cannot number it.
+            SourceRecord(url=""),
+        ],
+    )
+    record.citations = CitationRegistry(
+        [
+            SourceLead(canonical_url="https://a.example/paper", title="A"),
+            SourceLead(canonical_url="https://b.example/paper", title="B"),
+            SourceLead(canonical_url="https://c.example/paper", title="C"),
+            SourceLead(canonical_url="https://d.example/paper", title="D"),
+        ]
+    )
+    body = _waived_gate_advisory(record)[0].body
+
+    assert "One of the three sources admitted was retrieved and checked" in body
+    assert "that one is marked as verified where it is cited" in body
+    assert (
+        "That total counts what the evidence stage admitted, which is not the " in body
+    )
+    assert (
+        "four documents the literature search reached that Key Findings counts" in body
+    )
+    assert "two documents there are leads the search returned that no admitted " in body
+    assert "one source admitted here names no document that can be numbered" in body
+
+
+def test_the_waived_gate_reconciles_nothing_where_the_two_totals_agree():
+    """A sentence explaining a difference, printed where there is none, invents one."""
+    from coscientist.advisories import _waived_gate_advisory
+    from coscientist.models import EvidencePacket, SourceLead, SourceRecord
+    from coscientist.narrative import CitationRegistry
+
+    session = Session(question="Does a coating change cycle life?")
+    session.exploratory_evidence_accepted = True
+    record = ResearchRecord(session=session)
+    record.evidence = EvidencePacket(
+        question=session.question,
+        sources=[SourceRecord(url="https://a.example/paper")],
+    )
+    record.citations = CitationRegistry(
+        [SourceLead(canonical_url="https://a.example/paper", title="A")]
+    )
+
+    assert "different population" not in _waived_gate_advisory(record)[0].body

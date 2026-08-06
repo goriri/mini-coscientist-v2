@@ -178,6 +178,49 @@ def _broken_grounding_advisory(briefs: tuple[IdeaBrief, ...]) -> list[Advisory]:
     ]
 
 
+def _corpus_reconciliation(record: ResearchRecord, admitted: int) -> str:
+    """Why this paragraph's total is not the total the References prose gives.
+
+    Section eight counts the documents the literature search reached and this counts
+    the sources the evidence stage admitted. On a live run they were eighty and
+    seventy-seven, both introduced by the same "twenty-five of the", four chapters
+    apart, with nothing anywhere saying they are counts of different things -- so the
+    reader's only available reading was that one of the two is wrong.
+    """
+    registry = record.citations
+    gathered = registry.verification_standing[1]
+    if not gathered or gathered == admitted:
+        return ""
+    sources = record.evidence.sources if record.evidence else []
+    # Through the fold, because two admitted sources can be one document, and a
+    # source the packet recorded without a link is no document at all.
+    documents = {
+        document
+        for source in sources
+        if (document := registry.document_for(source.url or ""))
+    }
+    unnumbered = len(sources) - len(documents)
+    unadmitted = gathered - len(documents)
+    stated = [
+        f"{_plural(unadmitted, 'document')} there "
+        + ("is a lead" if unadmitted == 1 else "are leads")
+        + " the search returned that no admitted source names"
+        if unadmitted > 0
+        else "",
+        f"{_plural(unnumbered, 'source')} admitted here "
+        + ("names" if unnumbered == 1 else "name")
+        + " no document that can be numbered"
+        if unnumbered > 0
+        else "",
+    ]
+    difference = _listed([item for item in stated if item])
+    return (
+        "That total counts what the evidence stage admitted, which is not the "
+        f"{_number_word(gathered).lower()} documents the literature search reached "
+        "that Key Findings counts" + (f": {difference}. " if difference else ". ")
+    )
+
+
 def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
     if not record.session.exploratory_evidence_accepted:
         return []
@@ -231,8 +274,12 @@ def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
                     + " retrieved and checked against the claim drawn from "
                     + ("it" if len(grounded) == 1 else "them")
                     + ", and "
-                    + ("that one is" if len(grounded) == 1 else "those are")
-                    + " marked as verified where they are cited. The rest are "
+                    + (
+                        "that one is marked as verified where it is cited"
+                        if len(grounded) == 1
+                        else "those are marked as verified where they are cited"
+                    )
+                    + ". The rest are "
                     "exploratory leads rather than findings and should not be cited "
                     "as established. "
                     if grounded
@@ -240,6 +287,7 @@ def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
                     "of them are exploratory leads rather than findings and none "
                     "should be cited as established. "
                 )
+                + _corpus_reconciliation(record, len(sources))
                 + "The gate should be re-run before any idea grounded on it is acted "
                 "upon."
             ),
