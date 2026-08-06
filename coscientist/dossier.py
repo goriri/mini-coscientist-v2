@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import textwrap
+import unicodedata
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from datetime import date, datetime
@@ -2686,20 +2687,109 @@ def _pdf_styles() -> dict:
 
 _PICTOGRAPHS = re.compile("[\U0001f000-\U0001faff☀-➿️]")
 
+# What the body face can draw at all. Times-Roman is encoded in WinAnsi here, and
+# reportlab draws a filled box for every character outside it -- so anything the
+# Markdown carries that WinAnsi does not hold has to be turned into something that
+# says the same thing before it reaches the page.
+_PDF_ENCODING = "cp1252"
 
-def _drop_unrenderable(text: str) -> str:
-    """Remove characters the PDF's Type 1 faces have no glyph for.
+# The folds, each one a character a live report carried into the PDF. "significant"
+# came off page 15 as "signi<box>cant", from the ligature a model copied out of a
+# source PDF, and "1-5 nm" as "1<box>5 nm" from a typographic hyphen. The rest are
+# their near neighbours, folded here so the next run does not find them first.
+_PDF_FOLDS = {
+    "\ufb00": "ff",
+    "\ufb01": "fi",
+    "\ufb02": "fl",
+    "\ufb03": "ffi",
+    "\ufb04": "ffl",
+    "\u2010": "-",
+    "\u2011": "-",
+    "\u2012": "-",
+    "\u2212": "-",
+    # The shortlist mark. The star is inside the pictograph range, so it was dropped
+    # from all ninety-two pages of a live PDF -- under a table whose own caption says
+    # "a star marks an idea the tournament shortlisted", over a column of nothing.
+    "\u2605": "*",
+    "\u2606": "*",
+    "\u2032": "'",
+    "\u2033": '"',
+    "\u2044": "/",
+    "\u2215": "/",
+    "\u2192": "->",
+    "\u2190": "<-",
+    "\u2194": "<->",
+    "\u21d2": "=>",
+    "\u2264": "<=",
+    "\u2265": ">=",
+    "\u2248": "~",
+    "\u2260": "!=",
+    # The micro sign is in WinAnsi and the Greek letter is not, and a run writing
+    # micrometres reaches for whichever one its source used.
+    "\u03bc": "\u00b5",
+    # Spaces that are not the space bar, and the widths that are no width at all.
+    "\u2007": " ",
+    "\u2009": " ",
+    "\u200a": " ",
+    "\u202f": " ",
+    "\u200b": "",
+    "\u2060": "",
+    "\ufeff": "",
+}
+_PDF_FOLDED = re.compile(f"[{re.escape(''.join(_PDF_FOLDS))}]")
 
-    The attribution stamp carries an emoji, which the Markdown and DOCX outputs show
-    correctly. Times-Roman has no glyph for it and reportlab substitutes a filled
-    box, so on the page it reads as a rendering fault rather than as decoration.
-    Dropping it costs nothing: the stamp says who prepared the report in words.
+
+def _spelled(char: str) -> str:
+    """A character with no glyph, written out rather than quietly dropped.
+
+    Dropping is right for decoration and wrong for everything else: "$\\Delta$G" with
+    the delta taken out is a different quantity, and nothing on the page would say so.
+    Greek is spelled the way plain text has always spelled it, and anything rarer is
+    named, because a name a reader can look up beats both a filled box and a silence.
     """
-    if not _PICTOGRAPHS.search(text):
+    try:
+        name = unicodedata.name(char)
+    except ValueError:
+        return ""
+    if name.startswith("GREEK ") and " LETTER " in name:
+        letter = name.split(" LETTER ", maxsplit=1)[1].split(" ")[0].lower()
+        return letter.capitalize() if "CAPITAL" in name else letter
+    return f"({name.lower()})"
+
+
+def _renderable(text: str) -> str:
+    """The text with every character the PDF's Type 1 faces cannot set folded away.
+
+    Three populations reach here. Emoji are decoration -- the attribution stamp
+    carries one, and the stamp says who prepared the report in words -- so they go.
+    Characters with a plain-text equivalent are folded to it. Everything else is
+    spelled out, because a report about battery chemistry cannot afford to lose a
+    character out of a formula without saying that it did.
+    """
+    folded = _PDF_FOLDED.sub(lambda match: _PDF_FOLDS[match.group(0)], text)
+    stripped = _PICTOGRAPHS.sub("", folded)
+    if any(not _drawable(char) for char in stripped):
+        stripped = "".join(
+            char if _drawable(char) else _spelled(char) for char in stripped
+        )
+    if stripped == text:
         return text
-    # Collapsing the gap the emoji left keeps the stamp from reading as a typo; it is
-    # done only on lines that actually lost a glyph, so code indentation is untouched.
-    return re.sub(r" {2,}", " ", _PICTOGRAPHS.sub("", text))
+    # Collapsing the gap a dropped emoji left keeps the stamp from reading as a typo;
+    # it is done only on text that lost a glyph, so code indentation is untouched.
+    return re.sub(r" {2,}", " ", stripped) if len(stripped) < len(text) else stripped
+
+
+def _drawable(char: str) -> bool:
+    """Whether the body face can set this character as it stands."""
+    if has_cjk(char) or char in _SUBSCRIPTS or char in _SUPERSCRIPTS:
+        # The CID face draws the first, and _shift_scripts turns the other two into
+        # markup further down the pipeline. Neither is the body face's problem.
+        return True
+    try:
+        char.encode(_PDF_ENCODING)
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 _SUBSCRIPTS = {chr(0x2080 + digit): str(digit) for digit in range(10)} | {
@@ -2753,14 +2843,12 @@ def _shift_scripts(markup: str) -> str:
 
 def _markup(text: str) -> str:
     """Inline Markdown to reportlab markup, with CJK runs pinned to the CID face."""
-    return _shift_scripts(inline_markup(_drop_unrenderable(text), cjk_font=_CJK))
+    return _shift_scripts(inline_markup(_renderable(text), cjk_font=_CJK))
 
 
 def _literal(text: str) -> str:
     """Escape verbatim text (code, titles) and keep CJK runs on the CID face."""
-    return _shift_scripts(
-        cjk_markup(escape(_drop_unrenderable(text), quote=False), _CJK)
-    )
+    return _shift_scripts(cjk_markup(escape(_renderable(text), quote=False), _CJK))
 
 
 def _para(markup: str, style, klass=None):

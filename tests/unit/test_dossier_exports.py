@@ -706,3 +706,46 @@ def test_every_export_tells_the_reader_what_the_document_is(rich_session):
     with ZipFile(BytesIO(render_docx(markdown))) as archive:
         document = archive.read("word/document.xml").decode("utf-8")
     assert document.count("Draft for internal review") == 1
+
+
+def test_the_pdf_sets_the_characters_the_markdown_wrote():
+    """Every one of these came off a live ninety-two page PDF as a filled box or as
+    nothing at all. The star is the worst of the set: it marks the shortlisted ideas
+    in the executive table, it sat inside the pictograph drop range, and so the
+    caption saying "a star marks an idea the tournament shortlisted" printed above a
+    column with nothing in it on every page it appeared."""
+    from coscientist.dossier import _renderable
+
+    assert _renderable("Candidate 1 ★") == "Candidate 1 *"
+    assert _renderable("signiﬁcant") == "significant"
+    assert _renderable("1\u20105 nm") == "1-5 nm"
+    assert _renderable("ΔG ≤ 0") == "DeltaG <= 0"
+
+    # Decoration goes, and the gap it leaves goes with it.
+    assert _renderable("Prepared \U0001f9ec by the panel") == "Prepared by the panel"
+
+    # Anything rarer is named rather than dropped, because a character silently
+    # missing from a formula is a different formula.
+    assert _renderable("E = ∮ B") == "E = (contour integral) B"
+
+    # The CID face draws these and _shift_scripts turns those into markup: neither
+    # is the body face's problem, and folding either would corrupt the page.
+    passed = "锂酸锂 Li₂CO₃"
+    assert _renderable(passed) == passed
+
+
+def test_the_shortlist_star_reaches_the_rendered_page():
+    from pypdf import PdfReader
+
+    dossier = (
+        "# Title\n\n## Executive Candidate Summary\n\n"
+        "| Rank | Candidate |\n| --- | --- |\n"
+        "| 1 | A 2 nm Coating ★ |\n\n"
+        "A star marks an idea the tournament shortlisted.\n"
+    )
+    text = "\n".join(
+        (page.extract_text() or "")
+        for page in PdfReader(BytesIO(render_pdf(dossier))).pages
+    )
+
+    assert "A 2 nm Coating *" in text
