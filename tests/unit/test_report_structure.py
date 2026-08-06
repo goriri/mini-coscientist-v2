@@ -4459,3 +4459,78 @@ def test_an_integrity_line_does_not_close_an_ellipsis_with_a_full_stop(
     assert _stopped("a coating helps") == "a coating helps."
     assert _stopped("a coating helps.") == "a coating helps."
     assert _stopped("does it? ") == "does it?"
+
+
+def test_a_cross_link_the_report_cannot_name_is_counted_rather_than_printed():
+    """The proximity stage flagged two near-duplicate pairs by ids nothing else in the
+    run carries, and the section set both bullets as "The following were flagged as
+    near-duplicates and should be merged before either is funded: Unnamed Research Idea
+    and Unnamed Research Idea" -- a recommendation to merge two ideas it will not
+    name."""
+    from coscientist.models import ResearchCluster, ResearchLandscape
+    from coscientist.narrative import ResearchRecord, _unexpected_connections
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.titles = {"cand_a": "Alumina", "cand_b": "Zirconia"}
+    record.landscape = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Physical Barrier Coatings",
+                candidate_ids=["cand_a", "cand_b"],
+                shared_mechanism="A coating suppresses the reaction.",
+                shared_outcome="Retention holds past five hundred cycles.",
+            )
+        ],
+        duplicates=[["prox_7", "prox_9"], ["prox_11", "prox_12"]],
+    )
+
+    connections, counts = _unexpected_connections(record)
+
+    assert "Unnamed Research Idea" not in " ".join(connections)
+    # Not printed, but not dropped either: the run recorded two findings and the
+    # reader is told that is what became of them.
+    assert counts.duplicates == 0
+    assert (
+        "Two further entries were recorded here against ideas this report cannot "
+        "name" in connections[-1]
+    )
+
+
+def test_a_rewrite_that_names_only_a_handle_says_it_addressed_the_reviews():
+    """Evolution answered with the ids it was thinking in, and the report printed
+    "evolution rewrote the idea in round one to address `rev_4`, and
+    `rev_cand_mechanism_2`" -- two references that appear nowhere else in the
+    document."""
+    from coscientist.models import Candidate, EvolutionCycle, EvolutionRecord
+    from coscientist.narrative import ResearchRecord, _revised_form
+
+    ranked = Candidate(
+        id="cand_1",
+        title="An Alumina Coating",
+        claim="A coating improves cycle life.",
+        rationale="It blocks the electrolyte.",
+        mechanism_model="Surface passivation.",
+        validation_protocol="Cycle five coated cells against five bare ones.",
+        falsifier="Retention does not improve.",
+    )
+    rewritten = ranked.model_copy(
+        update={"id": "cand_1_v2", "claim": "A 2 nm coating improves cycle life."}
+    )
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.lineage = {"cand_1_v2": "cand_1"}
+    record.evolution = EvolutionCycle(
+        records=[
+            EvolutionRecord(
+                parent_ids=["cand_1"],
+                candidate=rewritten,
+                changes=["Specified the thickness."],
+                critiques_addressed=["rev_4", "rev_cand_mechanism_2"],
+                new_prediction="Retention holds past five hundred cycles.",
+            )
+        ]
+    )
+
+    prose, _changed, _unchanged = _revised_form(record, ranked)
+
+    assert "rev_4" not in prose and "rev_cand_mechanism_2" not in prose
+    assert "to address the reviews" in prose

@@ -3074,6 +3074,24 @@ def _labelled_note(text: str) -> str:
     return f"{match.group(1)} — {_spliced(match.group(2))}"
 
 
+_BARE_HANDLE = re.compile(r"^[\w.\-]+$")
+
+
+def _states_a_critique(text: str) -> bool:
+    """Whether a recorded critique says something, as opposed to naming a handle.
+
+    The evolution stage records what a rewrite addressed in its own words, and on a
+    live run it answered with the handles it was thinking in: "evolution rewrote the
+    idea in round one to address `rev_4`, and `rev_cand_mechanism_2`". Nothing in this
+    report carries either id -- reviews are numbered per idea and printed under their
+    criterion -- so the sentence sent the reader after two references that do not
+    exist anywhere in the document. Dropped, the sentence falls back to naming the
+    reviews, which is what those handles were pointing at.
+    """
+    cleaned = " ".join(str(text or "").split())
+    return bool(cleaned) and not _BARE_HANDLE.match(cleaned)
+
+
 def _spliced(text: str) -> str:
     """Fold a stated sentence into a longer one without destroying its notation.
 
@@ -3703,6 +3721,7 @@ def _revised_form(
                     for item in revisions
                     for critique in item.critiques_addressed
                 )
+                if _states_a_critique(critique)
             ],
             fallback="the reviews",
         )
@@ -9381,10 +9400,23 @@ def _unexpected_connections(
             key=by_rank,
         )
 
+    # An entry whose ids reach no idea in this run cannot be printed as prose: the
+    # proximity stage flagged two near-duplicate pairs by ids nothing else carries,
+    # and the report set both bullets as "Unnamed Research Idea and Unnamed Research
+    # Idea" -- a recommendation to merge two ideas it will not name. How many such
+    # entries there were is said at the end of the list instead of nowhere.
+    unnameable = 0
+
+    def all_named(members: Sequence[str]) -> bool:
+        return all(item in record.titles for item in members)
+
     clusters = []
     for cluster in record.landscape.clusters if record.landscape else []:
         members = ranked_members(cluster.candidate_ids)
         if len(members) < 2:
+            continue
+        if not all_named(members):
+            unnameable += 1
             continue
         # The join closes its list as a sentence, which is right where it stands
         # alone and wrong here: the titles are this sentence's subject, and the
@@ -9411,6 +9443,9 @@ def _unexpected_connections(
         merged = ranked_members(duplicate)
         if len(merged) < 2:
             continue
+        if not all_named(merged):
+            unnameable += 1
+            continue
         duplicates.append(
             (
                 by_rank(merged[0]),
@@ -9430,6 +9465,8 @@ def _unexpected_connections(
         ),
         key=by_rank,
     )
+    unnameable += sum(1 for item in protected_ids if item not in record.titles)
+    protected_ids = [item for item in protected_ids if item in record.titles]
     minority = [_minority_note(record, protected) for protected in protected_ids]
     # Sole occupancy is what the note branches on, so it is what the lead-in has to
     # be counted on: a protected idea sharing its region is not a region held open
@@ -9440,6 +9477,19 @@ def _unexpected_connections(
         + [entry for _, entry in sorted(duplicates, key=lambda item: item[0])]
         + minority
     )
+    if unnameable:
+        one = unnameable == 1
+        connections.append(
+            f"{_opening(unnameable, 'further entry', 'further entries')} "
+            + ("was" if one else "were")
+            + " recorded here against ideas this report cannot name: the ids the "
+            "clustering stage filed "
+            + ("it" if one else "them")
+            + " under reach no idea in this run, so what was found about "
+            + ("it" if one else "them")
+            + " is on the record but cannot be printed as a finding about anything "
+            "the reader has been shown."
+        )
     return (
         connections
         or [
