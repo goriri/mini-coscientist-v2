@@ -1,0 +1,224 @@
+"""The Evidence Assessment block, read against the records it names.
+
+Two defects off page 72 of the dossier the live run produced. Twenty-eight of the
+thirty bullets were badged "[Unsourced claim]" on a run whose evidence base was
+mostly verified, and one bullet was the whole of "**[Unsourced claim]** The
+unverified cited claim." -- a sentence the naming table writes for an id, standing
+where a finding should be. Both came from the same ordering: ``load_record`` rewrites
+every id out of stored prose before this block is built, so the block that was written
+to resolve the ids found none, could not read a status off anything, and fell through
+to the badge of last resort. These pin the snapshot that keeps the ids available and
+the three shapes a specialist writes them in.
+"""
+
+from __future__ import annotations
+
+from coscientist.models import (
+    Artifact,
+    Candidate,
+    CandidatePopulation,
+    DiscoveryManifest,
+    DiscoveryNarrative,
+    DiscoveryStatement,
+    EvidenceClaim,
+    EvidencePacket,
+    Session,
+    SourceRecord,
+)
+from coscientist.narrative import (
+    LEAD_BADGE,
+    UNSOURCED_BADGE,
+    VERIFIED_BADGE,
+    _evidence_notes,
+    load_record,
+)
+
+QUESTION = "Does a thicker coating buy any further cycle life?"
+CLAIM_TEXT = (
+    "A conformal alumina layer of five to ten nanometres reduces first-cycle "
+    "irreversible capacity loss in silicon-containing anodes"
+)
+STATEMENT_TEXT = (
+    "Increased coating thickness causes severe mass transfer resistance at the "
+    "particle surface"
+)
+TITLE = "Ultrathin Al2O3 coatings on high-nickel cathodes"
+
+
+def _record(*, evidence_for=(), evidence_against=(), evidence_gaps=()):
+    """A run whose evidence base holds one verified claim and one search finding."""
+    evidence = EvidencePacket(
+        question=QUESTION,
+        sources=[
+            SourceRecord(
+                id="source_1",
+                url="https://pubmed.ncbi.nlm.nih.gov/12345678/",
+                title=TITLE,
+                verification_status="verified",
+            )
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_1",
+                claim=CLAIM_TEXT,
+                source_id="source_1",
+                verification_status="verified",
+                confidence=0.9,
+            )
+        ],
+    )
+    discovery = DiscoveryManifest(
+        question=QUESTION,
+        narratives=[
+            DiscoveryNarrative(
+                question=QUESTION,
+                summary="Thickness and chemistry are reported together.",
+                statements=[
+                    DiscoveryStatement(
+                        id="pass4_stmt_5",
+                        text=STATEMENT_TEXT,
+                        facet="contradictory",
+                        originating_pass=4,
+                    )
+                ],
+            )
+        ],
+    )
+    population = CandidatePopulation(
+        candidates=[
+            Candidate(
+                id="candidate_0001",
+                title="Coating thickness has an optimum rather than a floor",
+                claim="Coating thickness has an optimum rather than a floor",
+                rationale="Transport resistance grows with thickness faster than the "
+                "passivation benefit does",
+                mechanism_model="Lithium crosses the coating by a hopping mechanism "
+                "whose resistance scales with path length",
+                validation_protocol="Coin cells at four thicknesses against an "
+                "uncoated control, cycled to a prespecified retention endpoint",
+                falsifier="Retention keeps rising with thickness past forty nanometres",
+                evidence_for=list(evidence_for),
+                evidence_against=list(evidence_against),
+                evidence_gaps=list(evidence_gaps),
+            )
+        ]
+    )
+    session = Session(question=QUESTION)
+    session.artifacts = [
+        Artifact(
+            stage="evidence",
+            agent="discovery_agent",
+            artifact_type="specialist_output",
+            content="",
+            schema_name="DiscoveryManifest",
+            payload=discovery.model_dump(),
+        ),
+        Artifact(
+            stage="evidence",
+            agent="evidence_agent",
+            artifact_type="specialist_output",
+            content="",
+            schema_name="EvidencePacket",
+            payload=evidence.model_dump(),
+        ),
+        Artifact(
+            stage="generate",
+            agent="generation_agent",
+            artifact_type="specialist_output",
+            content="",
+            schema_name="CandidatePopulation",
+            payload=population.model_dump(),
+        ),
+    ]
+    return load_record(session)
+
+
+def _notes(**kwargs):
+    record = _record(**kwargs)
+    return _evidence_notes(record, record.candidates[0])
+
+
+def test_a_statement_that_is_only_an_id_is_printed_as_what_the_record_holds():
+    """ "Evidence for: claim_1." is the specialist naming a record. The reader cannot
+    look the id up anywhere in the document, so the claim itself is the finding."""
+    ((heading, badge, said),) = _notes(evidence_for=["claim_1"])
+
+    assert heading == "Evidence for"
+    assert said == f"{CLAIM_TEXT}."
+    assert badge == VERIFIED_BADGE
+
+
+def test_a_verified_claim_cited_by_id_is_not_badged_as_unsourced():
+    """The badge is decided by looking for a locator in the sentence, and an id is not
+    one. Reading the run's own verdict off the cited record is the whole point."""
+    ((_heading, badge, _said),) = _notes(evidence_for=["claim_1"])
+
+    assert badge != UNSOURCED_BADGE
+
+
+def test_an_unverified_finding_cited_by_id_is_a_lead_and_not_a_verified_source():
+    ((_heading, badge, said),) = _notes(evidence_against=["pass4_stmt_5"])
+
+    assert badge == LEAD_BADGE
+    assert said == f"{STATEMENT_TEXT}."
+
+
+def test_an_id_written_in_front_of_the_sentence_it_cites_is_dropped():
+    """ "pass4_stmt_5: Increased coating thickness ..." is a footnote marker in a
+    format with no footnotes, and the badge beside the bullet already says as much."""
+    ((_heading, badge, said),) = _notes(
+        evidence_against=[f"pass4_stmt_5: {STATEMENT_TEXT}."]
+    )
+
+    assert said == f"{STATEMENT_TEXT}."
+    assert badge == LEAD_BADGE
+
+
+def test_a_prefix_that_names_no_record_is_left_where_the_specialist_put_it():
+    """ "Cycle_life: retention held" is a phrase with a colon after it, not a citation.
+    Only a prefix the run can resolve is furniture the report may cut."""
+    ((_heading, _badge, said),) = _notes(evidence_for=["Cycle_life: retention held."])
+
+    assert said == "Cycle_life: retention held."
+
+
+def test_an_id_inside_a_sentence_is_read_out_as_the_record_it_names():
+    ((_heading, badge, said),) = _notes(
+        evidence_for=["The retention gain in claim_1 has never been replicated."]
+    )
+
+    assert "claim_1" not in said
+    assert said == (
+        f"The retention gain in the claim drawn from {TITLE} has never been replicated."
+    )
+    assert badge == VERIFIED_BADGE
+
+
+def test_an_id_naming_nothing_this_run_holds_says_so_rather_than_standing_alone():
+    """The naming table answers an unresolvable id with "the unverified cited claim",
+    which printed alone was a bullet that said nothing at all."""
+    ((_heading, badge, said),) = _notes(evidence_for=["claim_missing"])
+
+    assert said.startswith('The specialist gave the record id "claim_missing" here')
+    assert "no record of that id exists" in said
+    assert badge == UNSOURCED_BADGE
+
+
+def test_a_gap_is_a_statement_that_no_evidence_exists_and_carries_no_badge():
+    ((heading, badge, said),) = _notes(
+        evidence_gaps=["No study reports thicknesses above forty nanometres."]
+    )
+
+    assert heading == "Evidence gaps"
+    assert badge == ""
+    assert said == "No study reports thicknesses above forty nanometres."
+
+
+def test_the_ids_are_kept_for_this_block_after_the_prose_has_been_scrubbed_of_them():
+    """The naming pass rewrites the candidate's stored fields, and it must: those are
+    read elsewhere as prose. This block needs what was written, so it is snapshotted
+    before the pass rather than re-derived from what the pass left behind."""
+    record = _record(evidence_for=["claim_1"])
+
+    assert record.candidates[0].evidence_for == [f"The claim drawn from {TITLE}"]
+    assert record.cited_evidence["candidate_0001"][0] == ["claim_1"]

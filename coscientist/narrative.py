@@ -1189,6 +1189,21 @@ class ResearchRecord:
     adjudications: list[AdjudicationNote] = field(default_factory=list)
     open_governance_blocks: list[BlockerNote] = field(default_factory=list)
     superseded_populations: int = 0
+    cited_evidence: dict[str, list[list[str]]] = field(default_factory=dict)
+    """Each candidate's own evidence statements as recorded, before ids were named.
+
+    ``_name_ids_in_prose`` rewrites every id it finds in stored prose into the thing
+    it names, and it reaches these statements too. The Evidence Assessment block is
+    built afterwards and is the one consumer that needs the ids: it resolves them
+    itself, prints what the record holds rather than the id, and reads the badge off
+    the record's verification status. Run on the rewritten text it found no ids at
+    all, so a live report carried "**[Unsourced claim]** The claim drawn from Ultrathin
+    Al2O3 Coatings ..." -- a bullet naming its source and labelled as naming none --
+    and, where the specialist had answered with an id and nothing else, the bullet was
+    the whole of "**[Unsourced claim]** The unverified cited claim." Keeping the
+    original text here lets that block see what it was written to read.
+    """
+
     lineage: dict[str, str] = field(default_factory=dict)
     """Every evolved candidate id, mapped to the ranked ancestor it descends from.
 
@@ -1573,6 +1588,14 @@ def load_record(session: Session) -> ResearchRecord:
         # the report can never present a dangling id as though it were grounding.
         record.evidence_support = resolve_population(record.population, record.evidence)
     _load_governance(record, retired)
+    record.cited_evidence = {
+        candidate.id: [
+            list(candidate.evidence_for),
+            list(candidate.evidence_against),
+            list(candidate.evidence_gaps),
+        ]
+        for candidate in record.candidates
+    }
     _name_ids_in_prose(record)
     return record
 
@@ -1830,8 +1853,8 @@ _HOUSE_TERMS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
-def _name_ids_in_prose(record: ResearchRecord) -> None:
-    """Rewrite internal ids into the things they name, everywhere prose is stored."""
+def _record_names(record: ResearchRecord) -> dict[str, str]:
+    """Every id this run holds, mapped to the phrase that stands in for it in prose."""
     names: dict[str, str] = dict(record.titles)
     if record.evidence:
         # The title as the search handed it over ends in the site it was found on
@@ -1878,6 +1901,12 @@ def _name_ids_in_prose(record: ResearchRecord) -> None:
                 if 0 < len(text) <= 120
                 else "an unverified finding from the literature search",
             )
+    return names
+
+
+def _name_ids_in_prose(record: ResearchRecord) -> None:
+    """Rewrite internal ids into the things they name, everywhere prose is stored."""
+    names = _record_names(record)
 
     # The ids are matched case-insensitively because a reviewer that opens a sentence
     # with one capitalises it, so the lookup has to be case-insensitive too. It was
@@ -4273,28 +4302,26 @@ def _evidence_notes(
         if source.url and source.verification_status in GROUNDED_STATUSES
     }
     index = _evidence_index(record)
+    names = _record_names(record)
+    # As recorded, before the naming pass rewrote the ids out of them. Falling back
+    # to the candidate's own fields covers a brief built from a record this function
+    # was handed directly, which the tests do and the pipeline does not.
+    recorded = record.cited_evidence.get(
+        candidate.id,
+        [
+            list(candidate.evidence_for),
+            list(candidate.evidence_against),
+            list(candidate.evidence_gaps),
+        ],
+    )
     notes: list[tuple[str, str, str]] = []
-    for heading, statements in (
-        ("Evidence for", candidate.evidence_for),
-        ("Evidence against", candidate.evidence_against),
-        ("Evidence gaps", candidate.evidence_gaps),
+    for heading, statements in zip(
+        ("Evidence for", "Evidence against", "Evidence gaps"), recorded, strict=True
     ):
         for statement in statements:
             text = _sentence(statement)
             if not text:
                 continue
-            bare = text.rstrip(".").strip()
-            if _BARE_REFERENCE.fullmatch(bare):
-                entry = index.get(bare)
-                text = (
-                    _sentence(f"{entry.text.rstrip('.')} ({bare})")
-                    if entry is not None
-                    else _sentence(
-                        f'The specialist gave the record id "{bare}" here and no '
-                        "statement beside it, and no record of that id exists in "
-                        "this run's evidence base"
-                    )
-                )
             # A gap is a statement that no evidence exists, so grounding it is
             # not a question that can be asked of it.
             badge = (
@@ -4304,8 +4331,43 @@ def _evidence_notes(
                     text, verified, known, _cited_records(text, index)
                 )
             )
-            notes.append((heading, badge, text))
+            notes.append((heading, badge, _stated_evidence(text, index, names)))
     return notes
+
+
+# "pass4_stmt_5: Increased coating thickness causes severe mass transfer resistance"
+# -- the specialist citing the record it is about to quote, in the shape a footnote
+# marker would take if this format had footnotes. The badge beside the bullet already
+# says what stands behind it, so the marker is dropped and the sentence kept.
+_CITED_PREFIX = re.compile(
+    rf"^[\[(]?({_BARE_REFERENCE.pattern})[\])]?\s*[:\-\u2013\u2014]\s+"
+)
+
+
+def _stated_evidence(
+    text: str, index: Mapping[str, _EvidenceRecord], names: Mapping[str, str]
+) -> str:
+    """One evidence statement with its ids read out, however the specialist wrote it."""
+    bare = text.rstrip(".").strip()
+    if _BARE_REFERENCE.fullmatch(bare):
+        # The whole answer was an id. What the record says is the only thing here
+        # worth printing; the id itself named nothing a reader of this page can look
+        # up, and printing it beside the text was two ways of saying the same record.
+        entry = index.get(bare)
+        if entry is not None:
+            return _sentence(entry.text)
+        return _sentence(
+            f'The specialist gave the record id "{bare}" here and no statement '
+            "beside it, and no record of that id exists in this run's evidence base"
+        )
+    prefix = _CITED_PREFIX.match(text)
+    if prefix and prefix.group(1) in index:
+        text = _sentence(text[prefix.end() :])
+    return _sentence(
+        _BARE_REFERENCE.sub(
+            lambda match: names.get(match.group(0), match.group(0)), text
+        )
+    )
 
 
 def _shared_qualifications(record: ResearchRecord) -> list[str]:
