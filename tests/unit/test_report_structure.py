@@ -2669,6 +2669,99 @@ def test_an_idea_placed_under_two_mechanisms_is_said_to_be_counted_twice():
     assert "more than one cluster" not in "\n".join(_section_three(record).core)
 
 
+def test_an_overlapping_idea_is_named_by_the_title_the_report_gave_it():
+    """Clustering runs after evolution and may name a revision. A live report said
+    "one idea appears in more than one cluster: A 2.5 nm ALD-deposited LiNbO3 Coating
+    Improves Cycle Life" -- a title derived from the rewritten claim and printed
+    nowhere else in the document."""
+    from coscientist.models import ResearchCluster, ResearchLandscape
+    from coscientist.narrative import ResearchRecord, _section_three
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.titles = {
+        "cand_a": "A Thin Alumina Coating",
+        "cand_b": "A Thin Zirconia Coating",
+        "rev_b": "A Thin Zirconia Coating Improves Cycle Life",
+    }
+    record.lineage = {"rev_b": "cand_b"}
+    record.landscape = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Physical Barrier Coatings",
+                candidate_ids=["cand_a", "cand_b"],
+                shared_mechanism="A coating suppresses the interfacial reaction.",
+                shared_outcome="Retention holds past five hundred cycles.",
+            ),
+            ResearchCluster(
+                name="Surface Chemistry",
+                candidate_ids=["rev_b"],
+                shared_mechanism="Surface chemistry sets the reaction rate.",
+                shared_outcome="Retention holds past five hundred cycles.",
+            ),
+        ]
+    )
+
+    printed = "\n".join(_section_three(record).core)
+
+    assert "One idea appears in more than one cluster: A Thin Zirconia Coating." in (
+        printed
+    )
+    assert "Improves Cycle Life" not in printed
+
+
+def test_a_cluster_holding_an_idea_and_its_own_revision_counts_one_idea():
+    from coscientist.models import ResearchCluster, ResearchLandscape
+    from coscientist.narrative import ResearchRecord, _section_three
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.titles = {"cand_a": "A Thin Alumina Coating", "rev_a": "A Thicker Coating"}
+    record.lineage = {"rev_a": "cand_a"}
+    record.landscape = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Physical Barrier Coatings",
+                candidate_ids=["cand_a", "rev_a"],
+                shared_mechanism="A coating suppresses the interfacial reaction.",
+                shared_outcome="Retention holds past five hundred cycles.",
+            )
+        ]
+    )
+
+    printed = "\n".join(_section_three(record).core)
+
+    assert "Physical Barrier Coatings holds one idea" in printed
+    assert "more than one cluster" not in printed
+
+
+def test_a_shared_mechanism_written_as_a_clause_is_introduced_by_a_colon():
+    """ "holds one idea around conformal LiAlF4 coating provides a physical barrier
+    against HF attack" -- the clustering stage writes the mechanism as a whole clause
+    as often as it writes a noun phrase, and "around" only fits the second."""
+    from coscientist.models import ResearchCluster, ResearchLandscape
+    from coscientist.narrative import ResearchRecord, _section_three
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.titles = {"cand_a": "A Thin Alumina Coating"}
+    record.landscape = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Physical Barrier Coatings",
+                candidate_ids=["cand_a"],
+                shared_mechanism="A coating blocks the electrolyte from the surface.",
+                shared_outcome="Retention holds past five hundred cycles.",
+            )
+        ]
+    )
+
+    printed = "\n".join(_section_three(record).core)
+
+    assert (
+        "holds one idea, grouped on this mechanism: a coating blocks the electrolyte "
+        "from the surface." in printed
+    )
+    assert " around a coating blocks" not in printed
+
+
 def test_open_questions_does_not_reprint_the_recommendation_it_follows():
     """Section 9 lists the evidence that would change the recommendation, and Open
     Questions took the same list from the same artifact and printed it again as

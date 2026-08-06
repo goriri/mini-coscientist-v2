@@ -5288,6 +5288,18 @@ def _section_three(record: ResearchRecord) -> _Draft:
     clusters = record.landscape.clusters if record.landscape else []
     if clusters:
         distinct = _named_mechanisms(clusters)
+        # By the id the reader was given. Clustering runs after evolution and may name
+        # a revision, whose title is derived from the rewritten claim: a live report
+        # said "one idea appears in more than one cluster: A 2.5 nm ALD-deposited
+        # LiNbO3 Coating Improves Cycle Life", a name printed nowhere else in the
+        # document. Folding to the ranked id also stops a cluster holding both an idea
+        # and its own revision from being counted as holding two ideas.
+        members = [
+            list(
+                dict.fromkeys(record.ranked_id(item) for item in cluster.candidate_ids)
+            )
+            for cluster in clusters
+        ]
         core.append(
             # This is the one place the shared mechanisms are spelled out. They used to
             # be printed again as the research-direction bullets and a third time under
@@ -5310,13 +5322,17 @@ def _section_three(record: ResearchRecord) -> _Draft:
             )
             + " ".join(
                 f"{cluster.name} holds "
-                + _plural(len(cluster.candidate_ids), "idea")
+                + _plural(len(group), "idea")
                 + (
-                    f" around {_spliced(cluster.shared_mechanism)}."
+                    # A colon rather than "around". The clustering stage writes the
+                    # shared mechanism as a whole clause as often as it writes a noun
+                    # phrase, and "holds one idea around conformal LiAlF4 coating
+                    # provides a physical barrier against HF attack" is not a sentence.
+                    f", grouped on this mechanism: {_spliced(cluster.shared_mechanism)}."
                     if distinct
                     else "."
                 )
-                for cluster in clusters
+                for cluster, group in zip(clusters, members, strict=True)
             )
             + (
                 " Clustering matters for the recommendation: two ideas in the same "
@@ -5336,9 +5352,7 @@ def _section_three(record: ResearchRecord) -> _Draft:
         repeated = [
             candidate_id
             for candidate_id, count in Counter(
-                candidate_id
-                for cluster in clusters
-                for candidate_id in cluster.candidate_ids
+                candidate_id for group in members for candidate_id in group
             ).items()
             if count > 1
         ]
@@ -5347,7 +5361,7 @@ def _section_three(record: ResearchRecord) -> _Draft:
                 _opening(len(repeated), "idea appears", "ideas appear")
                 + " in more than one cluster: "
                 + _joined_titles(
-                    [record.title_for(item) for item in repeated], fallback="none"
+                    [record.ranked_title(item) for item in repeated], fallback="none"
                 )
                 + ". The sizes above count "
                 + ("it" if len(repeated) == 1 else "each of them")
