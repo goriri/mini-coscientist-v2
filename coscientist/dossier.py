@@ -498,6 +498,10 @@ def _reference_lines(references: Sequence[Citation]) -> list[str]:
     """
     # An entry that carries its own link is already told apart by the link, so the
     # clause is only worth its length where nothing else on the line differs.
+    # A standing true of every entry is the lead-in's to state, not each entry's:
+    # twenty entries each ending "Not retrieved" is the sentence above the list
+    # printed twenty times over.
+    uniform = len({_entry_standing(citation) for citation in references}) == 1
     unlinked = [
         citation for citation in references if not names_a_document(citation.url)
     ]
@@ -522,7 +526,11 @@ def _reference_lines(references: Sequence[Citation]) -> list[str]:
                     else "under that publisher without a title"
                 )
             )
-        lines.append(_reference_line(citation, distinguisher=distinguisher))
+        lines.append(
+            _reference_line(
+                citation, distinguisher=distinguisher, mark_standing=not uniform
+            )
+        )
     return lines
 
 
@@ -549,7 +557,9 @@ def _link_text(url: str) -> str:
     return head.rstrip("/_-.?&=") + "…"
 
 
-def _reference_line(citation: Citation, *, distinguisher: str = "") -> str:
+def _reference_line(
+    citation: Citation, *, distinguisher: str = "", mark_standing: bool = True
+) -> str:
     """One reference, numbered to match its marker and linked where it can be.
 
     This list was flat, unnumbered and unlinked because the only locators
@@ -562,10 +572,11 @@ def _reference_line(citation: Citation, *, distinguisher: str = "") -> str:
     # "... cathodes?." reads as a rendering fault.
     title = citation.title.rstrip() + distinguisher
     stop = "" if title.endswith((".", "?", "!")) else "."
+    standing = _entry_standing(citation) if mark_standing else ""
     if names_a_document(citation.url):
         return (
             f"{citation.number}. {title}{stop} [{_link_text(citation.url)}]"
-            f"({citation.url})"
+            f"({citation.url}){standing}"
         )
     # "No resolvable locator was recorded" is the renderer describing its own state,
     # and it is not even accurate: what discovery returned for these is usually a
@@ -578,7 +589,7 @@ def _reference_line(citation: Citation, *, distinguisher: str = "") -> str:
             # "discovery recorded no link" named the stage rather than the act; the
             # reader has no stage called discovery, they have a literature search.
             f"{citation.number}. {title}{stop} Retrieved from {site}; the literature "
-            "search recorded no link to the document itself."
+            f"search recorded no link to the document itself.{standing}"
         )
     if _redirect_only(citation):
         # "It has to be found by title" over an entry that has no title is advice the
@@ -587,7 +598,7 @@ def _reference_line(citation: Citation, *, distinguisher: str = "") -> str:
         # Why that is so is stated once above the list, because five entries carrying
         # the same twenty-word explanation is the explanation printed four times too
         # often.
-        return f"{citation.number}. {title}{stop}"
+        return f"{citation.number}. {title}{stop}{standing}"
     if GROUNDING_REDIRECT_MARKER in citation.url:
         # A link was recorded. It is the search's own redirector, which expires and
         # names no publisher, so it cannot be printed and cannot be followed -- but
@@ -596,12 +607,44 @@ def _reference_line(citation: Citation, *, distinguisher: str = "") -> str:
         return (
             f"{citation.number}. {title}{stop} The literature search recorded only "
             "its own redirect link for this source, which no longer resolves, so it "
-            "has to be found by title."
+            f"has to be found by title.{standing}"
         )
     return (
         f"{citation.number}. {title}{stop} No link to this source was recorded, so it "
-        "has to be found by title."
+        f"has to be found by title.{standing}"
     )
+
+
+# What the run established about the document behind an entry, said on the entry.
+# Two lead-in sentences promised "which is which is recorded against each entry in
+# the evidence appendix"; no entry recorded it, and the appendix that name points at
+# lists ideas whose grounding is in doubt and no entry of this list at all.
+_ENTRY_STANDING = {
+    "verified": "",
+    "corrected": " Retrieved and checked; the document carries a correction.",
+    "metadata_verified": (
+        " Not checked against the document: only its catalogue record was reached."
+    ),
+    "retracted": " Retrieved and found retracted. Nothing here is grounded by it.",
+    "inaccessible": (
+        " Could not be retrieved when this run went back to it. Nothing here is "
+        "grounded by it."
+    ),
+}
+_UNCHECKED_STANDING = (
+    " Not retrieved: this entry records where a statement came from, not that the "
+    "document says it."
+)
+
+
+def _entry_standing(citation: Citation) -> str:
+    """The retrieval verdict this run recorded for the document, or nothing.
+
+    A verified entry says nothing, because a mark printed against every entry is not
+    a mark. What the reader needs is which entries fall short of the sentence over
+    the list, and those are the ones that speak.
+    """
+    return _ENTRY_STANDING.get(citation.verification_status, _UNCHECKED_STANDING)
 
 
 def _titled(citation: Citation) -> bool:

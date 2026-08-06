@@ -223,25 +223,82 @@ def test_a_reference_known_only_by_its_publisher_names_the_publisher():
     from coscientist.narrative import Citation
 
     front_page = _reference_line(
-        Citation(number=1, title="A Paper", url="https://www.frontiersin.org/")
+        Citation(number=1, title="A Paper", url="https://www.frontiersin.org/"),
+        mark_standing=False,
     )
     assert front_page == (
         "1. A Paper. Retrieved from frontiersin.org; the literature search recorded "
         "no link to the document itself."
     )
-    assert _reference_line(Citation(number=2, title="A Paper", url="")).endswith(
-        "No link to this source was recorded, so it has to be found by title."
-    )
+    assert _reference_line(
+        Citation(number=2, title="A Paper", url=""), mark_standing=False
+    ).endswith("No link to this source was recorded, so it has to be found by title.")
     # "It has to be found by title" over an entry that has no title is advice the
     # entry refutes: what the search returned for these is one of its own redirects,
     # which names neither the document nor a host.
     redirect = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZ"
     assert (
         _reference_line(
-            Citation(number=3, title="Untitled source on nih.gov", url=redirect)
+            Citation(number=3, title="Untitled source on nih.gov", url=redirect),
+            mark_standing=False,
         )
         == "3. Untitled source on nih.gov."
     )
+
+
+def test_an_entry_the_run_could_not_retrieve_says_so_where_the_reader_meets_it():
+    """Two lead-in sentences promised "which is which is recorded against each entry
+    in the evidence appendix". No entry recorded it, and the appendix that name points
+    at lists the ideas whose grounding is in doubt and no entry of this list at all."""
+    from coscientist.dossier import _reference_lines
+    from coscientist.narrative import Citation
+
+    lines = _reference_lines(
+        [
+            Citation(
+                number=1,
+                title="A checked paper",
+                url="https://example.org/a.pdf",
+                verification_status="verified",
+            ),
+            Citation(
+                number=2,
+                title="A lead nobody read",
+                url="https://example.org/b.pdf",
+                verification_status="discovered_unverified",
+            ),
+            Citation(
+                number=3,
+                title="A paper that went away",
+                url="https://example.org/c.pdf",
+                verification_status="inaccessible",
+            ),
+        ]
+    )
+
+    assert lines[0].endswith("(https://example.org/a.pdf)"), (
+        "a mark printed against every entry is not a mark; the checked one is silent"
+    )
+    assert lines[1].endswith(
+        "Not retrieved: this entry records where a statement came from, not that the "
+        "document says it."
+    )
+    assert "Nothing here is grounded by it." in lines[2]
+
+
+def test_a_list_where_nothing_was_retrieved_says_it_once_over_the_list():
+    """A fact true of every entry belongs in the prose that introduces them."""
+    from coscientist.dossier import _reference_lines
+    from coscientist.narrative import Citation
+
+    lines = _reference_lines(
+        [
+            Citation(number=n, title=f"Lead {n}", url=f"https://example.org/{n}.pdf")
+            for n in (1, 2, 3)
+        ]
+    )
+
+    assert not any("Not retrieved" in line for line in lines)
 
 
 def test_two_references_no_title_tells_apart_are_marked_as_separate_records():
@@ -570,6 +627,64 @@ def test_one_document_returned_under_two_links_is_one_reference():
     assert registry.marker([redirect]) == "[1]"
     assert registry.marker([resolved]) == "[1]", "the same paper, so the same number"
     assert [citation.url for citation in registry.references()] == [resolved]
+
+
+def test_a_repository_appended_to_a_title_does_not_make_it_a_second_paper():
+    """The fold above matched whole titles, so the live pair survived it after all.
+
+    One lead carried the paper's name; the other carried the same name with the
+    repository's appended, which is not a hostname and so outlives the search-chrome
+    cut. They were numbered 5 and 6 with opposite retrieval verdicts, and the
+    discredited-grounding appendix then named the same paper twice.
+    """
+    title = "Limitations of Ultrathin Al2O3 Coatings on LNMO Cathodes"
+    redirect = "https://vertexaisearch.grounding-api-redirect/abc"
+    resolved = "https://pmc.ncbi.nlm.nih.gov/articles/PMC8603187/"
+    registry = CitationRegistry(
+        [
+            SourceLead(canonical_url=redirect, title=f"{title} - Diva Portal"),
+            SourceLead(canonical_url=resolved, title=title, year="2021"),
+        ]
+    )
+
+    assert registry.marker([redirect]) == "[1]"
+    assert registry.marker([resolved]) == "[1]"
+    assert registry.folded_duplicates == 1
+    assert [citation.url for citation in registry.references()] == [resolved]
+
+
+def test_two_papers_sharing_no_title_are_not_folded_by_the_repository_rule():
+    """The rule folds a suffix onto a title the run already holds, and only then."""
+    registry = CitationRegistry(
+        [
+            SourceLead(canonical_url="https://a/1", title="Coatings on LNMO Cathodes"),
+            SourceLead(
+                canonical_url="https://a/2", title="Coatings on NMC Cathodes - Elsevier"
+            ),
+        ]
+    )
+
+    assert len(registry.references()) == 0
+    assert registry.marker(["https://a/1"]) == "[1]"
+    assert registry.marker(["https://a/2"]) == "[2]"
+    assert registry.folded_duplicates == 0
+
+
+def test_a_source_qualified_once_is_qualified_at_every_later_citation_of_it():
+    """A live chapter printed "[5] (inaccurate)" on one finding and cited the same
+    unretrievable source four more times without it, which reads as four sound
+    citations and one bad one rather than five citations of one bad source."""
+    leads = [
+        SourceLead(canonical_url=f"https://x/{n}", title=f"Lead {n}") for n in range(12)
+    ]
+    registry = CitationRegistry(leads, annotations={"https://x/0": "inaccurate"})
+    # Cited late enough for the density cap to admit it, then four times over.
+    markers = [registry.marker([f"https://x/{n}"]) for n in (1, 2, 3, 4, 0, 0, 0, 0)]
+
+    assert markers[4] == "[5] (inaccurate)"
+    assert markers[5:] == ["[5] (inaccurate)"] * 3, (
+        "the cap decides which sources speak, not which mentions of one source do"
+    )
 
 
 def test_two_sources_the_search_left_untitled_are_not_folded_into_one():
@@ -3374,6 +3489,25 @@ def test_a_reference_the_report_never_cites_is_not_listed(rich_session: Session)
     assert cited == set(range(1, len(entries) + 1))
 
 
+def test_the_scoring_legend_does_not_read_one_verdict_off_an_ambiguous_number(
+    rich_session: Session,
+):
+    """The legend read "a printed four is therefore a confidently held revise and a
+    printed two a confidently held rejection" and then, in the same sentence, that
+    neither can be read off the number alone. A four is equally an advance its own
+    reviewer was diffident about, so the example refuted the rule it illustrated."""
+    report = compile_dossier(rich_session)
+
+    assert "confidently held revise and a" not in report
+    assert (
+        "a four is a confidently held revise or an advance its reviewer was "
+        "diffident about" in report
+    )
+    assert "Which of them a given score is has to be read off the review itself" in (
+        report
+    )
+
+
 def test_recommending_two_ideas_from_one_cluster_says_what_that_costs():
     """The report said clustered ideas fail together and then recommended two out of
     one cluster, leaving four recommendations reading as four independent bets."""
@@ -3418,6 +3552,13 @@ def test_recommending_two_ideas_from_one_cluster_says_what_that_costs():
     assert "Part of what is recommended is one bet rather than several" in prose
     assert "A Thin Alumina Coating and A Thin Zirconia Coating sit in the" in prose
     assert "A Solvent-free Dry Coating sit in the" not in prose
+    # "So they stand or fall together" was printed over a pair whose two hypotheses
+    # were that ultrathin coatings do not improve cycle life and that a 2.5 nm
+    # coating does. They cannot stand together and they cannot fall together: the
+    # shared mechanism is the thing they disagree about.
+    assert "stand or fall together" not in prose
+    assert "Sharing a mechanism is not agreeing about it" in prose
+    assert "one result on it decides more than one idea on this list at once" in prose
 
 
 def test_ideas_that_finished_level_are_not_printed_as_an_ordering():

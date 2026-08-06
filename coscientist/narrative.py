@@ -213,6 +213,11 @@ class Citation:
     number: int
     title: str
     url: str
+    # Whether this run read the document behind the entry. Two sentences promised
+    # "which is which is recorded against each entry in the evidence appendix" over
+    # a list where no entry recorded it and the appendix names ideas rather than
+    # entries, so the mark now travels with the entry that has to carry it.
+    verification_status: str = "discovered_unverified"
 
 
 class CitationRegistry:
@@ -229,12 +234,14 @@ class CitationRegistry:
         annotations: dict[str, str] | None = None,
     ) -> None:
         self._leads = {lead.canonical_url: lead for lead in leads if lead.canonical_url}
+        self._returned = len(self._leads)
         self._canonical = self._folded_by_title()
         self._annotations = annotations or {}
         self._numbers: dict[str, int] = {}
         self._ordered: list[str] = []
         self._groups = 0
         self._annotated = 0
+        self._flagged: dict[str, str] = {}
         self._universal = self._uniform_qualifiers()
 
     def _folded_by_title(self) -> dict[str, str]:
@@ -256,10 +263,21 @@ class CitationRegistry:
         """
         by_title: dict[str, list[str]] = {}
         for url, lead in self._leads.items():
-            title = " ".join(_reference_title(lead).split()).casefold()
+            title = _fold_key(lead)
             if title.startswith("untitled source"):
                 continue
             by_title.setdefault(title, []).append(url)
+        # Matching the whole title left that live pair unfolded after all: one lead
+        # carried the paper's name and the other carried the same name with the
+        # aggregator's appended to it, so the exact-match pass above saw two
+        # documents. Longest first, so a title wearing two suffixes reaches the bare
+        # one by way of the single-suffix key rather than being stranded on it.
+        for title in sorted(by_title, key=len, reverse=True):
+            shortened = _TRAILING_ATTRIBUTION.sub("", title).strip()
+            if shortened == title or len(shortened.split()) < 4:
+                continue
+            if shortened in by_title:
+                by_title[shortened].extend(by_title.pop(title))
         canonical: dict[str, str] = {}
         for urls in by_title.values():
             if len(urls) == 1:
@@ -308,6 +326,16 @@ class CitationRegistry:
         if found <= {"", "unsupported"}:
             return {"unsupported"}
         return found if len(found) == 1 else set()
+
+    @property
+    def folded_duplicates(self) -> int:
+        """How many leads turned out to name a document another lead already named.
+
+        The count the corpus sentence is short by. "Fifty-nine source leads" stood in
+        the provenance appendix and "fifteen of the fifty-one" in the findings, two
+        chapters apart and neither saying what became of the other eight.
+        """
+        return self._returned - len(self._leads)
 
     @property
     def verification_standing(self) -> tuple[int, int]:
@@ -377,21 +405,29 @@ class CitationRegistry:
         if not annotate:
             return marker
         self._groups += 1
-        qualifier = next(
+        qualifier, target = next(
             (
-                self._annotations[url]
+                (self._annotations[url], self._canonical.get(url, url))
                 for url in urls
                 if self._annotations.get(url) in CITATION_ANNOTATIONS
             ),
-            "",
+            ("", ""),
         )
         # A qualifier states something true about the source, so it is never invented
         # to reach a quota; it is only withheld once the page is dense with them.
         if not qualifier or qualifier in self._universal:
             return marker
+        # Once a source has been qualified in front of the reader, every later
+        # citation of it is qualified too, whatever the density of the page by then.
+        # A live chapter printed "[5] (inaccurate)" on one finding and cited the same
+        # unretrievable source four more times without it, which reads as four sound
+        # citations and one bad one rather than five of the same source.
+        if target in self._flagged:
+            return f"{marker} ({qualifier})"
         if self._annotated + 1 > CITATION_ANNOTATION_CEILING * self._groups:
             return marker
         self._annotated += 1
+        self._flagged[target] = qualifier
         return f"{marker} ({qualifier})"
 
     def references(self) -> list[Citation]:
@@ -401,12 +437,31 @@ class CitationRegistry:
                 number=index,
                 title=_reference_title(self._leads[url]),
                 url=url,
+                verification_status=self._leads[url].verification_status,
             )
             for index, url in enumerate(self._ordered, start=1)
         ]
 
 
 _HOSTNAME_TITLE = re.compile(r"^(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}$", re.IGNORECASE)
+
+# What an aggregator appends to a paper's own name once the hostname cut below has
+# taken the hostname: "- Diva Portal", "- Stanford University". It is a repository
+# rather than part of the title, so the same paper indexed twice reads as two.
+_TRAILING_ATTRIBUTION = re.compile(
+    "\\s+[-|\u2013\u2014]\\s+[^-|\u2013\u2014]{2,60}$", re.IGNORECASE
+)
+
+_TRAILING_YEAR = re.compile(r"\s*\((?:1[89]|20)\d{2}\)$")
+
+
+def _fold_key(lead: SourceLead) -> str:
+    """What two leads must share to be the same document, whatever else differs.
+
+    The year is cut because only one of the pair usually carries one, and a lead
+    that records a publication year and one that does not are not two papers.
+    """
+    return _TRAILING_YEAR.sub("", " ".join(_reference_title(lead).split())).casefold()
 
 
 def _untitled_on(host: str) -> str:
@@ -5510,10 +5565,19 @@ def _section_two(record: ResearchRecord) -> _Draft:
         "the number — advance is five, revise it first is three, evidence too thin "
         "to judge on is two, reject it is one — and the reviewer's own stated "
         "confidence then moves it one point up at 0.80 or above and one point down "
-        "below 0.30. A printed four is therefore a confidently held revise and a "
-        "printed two a confidently held rejection, so the number carries the verdict "
-        "and the conviction behind it together and neither can be read off it alone. "
-        "A reviewer who records a "
+        # This used to read "a printed four is therefore a confidently held revise
+        # and a printed two a confidently held rejection", which names one of the
+        # two ways each number is reached and presents it as the only one: a four is
+        # equally an advance its own reviewer was diffident about, and the sentence
+        # after it -- that neither can be read off the number alone -- contradicted
+        # the example it had just given. The number is two facts added together, and
+        # what a reader can do about that is go to the review.
+        "below 0.30. Two different reviews therefore print the same number: a four "
+        "is a confidently held revise or an advance its reviewer was diffident "
+        "about, and a two is a confident rejection, an unmoved finding that the "
+        "evidence is too thin, or a revise held below 0.30. Which of them a given "
+        "score is has to be read off the review itself, printed in full under Deep "
+        "Verification in the idea's own section. A reviewer who records a "
         "fatal flaw caps the score at two whatever the recommendation, because an "
         "unresolved fatal flaw is disqualifying rather than merely costly."
     )
@@ -6824,8 +6888,12 @@ def _cited_reference_standing(record: ResearchRecord) -> str:
         f"{'was' if checked == 1 else 'were'} retrieved and checked against the "
         f"document {'it names' if checked == 1 else 'they name'}; the other "
         f"{_plural(total - checked, 'entry')} record where a statement came from and "
-        "no more. Which is which is recorded against each entry in the evidence "
-        "appendix."
+        # This sent the reader to the evidence appendix, which lists the ideas whose
+        # grounding is in doubt and names no entry of this list at all. The mark is
+        # on the entries below, where a reader looking one up will already be.
+        "no more. Which is which is marked on the entries themselves. A qualifier "
+        "beside a marker in the running text is printed only while the page is not "
+        "already dense with them, so the entry is the record and the marker is not."
     )
 
 
@@ -6851,11 +6919,26 @@ def _reference_standing(record: ResearchRecord) -> str:
             "Every one of them was retrieved and checked against the document it "
             "names, so a marker in the text points at a source this run has read."
         )
+    # The provenance appendix states how many leads the search returned, this states
+    # how many documents they came to, and the two figures stood four chapters apart
+    # with nothing between them saying what happened to the difference.
+    folded = record.citations.folded_duplicates
+    reconciled = (
+        f" The literature search returned {_number_word(total + folded).lower()} "
+        f"leads to reach {'them' if total != 1 else 'it'}: "
+        f"{_plural(folded, 'lead')} named a document another lead had already named."
+        if folded
+        else ""
+    )
     return (
         f"{_number_word(checked)} of the {_number_word(total).lower()} were retrieved "
         f"and checked against the document they name. For the remaining "
-        f"{_plural(total - checked, 'source')}, {outstanding}; which is which is "
-        "recorded against each entry in the evidence appendix."
+        f"{_plural(total - checked, 'source')}, {outstanding}."
+        + reconciled
+        # Only the cited sources are listed anywhere in this report, so pointing at
+        # a per-source record for all of them pointed at a list that does not exist.
+        + " Which is which is marked on each entry under References, which lists the "
+        "cited sources and not the rest of the corpus."
     )
 
 
@@ -7438,16 +7521,26 @@ def _section_nine(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
             core.append(
                 "Part of what is recommended is one bet rather than several. "
                 + " ".join(
-                    f"{_joined_titles(titles)} sit in the {name} cluster and rest on "
+                    f"{_joined_titles(titles)} sit in the {name} cluster and turn on "
                     "the single mechanism named for it under Main Research Directions "
-                    "above, so they stand or fall together."
+                    "above."
                     for name, titles in overlaps
                 )
-                + " Carrying them together is still defensible, since the protocols "
-                "differ and the cheapest of them may settle the mechanism for the "
-                "rest. What it is not is diversification: the shared mechanism is the "
-                "thing to test first, and a result against it takes more than one idea "
-                "off this list at once."
+                # "So they stand or fall together" was printed over a pair whose two
+                # hypotheses were that ultrathin coatings do not improve cycle life
+                # and that a 2.5 nm coating does. They cannot stand together and they
+                # cannot fall together: the shared mechanism is what they disagree
+                # about. What is true of every such pair, and all this can claim
+                # without reading which way each of them cuts, is that one experiment
+                # reaches all of them.
+                + " Sharing a mechanism is not agreeing about it: two ideas in one "
+                "cluster may put opposite cases, in which case a result cannot "
+                "vindicate both. Either way the reach is the same, and carrying them "
+                "together is still defensible, since the protocols differ and the "
+                "cheapest of them may settle the mechanism for the rest. What it is "
+                "not is diversification: the shared mechanism is the thing to test "
+                "first, and one result on it decides more than one idea on this list "
+                "at once."
             )
     if unmatched_ids:
         core.append(
