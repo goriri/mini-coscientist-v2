@@ -1192,15 +1192,108 @@ _TITLE_TRANSITIVE_VERBS = frozenset(
 _TITLE_ADJECTIVE_SUFFIXES = ("ive", "ous", "able", "ible")
 
 
-def unique_titles(claims: Sequence[str]) -> list[str]:
+# Numbering the idea inside its own name says nothing the heading above it does not
+# already say, and the generators that write it do so inconsistently across a run.
+_TITLE_CHROME = re.compile(
+    r"^\s*(?:hypothesis|idea|candidate|proposal)\s*\d*\s*[:.—-]\s*",
+    re.IGNORECASE,
+)
+_OFFERED_TITLE_WORDS = 16
+"""How long a generator's own title may run before it is trimmed to a heading.
+
+Generous, because a title written as a title is not a sentence being cut down to one:
+trimming "Wide-Bandgap Dielectric Passivation of NMC811 via ALD Al2O3 to Suppress
+Parasitic Electron Transfer" to twelve words ends it on "Parasitic Electron". The
+ceiling is here for a generator that answers the field with a paragraph.
+"""
+
+
+def offered_title(text: str) -> str:
+    """The generator's own name for an idea, where it wrote one that names it.
+
+    Every hypothesis in a run answers one goal, so their claims open on the same
+    words: eight ideas about the same 2 nm coating gave eight claims beginning "A 2 nm
+    ALD Al2O3 coating on NMC811 ...", and a title cut from the first nine words of a
+    claim is the goal restated. Five of the eight were headed "A 2 nm ALD Al2O3
+    Coating", one of them with "(Variant 2)" after it, and the reader had no way to
+    tell which section was which. The generator had already written "Al2O3-Pinned
+    Oxygen Lattice for Suppression of NMC811 Surface Reconstruction" into the title
+    field of that same record, and the report threw the field away unread.
+    """
+    cleaned = _TITLE_CHROME.sub("", " ".join(text.split())).strip(" ,;:.")
+    words = cleaned.split()
+    # One word names a subject, not an idea, and the claim is the better source for
+    # anything that short. Nothing else here is a judgement about the wording.
+    if len(words) < 2:
+        return ""
+    truncated = len(words) > _OFFERED_TITLE_WORDS
+    words = _trimmed_tail(words[:_OFFERED_TITLE_WORDS], truncated)
+    words = _trimmed_tail(_whole_phrase(_closed_brackets(words), truncated), truncated)
+    kept = " ".join(words).strip(" ,;:.")
+    return _title_case(kept) if kept else ""
+
+
+_TITLE_WIDEST = 20
+"""The longest a title may run while trying to tell itself apart from another."""
+
+
+def _restates(given: str, claim: str) -> bool:
+    """Whether the title field holds the claim over again rather than a name for it."""
+    named = " ".join(given.split()).strip(" .").lower()
+    stated = " ".join(claim.split()).strip(" .").lower()
+    return bool(named) and (stated.startswith(named) or named.startswith(stated))
+
+
+def _named(claim: str, given: str) -> str:
+    """One idea's name: the generator's, unless it answered with the claim again.
+
+    A generator that fills the title field with its own claim has named nothing, and
+    the claim is a sentence -- so it goes through the machinery that turns a sentence
+    into a heading, which strips the framing verb and cuts at the first connective.
+    """
+    if _restates(given, claim):
+        return derive_idea_title(claim)
+    return offered_title(given) or derive_idea_title(claim)
+
+
+def idea_title(candidate: Candidate) -> str:
+    """One idea's name, for the places that name an idea outside the population.
+
+    A withdrawn or superseded candidate is not in the population the report titles in
+    one pass, so it is named on its own -- and it has to be named the same way, or a
+    reader following a withdrawal back to the idea it withdrew finds two names.
+    """
+    return _named(candidate.claim, candidate.title)
+
+
+def unique_titles(claims: Sequence[str], offered: Sequence[str] = ()) -> list[str]:
     """Title every candidate, disambiguating collisions so cross-references resolve."""
-    titles: list[str] = []
-    seen: dict[str, int] = {}
-    for claim in claims:
-        title = derive_idea_title(claim)
-        count = seen.get(title.lower(), 0) + 1
-        seen[title.lower()] = count
-        titles.append(title if count == 1 else f"{title} (Variant {count})")
+    given = list(offered) + [""] * (len(claims) - len(offered))
+    titles = [_named(claim, name) for claim, name in zip(claims, given, strict=True)]
+    repeated = {
+        title.lower() for title, count in Counter(titles).items() if count > 1
+    } - {""}
+    for name in repeated:
+        # A number in a heading distinguishes nothing: the reader is told that two
+        # ideas share a name and never what either one says. The claims differ
+        # somewhere, so the budget widens until the titles cut from them differ too,
+        # and the count is what is left when even that says they are the same idea.
+        group = [index for index, title in enumerate(titles) if title.lower() == name]
+        others = {
+            title.lower() for index, title in enumerate(titles) if index not in group
+        }
+        for budget in range(10, _TITLE_WIDEST + 1):
+            wider = [
+                derive_idea_title(claims[index], max_words=budget) for index in group
+            ]
+            spelled = {title.lower() for title in wider}
+            if len(spelled) == len(group) and not spelled & others:
+                for index, title in zip(group, wider, strict=True):
+                    titles[index] = title
+                break
+        else:
+            for count, index in enumerate(group, start=1):
+                titles[index] = f"{titles[index]} (Variant {count})"
     return titles
 
 
@@ -1737,13 +1830,18 @@ def load_record(session: Session) -> ResearchRecord:
     record.provenance.sort(key=lambda note: _STAGE_ORDER.get(note.stage, len(STAGES)))
     candidates = record.candidates
     for candidate, title in zip(
-        candidates, unique_titles([item.claim for item in candidates]), strict=True
+        candidates,
+        unique_titles(
+            [item.claim for item in candidates],
+            [item.title for item in candidates],
+        ),
+        strict=True,
     ):
         record.titles[candidate.id] = title
     if record.evolution:
         for evolved in record.evolution.records:
             record.titles.setdefault(
-                evolved.candidate.id, derive_idea_title(evolved.candidate.claim)
+                evolved.candidate.id, idea_title(evolved.candidate)
             )
         _trace_lineage(record, {item.id for item in candidates})
     leads = list(record.discovery.source_leads) if record.discovery else []
@@ -1901,11 +1999,7 @@ def _load_governance(record: ResearchRecord, retired: dict[str, Candidate]) -> N
         candidate = retired.get(adjudication.candidate_id)
         title = record.titles.get(adjudication.candidate_id)
         if title is None:
-            title = (
-                derive_idea_title(candidate.claim)
-                if candidate
-                else "Unnamed Withdrawn Idea"
-            )
+            title = idea_title(candidate) if candidate else "Unnamed Withdrawn Idea"
             record.titles[adjudication.candidate_id] = title
         record.adjudications.append(
             AdjudicationNote(

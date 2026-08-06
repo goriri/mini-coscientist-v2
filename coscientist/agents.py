@@ -46,6 +46,15 @@ definition; this is the alias.
 
 VERTEX_LOCATION = "global"
 
+IDEA_TITLE_INSTRUCTION = (
+    "The title is the heading the report prints over this idea and the name every "
+    "table, ranking and cross-reference uses for it, so it has to name what makes "
+    "this candidate different from the others answering the same goal: name the "
+    "mechanism or the stance, not the goal restated. Every claim in a run opens on "
+    "the same words -- a title that does the same leaves the reader eight sections "
+    "with one name. Keep it under sixteen words and do not number it."
+)
+
 STRUCTURED_OUTPUT_INSTRUCTIONS = {
     "goal_manager": (
         "Return one ResearchPlan JSON object with question, research_mode, "
@@ -122,30 +131,35 @@ STRUCTURED_OUTPUT_INSTRUCTIONS = {
         "Return one CandidatePopulation JSON object containing exactly two candidates "
         "using the evidence_first strategy. For each candidate, generate a reader-facing title, "
         "comprehensive paragraphs for mechanism_model and validation_protocol (>= 50 words each), "
-        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid. "
+        + IDEA_TITLE_INSTRUCTION
     ),
     "generation_mechanism_first": (
         "Return one CandidatePopulation JSON object containing exactly two candidates "
         "using the mechanism_first strategy. For each candidate, generate a reader-facing title, "
         "comprehensive paragraphs for mechanism_model and validation_protocol (>= 50 words each), "
-        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid. "
+        + IDEA_TITLE_INSTRUCTION
     ),
     "generation_analogy_transfer": (
         "Return one CandidatePopulation JSON object containing exactly two candidates "
         "using the analogy_transfer strategy. For each candidate, generate a reader-facing title, "
         "comprehensive paragraphs for mechanism_model and validation_protocol (>= 50 words each), "
-        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid. "
+        + IDEA_TITLE_INSTRUCTION
     ),
     "generation_competing_explanation": (
         "Return one CandidatePopulation JSON object containing exactly two candidates "
         "using the competing_explanation strategy. For each candidate, generate a reader-facing title, "
         "comprehensive paragraphs for mechanism_model and validation_protocol (>= 50 words each), "
-        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+        "categorized evidence_for, evidence_against, and evidence_gaps, and optionally valid Mermaid syntax in workflow_diagram_mermaid. "
+        + IDEA_TITLE_INSTRUCTION
     ),
     "generation": (
         "Return one CandidatePopulation JSON object containing exactly eight candidates. "
         "Each candidate must define a reader-facing title, distinct claim, rationale, mechanism_model, "
-        "validation_protocol, predictions, alternatives, falsifier, categorized evidence, and optionally valid Mermaid syntax in workflow_diagram_mermaid."
+        "validation_protocol, predictions, alternatives, falsifier, categorized evidence, and optionally valid Mermaid syntax in workflow_diagram_mermaid. "
+        + IDEA_TITLE_INSTRUCTION
     ),
     "reflection": "Return one ReviewSet JSON object with one evidence_correctness review per candidate.",
     "novelty_review": "Return one ReviewSet JSON object with one novelty review per candidate.",

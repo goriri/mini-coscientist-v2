@@ -50,6 +50,7 @@ from coscientist.narrative import (
     _section_four,
     build_idea_briefs,
     derive_idea_title,
+    idea_title,
     load_record,
     support_notice,
     synthesize_overview,
@@ -818,6 +819,130 @@ def test_titles_are_made_unique_without_falling_back_to_ids():
     titles = unique_titles(claims)
     assert len(set(titles)) == 3
     assert all(title.startswith("A Coating Improves Cycle Life") for title in titles)
+
+
+# The eight claims of a live run, which all answer the one goal and so all open on the
+# same nine words, beside the eight names the generators wrote for them in the field
+# the report used to discard.
+_LIVE_CLAIMS = [
+    (
+        "A 2 nm ALD Al2O3 coating on NMC811 improves cycle life by pinning surface "
+        "oxygen atoms via strong Al-O-TM bonds.",
+        "Al2O3-Pinned Oxygen Lattice for Suppression of NMC811 Surface Reconstruction",
+    ),
+    (
+        "A 2 nm ALD Al2O3 coating on NMC811 improves cycle life by reacting with "
+        "trace HF to form an AlF3 passivating layer.",
+        "Al2O3-Mediated HF Scavenging and AlF3 Interphase Formation",
+    ),
+    (
+        "A 2 nm ALD Al2O3 coating acts as a wide-bandgap dielectric barrier, "
+        "analogous to CMOS gate oxides, suppressing parasitic electron transfer.",
+        "Wide-Bandgap Dielectric Passivation of NMC811 via ALD Al2O3 to Suppress "
+        "Parasitic Electron Transfer",
+    ),
+]
+
+
+def test_an_idea_is_named_by_the_generator_where_the_generator_named_one():
+    """Every claim in a run answers the same goal, so every claim opens on the same
+    words: a nine-word cut headed five of eight live sections "A 2 nm ALD Al2O3
+    Coating", one of them "(Variant 2)". Each of those records already carried a
+    name for itself in a field the report never read."""
+    claims = [claim for claim, _ in _LIVE_CLAIMS]
+    titles = unique_titles(claims, [name for _, name in _LIVE_CLAIMS])
+    assert titles == [
+        "Al2O3-Pinned Oxygen Lattice for Suppression of NMC811 Surface Reconstruction",
+        "Al2O3-Mediated HF Scavenging and AlF3 Interphase Formation",
+        "Wide-Bandgap Dielectric Passivation of NMC811 via ALD Al2O3 to Suppress "
+        "Parasitic Electron Transfer",
+    ]
+    # What the same three claims are worth on their own, which is why the field is
+    # read: three headings that open on the same six words and are told apart, if at
+    # all, by whatever the ninth word happened to be.
+    assert all(
+        title.startswith("A 2 nm ALD Al2O3 Coating") for title in unique_titles(claims)
+    )
+
+
+def test_a_title_field_the_generator_left_empty_falls_back_to_the_claim():
+    claims = ["A 5 nm ZrO2 coating suppresses transition metal dissolution"]
+    assert unique_titles(claims, [""]) == unique_titles(claims)
+    assert unique_titles(claims, ["Idea"]) == unique_titles(claims)
+
+
+def test_a_title_field_holding_the_claim_again_is_cut_like_a_claim():
+    """A generator that answers the title field with its own claim has named nothing,
+    so the sentence still has to be turned into a heading rather than printed whole."""
+    claim = (
+        "Investigate whether a 5 nm ZrO2 coating suppresses transition metal "
+        "dissolution in NMC811 because the fluoride scavenging pathway is blocked"
+    )
+    assert unique_titles([claim], [claim]) == unique_titles([claim])
+    assert (
+        unique_titles([claim])[0]
+        == "5 nm ZrO2 Coating Suppresses Transition Metal Dissolution"
+    )
+
+
+def test_a_numbered_title_loses_the_number_the_heading_already_carries():
+    assert (
+        unique_titles(["An unrelated claim"], ["Hypothesis 3: Oxygen Lattice Pinning"])[
+            0
+        ]
+        == "Oxygen Lattice Pinning"
+    )
+
+
+def test_two_ideas_of_one_name_are_told_apart_by_what_they_claim():
+    """A number in a heading distinguishes nothing -- the reader is told two ideas
+    share a name and never what either one says. The claims differ somewhere."""
+    claims = [
+        "A 2 nm Al2O3 coating improves cycle life by scavenging trace HF",
+        "A 2 nm Al2O3 coating improves cycle life by pinning surface oxygen",
+    ]
+    titles = unique_titles(claims, ["Alumina Surface Chemistry"] * 2)
+    assert len(set(titles)) == 2
+    assert not any("Variant" in title for title in titles)
+    assert titles[0].endswith("by Scavenging Trace")
+    assert titles[1].endswith("by Pinning Surface")
+
+
+def test_every_generator_is_told_what_the_title_it_writes_is_for():
+    """The report prints that field as the section heading, so the brief that asks
+    for it has to say what it is for -- otherwise a generator writes the goal back."""
+    from coscientist.agents import STRUCTURED_OUTPUT_INSTRUCTIONS
+
+    generating = [
+        role for role in STRUCTURED_OUTPUT_INSTRUCTIONS if role.startswith("generation")
+    ]
+    assert len(generating) == 5
+    for role in generating:
+        instruction = STRUCTURED_OUTPUT_INSTRUCTIONS[role]
+        assert "the heading the report prints over this idea" in instruction
+        assert "not the goal restated" in instruction
+
+
+def test_an_idea_named_on_its_own_is_named_the_way_the_population_names_it(
+    rich_session: Session,
+):
+    """A withdrawn idea is named outside the one pass that titles the population, and
+    a reader following a withdrawal back to the idea it withdrew needs one name."""
+    from coscientist.models import Candidate
+
+    record = load_record(rich_session)
+    candidate = record.candidates[0]
+    assert idea_title(candidate) == record.titles[candidate.id]
+    named = Candidate(
+        id="candidate_named",
+        title="Fluoride Scavenging by a Sacrificial ZrO2 Overlayer",
+        claim="A 5 nm ZrO2 coating suppresses transition metal dissolution",
+        rationale="r",
+        mechanism_model="m",
+        validation_protocol="p",
+        falsifier="f",
+    )
+    assert idea_title(named) == "Fluoride Scavenging by a Sacrificial ZrO2 Overlayer"
 
 
 # ---------------------------------------------------------------- per-idea layout
