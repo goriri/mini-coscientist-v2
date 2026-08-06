@@ -1941,6 +1941,30 @@ def test_two_claims_whose_sources_went_unnamed_are_still_told_apart(
     assert "cited claim" not in body
 
 
+def test_a_claim_and_its_own_source_cited_together_name_the_paper_once(
+    rich_session: Session,
+):
+    """A specialist cites a claim and the source it was drawn from as a bracketed
+    pair, and both ids resolve to the same document: "(the claim drawn from Hanyang
+    team pinpoints 2.5nm minimum coating, the source Hanyang team pinpoints 2.5nm
+    minimum coating)" ran twice in one paragraph of a live report, reading as two
+    papers where the run holds one. The rule that folded them only knew the "and"
+    form."""
+    body = _findings(
+        rich_session, "Literature shows a 43% gain (claim_1, source_1) at 500 cycles."
+    )
+
+    _assert_no_record_ids(body)
+    finding = next(
+        line for line in body.splitlines() if "Literature shows a 43% gain" in line
+    )
+    assert "claim drawn from Binder chemistry" in finding
+    assert finding.count("Binder chemistry") == 1, (
+        "the same paper is named twice inside one citation"
+    )
+    assert "and that source" in finding
+
+
 def test_a_review_writing_about_the_identifiers_keeps_the_identifiers(
     rich_session: Session,
 ):

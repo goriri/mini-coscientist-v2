@@ -1936,9 +1936,14 @@ def _standing(status: str) -> str:
 # "The" is captured rather than matched so the rewrite can give it back: the id it
 # replaced may have opened the sentence, and a literal lowercase replacement put a
 # small "the" at the head of a paragraph.
+#
+# The specialist writes the pair as a bracketed citation as often as it writes it as
+# a clause, so the join between them is a comma at least as often as it is an "and":
+# "(the claim drawn from Hanyang team pinpoints 2.5nm minimum coating, the source
+# Hanyang team pinpoints 2.5nm minimum coating)" ran twice in one live paragraph.
 _DOUBLE_NAMED_SOURCE = re.compile(
-    r"(the) ((?:retracted |unretrieved |unverified )?)claim drawn from (.+?) "
-    r"and the (?:retracted |unretrieved |unverified )?source \3\b",
+    r"(the) ((?:retracted |unretrieved |unverified )?)claim drawn from (.+?)"
+    r"(?:, and | and |, )the (?:retracted |unretrieved |unverified )?source \3\b",
     re.IGNORECASE,
 )
 
