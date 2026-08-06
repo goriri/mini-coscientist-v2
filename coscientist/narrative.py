@@ -6396,6 +6396,43 @@ def _research_directions(record: ResearchRecord) -> list[str]:
     )
 
 
+def _clustering_consequence(converging: int, alone: int, *, distinct: bool) -> str:
+    """What the clustering costs the recommendation, said only where it applies.
+
+    The consequence is about two ideas sharing a failure mode, and a cluster holding
+    one idea has no such pair in it. A live run printed the sentence over four
+    clusters of which two held a single idea each, telling the reader that funding
+    both members of a one-member cluster buys less than their two scores suggest.
+    """
+    if not converging:
+        return (
+            " No cluster here holds more than one idea, so what clustering is for -- "
+            "showing where funding two ideas buys one idea's worth of information -- "
+            "does not arise on this run: each idea stands or falls on its own."
+        )
+    if distinct:
+        consequence = (
+            " Clustering matters for the recommendation: two ideas in the same cluster "
+            "fail for the same reason, so funding both buys less information than "
+            "their two scores would suggest."
+        )
+    else:
+        consequence = (
+            " Clustering is meant to show where funding two ideas buys one idea's "
+            "worth of information, and that reading is not available here: a shared "
+            "name is not a shared failure mode."
+        )
+    if alone:
+        consequence += (
+            f" That bears on {_plural(converging, 'cluster')} above; the other "
+            + _plural(alone, "cluster")
+            + (" holds" if alone == 1 else " hold")
+            + " one idea each, and an idea alone in its cluster shares its exposure "
+            "with nothing."
+        )
+    return consequence
+
+
 def _section_three(record: ResearchRecord) -> _Draft:
     statements = _evidence_statements(record)
     # Counted off the same list the reader is pointed at. Counted off the raw field,
@@ -6453,6 +6490,18 @@ def _section_three(record: ResearchRecord) -> _Draft:
             "question and not by what the field has already tried."
         )
     if statements:
+        if directions:
+            # The section opens on the directions and points at a list of them a page
+            # below, and then prints thirty-five cited findings with nothing between
+            # the two saying what they are. A reader meets the first finding as though
+            # the report had changed the subject under the same heading.
+            core.append(
+                "What discovery recorded under those directions is "
+                f"{_plural(len(statements), 'finding')} from the literature, set out "
+                "below with the source each came from. Each is something already "
+                "reported rather than anything this run proposes, and together they "
+                "are the material the generator worked from."
+            )
         shared = _shared_qualifications(record)
         if shared:
             # The qualifications come back as whole sentences, one of them with a
@@ -6532,6 +6581,12 @@ def _section_three(record: ResearchRecord) -> _Draft:
             )
             for cluster in clusters
         ]
+        # Two of the four clusters on a live run held one idea each, under a lead-in
+        # promising "the mechanism its members share" and a closing sentence about what
+        # two ideas in one cluster cost the reader. A cluster of one shares its
+        # mechanism with nobody, and neither sentence reaches it.
+        converging = sum(1 for group in members if len(group) > 1)
+        alone = len(clusters) - converging
         core.append(
             # This is the one place the shared mechanisms are spelled out. They used to
             # be printed again as the research-direction bullets and a third time under
@@ -6546,7 +6601,7 @@ def _section_three(record: ResearchRecord) -> _Draft:
             "Mapping the generated ideas back onto the problem produced "
             + (
                 f"{_plural(len(clusters), 'distinct cluster')}, each named here with "
-                "the mechanism its members share. "
+                "the mechanism it was grouped on. "
                 if distinct
                 else f"{_plural(len(clusters), 'cluster')}. The clustering stage "
                 "recorded no mechanism that tells them apart, so the names below "
@@ -6566,15 +6621,7 @@ def _section_three(record: ResearchRecord) -> _Draft:
                 )
                 for cluster, group in zip(clusters, members, strict=True)
             )
-            + (
-                " Clustering matters for the recommendation: two ideas in the same "
-                "cluster fail for the same reason, so funding both buys less "
-                "information than the pair of scores would suggest."
-                if distinct
-                else " Clustering is meant to show where funding two ideas buys one "
-                "idea's worth of information, and that reading is not available here: "
-                "a shared name is not a shared failure mode."
-            )
+            + _clustering_consequence(converging, alone, distinct=distinct)
         )
         # The clustering stage may put one idea under two mechanisms, and nothing
         # said so. A live report opened "three distinct clusters" and then gave
@@ -9269,6 +9316,14 @@ class _ConnectionCounts:
     """
 
     converging: int = 0
+    converging_members: int = 0
+    """How many ideas the converging clusters hold between them.
+
+    A single cluster used to be introduced as "where two ideas rest on a single
+    mechanism", which is the size a cluster happens to be most often and not the
+    size the run found. Over a lone cluster of three it undercounts the exposure
+    the sentence exists to name.
+    """
     duplicates: int = 0
     sole_minority: int = 0
     """Protected ideas that are the only occupant of their region."""
@@ -9314,21 +9369,28 @@ def connections_lead_in(counts: _ConnectionCounts) -> str:
         clauses = [
             opening
             + "What this section reports is where "
-            + ("two ideas rest" if counts.converging == 1 else "ideas rest")
+            + (
+                f"{_number_word(counts.converging_members).lower()} ideas rest"
+                if counts.converging == 1 and counts.converging_members
+                else "ideas rest"
+            )
             + (
                 " on a single mechanism, which their separate rankings hide: listed "
                 "apart they look like separate bets, and they stand or fall on the "
-                "same claim. A converging pair is therefore worth less as a portfolio "
-                "than its two rankings suggest, and the mechanism its cluster is "
+                # "A converging pair is worth less as a portfolio than its two
+                # rankings suggest" was written for a cluster of two and printed over
+                # clusters of three, where it understates the exposure by an idea.
+                "same claim. A cluster is therefore worth less as a portfolio than "
+                "its members' separate rankings suggest, and the mechanism it is "
                 "named for — stated in full under Main Research Directions above — "
                 "is the thing to test first."
                 if counts.named_mechanisms
                 else " in the same cluster, which their separate rankings hide. What "
                 "the clustering has not recorded is any mechanism that tells its "
                 "clusters apart, as Main Research Directions above sets out, so a "
-                "pair below shares a label and not a demonstrated failure mode: "
-                "whether funding both buys two ideas' worth of information is left "
-                "open here rather than answered."
+                "cluster below groups its ideas under a label and not a demonstrated "
+                "failure mode: whether funding two of them buys two ideas' worth of "
+                "information is left open here rather than answered."
             )
         ]
     if counts.duplicates:
@@ -9411,6 +9473,7 @@ def _unexpected_connections(
         return all(item in record.titles for item in members)
 
     clusters = []
+    clustered: set[str] = set()
     for cluster in record.landscape.clusters if record.landscape else []:
         members = ranked_members(cluster.candidate_ids)
         if len(members) < 2:
@@ -9423,6 +9486,7 @@ def _unexpected_connections(
         # full stop landed mid-clause -- "... Coating Applied. converge on one
         # mechanism".
         subject = _joined_titles([record.title_for(item) for item in members])
+        clustered.update(members)
         clusters.append(
             (
                 by_rank(members[0]),
@@ -9498,6 +9562,7 @@ def _unexpected_connections(
         ],
         _ConnectionCounts(
             converging=len(clusters),
+            converging_members=len(clustered),
             duplicates=len(duplicates),
             sole_minority=sole,
             shared_minority=len(minority) - sole,

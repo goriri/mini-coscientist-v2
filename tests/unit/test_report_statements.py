@@ -201,6 +201,35 @@ BETA = "A titania coating raises retention by four points."
 GAMMA = "Retention falls once the coating passes forty nanometres."
 
 
+def test_the_findings_under_the_directions_heading_are_introduced_as_findings():
+    """Section three opens on the research directions and points at a list of them a
+    page below -- and then prints thirty-five cited findings with nothing between the
+    two saying what they are. Under the same heading, the reader meets the first
+    finding as though the report had changed the subject without saying so."""
+    record = _record(
+        _statement(ALPHA, url="https://example.org/a"),
+        _statement(BETA, url="https://example.org/b"),
+    )
+    record.discovery.narratives[0].research_directions = [
+        "Interfacial coatings on high-nickel cathodes."
+    ]
+
+    said = "\n".join(_section_three(record).core)
+
+    assert "listed under Research directions below" in said
+    assert "two findings from the literature" in said
+    assert said.index("two findings") < said.index("An alumina coating")
+
+
+def test_nothing_introduces_the_findings_twice_where_the_opening_already_did():
+    """The opening of a run with no directions already says what follows is individual
+    findings, and a second sentence saying it would be the paragraph repeated."""
+    said = _directions_section(_statement(ALPHA))
+
+    assert "what follows is individual findings" in said
+    assert "from the literature, set out below" not in said
+
+
 def test_a_relation_the_findings_share_is_stated_once_over_them():
     """ "Discovery returned this finding more than once and read it differently each
     time" stood under eleven consecutive findings of a live report, with the same

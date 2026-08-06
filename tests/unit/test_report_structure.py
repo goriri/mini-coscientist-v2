@@ -3742,6 +3742,83 @@ def test_the_connections_lead_in_does_not_promise_a_mechanism_the_run_never_reco
     assert "the mechanism its cluster is named for" not in lead_in
     assert "mechanism that tells its clusters apart" in lead_in
     assert "stand or fall on the same claim" not in lead_in
+    # The consequence is about a cluster, whatever size the cluster came out.
+    assert "a pair below shares a label" not in lead_in
+    assert "cluster below groups its ideas under a label" in lead_in
+
+
+def test_a_lone_cluster_of_three_is_not_introduced_as_two_ideas():
+    """ "What this section reports is where two ideas rest on a single mechanism" is
+    the size a cluster happens to be most often, not the size this run found. Over a
+    lone cluster of three it undercounts the exposure the sentence exists to name."""
+    from coscientist.models import ResearchCluster, ResearchLandscape
+    from coscientist.narrative import (
+        ResearchRecord,
+        _unexpected_connections,
+        connections_lead_in,
+    )
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.titles = {"cand_a": "Alumina", "cand_b": "Zirconia", "cand_c": "Titania"}
+    record.landscape = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Physical Barrier Coatings",
+                candidate_ids=["cand_a", "cand_b", "cand_c"],
+                shared_mechanism="A coating suppresses the reaction.",
+                shared_outcome="Retention holds past five hundred cycles.",
+            )
+        ]
+    )
+
+    _connections, counts = _unexpected_connections(record)
+    lead_in = connections_lead_in(counts)
+
+    assert (counts.converging, counts.converging_members) == (1, 3)
+    assert "where three ideas rest on a single mechanism" in lead_in
+    assert "two ideas rest" not in lead_in
+
+
+def test_the_cost_of_sharing_a_cluster_is_not_stated_over_a_cluster_of_one():
+    """A live run printed "two ideas in the same cluster fail for the same reason, so
+    funding both buys less information than the pair of scores would suggest" over four
+    clusters of which two held a single idea each. A cluster of one has no such pair in
+    it, and the lead-in above promised "the mechanism its members share" for it too."""
+    from coscientist.models import ResearchCluster, ResearchLandscape
+    from coscientist.narrative import ResearchRecord, _section_three
+
+    def cluster(name: str, *ids: str) -> ResearchCluster:
+        return ResearchCluster(
+            name=name,
+            candidate_ids=list(ids),
+            shared_mechanism=f"The {name.lower()} route sets the rate.",
+            shared_outcome="Retention holds past five hundred cycles.",
+        )
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.titles = {f"cand_{item}": item.upper() for item in "abcd"}
+    record.landscape = ResearchLandscape(
+        clusters=[
+            cluster("Barrier", "cand_a", "cand_b"),
+            cluster("Doping", "cand_c"),
+            cluster("Electrolyte", "cand_d"),
+        ]
+    )
+
+    printed = "\n".join(_section_three(record).core)
+
+    assert "the mechanism its members share" not in printed
+    assert "the mechanism it was grouped on" in printed
+    assert "two ideas in the same cluster fail for the same reason" in printed
+    assert "That bears on one cluster above; the other two clusters hold one idea" in (
+        printed
+    )
+
+    record.landscape.clusters[0].candidate_ids = ["cand_a"]
+    only_singletons = "\n".join(_section_three(record).core)
+    assert "No cluster here holds more than one idea" in only_singletons
+    assert "fail for the same reason" not in only_singletons
+    assert "each idea stands or falls on its own" in only_singletons
 
 
 def test_a_retrieved_finding_is_printed_once_and_pointed_at_afterwards(
