@@ -592,12 +592,31 @@ function showError(article, message) {
   scrollToBottom();
 }
 
+const SMOOTH_SCROLL_CEILING = 2400;
+/* How far Latest update will animate. Past this it jumps: a finished dossier
+   ran to 51,372 px of conversation in a 146 px pane on the live service, and
+   the animated scroll did not arrive -- it stopped 2,046 px down and stayed
+   there, so the scroll handler decided the reader was no longer following and
+   put the button back. The short hop is worth animating because it shows the
+   reader which way the new material lies; the long one is a jump to the end of
+   a document, and a jump is what it should be. */
+
 function scrollToBottom(force = false) {
   if (!force && !state.autoFollow) return;
   window.requestAnimationFrame(() => {
-    elements.conversation.scrollTo({
-      top: elements.conversation.scrollHeight,
-      behavior: force ? "smooth" : "auto",
+    const area = elements.conversation;
+    const distance = area.scrollHeight - area.scrollTop - area.clientHeight;
+    // A behavior passed here beats the stylesheet's scroll-behavior, so the
+    // reduced-motion rule in styles.css never reached this scroll at all.
+    const stillMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    area.scrollTo({
+      top: area.scrollHeight,
+      behavior:
+        force && !stillMotion && distance <= SMOOTH_SCROLL_CEILING
+          ? "smooth"
+          : "auto",
     });
   });
 }

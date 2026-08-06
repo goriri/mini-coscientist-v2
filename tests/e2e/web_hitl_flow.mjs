@@ -361,13 +361,40 @@ try {
   );
   assert(editedDraftSaved, "The directly edited draft was not persisted.");
 
-  for (let gate = 0; gate < 5; gate += 1) {
+  // How many gates a run asks for is a property of the run, not a constant: the
+  // evidence-integrity card and any governance finding appear only where the
+  // stage produced one, so the deployed service asked five times and the
+  // integration stub four. Looping a fixed five meant the last pass waited for a
+  // gate that was never coming -- against the stub it failed outright, and
+  // against the service it would have burned its whole budget after the dossier
+  // was already built. The gates are driven until the run says it has a report,
+  // and the ceiling is here to end a loop that is not converging, not to bound
+  // the run: reaching it is a failure and says so.
+  const GATE_CEILING = 8;
+  let gatesAccepted = 0;
+  let rankChecked = false;
+  for (let gate = 0; ; gate += 1) {
+    assert(
+      gate < GATE_CEILING,
+      `The workflow was still asking for approval after ${GATE_CEILING} gates.`,
+    );
     await waitFor(
       cdp,
-      "!!document.querySelector('.approval-card:not(.resolved) [data-decision=\"accept\"]:not(:disabled)') || !!document.querySelector('.approval-card:not(.resolved) [data-decision=\"exploratory_evidence\"]') || !!document.querySelector('.approval-card:not(.resolved) .governance-finding')",
+      `(async () => {
+        if (document.querySelector('.approval-card:not(.resolved)')) return true;
+        const workflow = await fetch("/api/research/sessions/${workflowId}").then((response) => response.json());
+        return workflow.status === "ready_for_report";
+      })()`,
       `Approval or evidence-integrity gate ${gate + 1} was unavailable.`,
       30000,
     );
+    if (
+      !(await cdp.evaluate(
+        "!!document.querySelector('.approval-card:not(.resolved)')",
+      ))
+    ) {
+      break;
+    }
     const needsEvidenceFallback = await cdp.evaluate(
       "!!document.querySelector('.approval-card:not(.resolved) [data-decision=\"exploratory_evidence\"]')",
     );
@@ -410,7 +437,15 @@ try {
       `Approval gate ${gate + 1} was unavailable.`,
       30000,
     );
-    if (gate === 2) {
+    // Keyed to the tournament being on screen rather than to a gate number,
+    // which only held while the count of gates was assumed to be fixed.
+    if (
+      !rankChecked &&
+      (await cdp.evaluate(
+        "!!document.querySelector('[data-presentation-stage=\"rank\"] .ranking-table')",
+      ))
+    ) {
+      rankChecked = true;
       const rankingPresentation = await cdp.evaluate(`(() => ({
         rankingRows: document.querySelectorAll('[data-presentation-stage="rank"] .ranking-table > div').length,
         candidateCards: document.querySelectorAll('[data-presentation-stage="rank"] .candidate-card').length,
@@ -435,6 +470,7 @@ try {
     await cdp.evaluate(
       "document.querySelector('.approval-card:not(.resolved) [data-decision=\"accept\"]').click()",
     );
+    gatesAccepted += 1;
     await waitFor(
       cdp,
       "!!document.querySelector('.workflow-progress') || !!document.querySelector('.approval-card:not(.resolved) [data-decision=\"accept\"]:not(:disabled)') || !document.querySelector('.approval-card:not(.resolved)')",
@@ -442,6 +478,17 @@ try {
       3000,
     );
   }
+  // A loop that can stop on its own can also stop on the first pass and take
+  // the whole gate chapter with it. Milestone approval puts a gate on scope,
+  // evidence, ranking and meta-review at the least.
+  assert(
+    gatesAccepted >= 4,
+    `Only ${gatesAccepted} approval gates were driven; milestone mode has at least four.`,
+  );
+  assert(
+    rankChecked,
+    "The tournament was never presented, so its table was never checked.",
+  );
 
   await waitFor(
     cdp,
@@ -531,6 +578,16 @@ try {
     })()`,
     "Latest update did not return to the bottom.",
     3000,
+  );
+  // Against the deployed service the finished record runs to fifty thousand
+  // pixels, and the animated scroll this used to do stopped two thousand pixels
+  // in: the arrival check above still had a whole document below it, and the
+  // affordance came back because the handler saw a reader who had stopped
+  // following. Arriving and staying arrived are two claims, and only one of
+  // them was being made.
+  assert(
+    await cdp.evaluate("document.querySelector('#jumpLatest').hidden"),
+    "Latest update reappeared after it said it had taken the reader to the end.",
   );
 
   const derivedTitle = await cdp.evaluate(
