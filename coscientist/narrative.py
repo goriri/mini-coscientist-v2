@@ -20,7 +20,12 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from .citations import GROUNDED_STATUSES, CandidateCitations, resolve_population
+from .citations import (
+    DISCREDITED_STATUSES,
+    GROUNDED_STATUSES,
+    CandidateCitations,
+    resolve_population,
+)
 from .debate import standalone_opening
 from .evidence import GROUNDING_REDIRECT_MARKER
 from .governance import open_blockers
@@ -572,9 +577,11 @@ DEEP_DIVE_PREAMBLE = (
     "to argue against it, and what it already knew was missing. Each statement "
     "carries what stands behind it — **[Verified Source]** where it names a "
     "document this run retrieved and checked, **[Literature Lead]** where it names "
-    "one the search found but nothing confirmed, and **[Unsourced claim]** where it "
-    "names no document at all. A gap carries no label, because a statement that no "
-    "evidence exists is not one that can be grounded.",
+    "one the search found but nothing confirmed, **[Retracted or Unretrievable]** "
+    "where it names one this run went back to and could not stand behind, and "
+    "**[Unsourced claim]** where it names no document at all. A gap carries no "
+    "label, because a statement that no evidence exists is not one that can be "
+    "grounded.",
     "Identified issues and validated risks are the risks the specialist that "
     "proposed the idea named against its own work. No reviewer was asked to confirm "
     "them, so the list is neither validated nor complete, and a risk missing from it "
@@ -4527,6 +4534,12 @@ _LOCATOR = re.compile(r"(?:https?://\S+|\b10\.\d{4,9}/\S+|\bPMID:?\s*\d+)", re.I
 VERIFIED_BADGE = "[Verified Source]"
 LEAD_BADGE = "[Literature Lead]"
 UNSOURCED_BADGE = "[Unsourced claim]"
+# A record the verification stage retracted or could not reach. It was badged as a
+# lead, which tells a reader there is something to follow: a live chapter carried
+# "[Literature Lead] Some studies suggest even 1 nm coatings can be detrimental"
+# over the same record that had three other chapters' grounding declared
+# discredited two hundred lines below.
+DISCREDITED_BADGE = "[Retracted or Unretrievable]"
 
 
 @dataclass(frozen=True)
@@ -4616,6 +4629,11 @@ def _grounding_badge(
     """
     if any(entry.status in GROUNDED_STATUSES for entry in cited):
         return VERIFIED_BADGE
+    # Checked before the lead: a record this run pulled and could not stand behind is
+    # not a lead to follow, and it is the same record whose citation elsewhere in the
+    # report discredits the grounding of the ideas that rest on it.
+    if any(entry.status in DISCREDITED_STATUSES for entry in cited):
+        return DISCREDITED_BADGE
     if cited:
         return LEAD_BADGE
     locators = {

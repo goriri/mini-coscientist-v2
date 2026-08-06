@@ -26,6 +26,7 @@ from coscientist.models import (
     SourceRecord,
 )
 from coscientist.narrative import (
+    DISCREDITED_BADGE,
     LEAD_BADGE,
     UNSOURCED_BADGE,
     VERIFIED_BADGE,
@@ -41,6 +42,10 @@ CLAIM_TEXT = (
 STATEMENT_TEXT = (
     "Increased coating thickness causes severe mass transfer resistance at the "
     "particle surface"
+)
+WITHDRAWN_TEXT = (
+    "Some studies report that even a one-nanometre coating is detrimental to "
+    "cycling performance"
 )
 TITLE = "Ultrathin Al2O3 coatings on high-nickel cathodes"
 
@@ -64,7 +69,14 @@ def _record(*, evidence_for=(), evidence_against=(), evidence_gaps=()):
                 source_id="source_1",
                 verification_status="verified",
                 confidence=0.9,
-            )
+            ),
+            EvidenceClaim(
+                id="claim_2",
+                claim=WITHDRAWN_TEXT,
+                source_id="source_1",
+                verification_status="inaccessible",
+                confidence=0.4,
+            ),
         ],
     )
     discovery = DiscoveryManifest(
@@ -237,3 +249,22 @@ def test_the_ids_are_kept_for_this_block_after_the_prose_has_been_scrubbed_of_th
 
     assert record.candidates[0].evidence_for == [f"The claim drawn from {TITLE}"]
     assert record.cited_evidence["candidate_0001"][0] == ["claim_1"]
+
+
+def test_a_record_the_run_could_not_stand_behind_is_not_badged_as_a_lead():
+    """A live chapter carried "[Literature Lead] Some studies suggest even 1 nm
+    coatings can be detrimental" over the very record whose citation, two hundred
+    lines below, was declared to discredit the grounding of three other ideas. A
+    lead is something to follow; this is something the run went back to and could
+    not stand behind."""
+    ((_heading, badge, said),) = _notes(evidence_against=["claim_2"])
+
+    assert badge == DISCREDITED_BADGE
+    assert said == f"{WITHDRAWN_TEXT}."
+
+
+def test_the_reading_guide_says_what_the_new_badge_means():
+    """Every other badge is explained where the report explains how to read itself."""
+    from coscientist.narrative import DEEP_DIVE_PREAMBLE
+
+    assert any(DISCREDITED_BADGE in note for note in DEEP_DIVE_PREAMBLE)
