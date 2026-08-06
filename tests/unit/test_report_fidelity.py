@@ -1044,6 +1044,73 @@ def test_a_citation_that_argues_against_its_own_idea_is_declared():
     ]
 
 
+def test_an_idea_citing_sources_is_not_told_it_cites_no_evidence():
+    """ "No finding in this report's evidence is cited for this idea." was printed
+    under two live ideas that cite a source and a neutral claim apiece, every id of
+    them resolving, with the same sources listed by name in their Evidence
+    Assessment. An ``evidence_ids`` entry names a claim, a source, a discovery lead
+    or a discovery statement -- and only a claim carries a relation, whose default is
+    ``neutral``, so reading the supporting claims alone found nothing at all."""
+    from coscientist.models import EvidenceClaim, EvidencePacket, SourceRecord
+    from coscientist.narrative import _cited_evidence, _motivation
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="src_1",
+                url="https://example.org/alumina",
+                title="Atomic layer deposition of alumina",
+                verification_status="verified",
+            )
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_1",
+                source_id="src_1",
+                claim="Coating uniformity varies with precursor dose",
+            )
+        ],
+    )
+    candidate = _candidate("cand_a")
+    candidate.evidence_ids = ["src_1", "claim_1"]
+
+    cited = _cited_evidence(record, candidate)
+    assert cited.supports == []
+    # The source itself and the claim the extraction stage left at its neutral
+    # default: both are cited, neither is support, and the report has to say so.
+    assert cited.undirected == [
+        "Atomic layer deposition of alumina.",
+        "Coating uniformity varies with precursor dose.",
+    ]
+
+    motivation = _motivation({"Core idea": "A coating helps."}, cited)
+    assert "No finding in this report's evidence is cited" not in motivation
+    assert "with no direction recorded either way" in motivation
+    assert "Atomic layer deposition of alumina" in motivation
+
+    # An idea whose every citation cuts the other way is told that, rather than
+    # being told it cites nothing.
+    against = _candidate("cand_b")
+    against.evidence_ids = ["claim_2"]
+    record.evidence.claims.append(
+        EvidenceClaim(
+            id="claim_2",
+            source_id="src_1",
+            claim="Thick coatings reduce ionic conductivity",
+            relation="contradicts",
+        )
+    )
+    only_against = _motivation({}, _cited_evidence(record, against))
+    assert "cutting against the research question rather than for it" in only_against
+
+    # And an idea that really cites nothing still gets the plain sentence.
+    assert "No finding in this report's evidence is cited" in _motivation(
+        {}, _cited_evidence(record, _candidate("cand_c"))
+    )
+
+
 CUTS_AGAINST = (
     "Even coatings of one nanometre were detrimental to the cycling performance "
     "of LNMO."

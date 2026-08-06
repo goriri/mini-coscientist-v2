@@ -3854,7 +3854,7 @@ def _conclusion(
     return f"{withheld}{order_of_work}{weakest}{accepted}"
 
 
-def _motivation(facts: dict[str, str], supporting: Sequence[str]) -> str:
+def _motivation(facts: dict[str, str], cited: _CitedEvidence) -> str:
     """What the report holds in favour of this idea, and nothing that holds of all.
 
     The mechanism is under Description a few hundred words above, so it is not
@@ -3865,16 +3865,39 @@ def _motivation(facts: dict[str, str], supporting: Sequence[str]) -> str:
     reading does -- which is true of every idea that states one and was the whole of
     this section for seven of seven ideas on a live run. That argument is in the
     preamble above the ideas. What is left here is which of the two this idea has.
+
+    What the idea cites is not all support. A cited record the evidence stage put no
+    direction on is named here as that, and one it recorded as cutting against the
+    question is reported with the idea's grounding rather than twice.
     """
-    cited = (
-        f"The findings this idea cites: {_join(list(supporting), fallback='none.')} "
-        if supporting
-        else "No finding in this report's evidence is cited for this idea. "
-    )
+    stated: list[str] = []
+    if cited.supports:
+        stated.append(
+            "The findings this idea cites in support: "
+            + _join(cited.supports, fallback="none.")
+        )
+    if cited.undirected:
+        stated.append(
+            ("What it cites " if cited.supports else "What this idea cites ")
+            + "with no direction recorded either way: "
+            + _join(cited.undirected, fallback="none.")
+        )
+    if not stated:
+        stated.append(
+            # Not "nothing is cited": the idea cited findings and the evidence stage
+            # read every one of them as arguing the other way, which is a harder fact
+            # about the idea than citing nothing would be.
+            "Every finding this idea cites was recorded by the evidence stage as "
+            "cutting against the research question rather than for it, so nothing "
+            "it cites argues for it."
+            if cited.contradicts
+            else "No finding in this report's evidence is cited for this idea."
+        )
+    lead = " ".join(stated) + " "
     if not _stated(facts, "Discriminating predictions"):
-        return cited + (
+        return lead + (
             "No discriminating prediction was stated for it"
-            + ("" if supporting else " either")
+            + ("" if cited else " either")
             + ", so there is nothing here that a result could confirm or refute, and "
             "the case for the idea rests on its mechanism alone."
         )
@@ -3882,8 +3905,8 @@ def _motivation(facts: dict[str, str], supporting: Sequence[str]) -> str:
     # the report -- the run proposes work rather than doing any -- so it is stated in
     # the preamble above the ideas rather than under each of the seven ideas whose
     # case rests on one.
-    return cited + (
-        ("The rest of the case " if supporting else "The case ")
+    return lead + (
+        ("The rest of the case " if cited.supports else "The case ")
         + "for it is the discriminating prediction under Description."
     )
 
@@ -3959,7 +3982,7 @@ def _summary_sections(
     accepted_flaw: AdjudicationNote | None = None,
     tied_with: int = 0,
     tie_straddles_cut: bool = False,
-    supporting: Sequence[str] = (),
+    cited: _CitedEvidence | None = None,
     novelty_field: Sequence[int] = (),
 ) -> dict[str, str]:
     """The eight fixed Summary subsections the reference reports print per idea.
@@ -4106,7 +4129,9 @@ def _summary_sections(
         # all eight ideas: a heading promising evidence, under which no finding this
         # idea cites was ever named. The findings are on the record, one idea at a
         # time, and they are what the heading is for.
-        "Supporting Arguments & Evidence (Motivation)": _motivation(facts, supporting),
+        "Supporting Arguments & Evidence (Motivation)": _motivation(
+            facts, cited or _CitedEvidence()
+        ),
         # What a novelty score is a judgement about is the same for all eight ideas
         # and is stated in the preamble, so this is the score and where it sits.
         "Goal Alignment & Novelty": _novelty_standing(novelty, novelty_field),
@@ -4984,7 +5009,7 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
                     tie_straddles_cut=any(
                         (other in shortlist) != shortlisted for other in tied_ids
                     ),
-                    supporting=_supporting_claims(record, candidate),
+                    cited=_cited_evidence(record, candidate),
                     novelty_field=novelty_field,
                 ),
                 table_rows=_table_rows(candidate),
@@ -5050,32 +5075,69 @@ def _contradicting_claims(record: ResearchRecord, candidate: Candidate) -> list[
     ]
 
 
-def _supporting_claims(record: ResearchRecord, candidate: Candidate) -> list[str]:
-    """The cited claims the evidence stage recorded as arguing for this idea.
+@dataclass(frozen=True)
+class _CitedEvidence:
+    """What one idea's ``evidence_ids`` resolve to, grouped by what each one does.
+
+    A specialist cites the records it built the idea on and does not say which way
+    each cuts; the evidence stage says, for the claims it extracted, and says nothing
+    for a source or a discovery lead cited directly. Those are three different
+    statements and the report has to keep them apart.
+    """
+
+    supports: list[str] = field(default_factory=list)
+    """Cited claims the evidence stage recorded as arguing for the research question."""
+
+    contradicts: list[str] = field(default_factory=list)
+    """Cited claims it recorded as arguing against it, reported with the grounding."""
+
+    undirected: list[str] = field(default_factory=list)
+    """Cited records with no direction on file: sources, leads, and neutral claims."""
+
+    def __bool__(self) -> bool:
+        return bool(self.supports or self.contradicts or self.undirected)
+
+
+def _cited_evidence(record: ResearchRecord, candidate: Candidate) -> _CitedEvidence:
+    """Everything this idea cites that this run holds a record of, by what it does.
 
     The section headed "Supporting Arguments & Evidence" carried no evidence and no
     argument specific to the idea it sat under: two variants of one sentence covered
     all eight ideas, and the findings each idea was actually built on were printed
     only in the knowledge base, where nothing says which idea cites which. Each is
     numbered against the same reference list as the rest of the report.
+
+    Reading the supporting claims alone then produced the opposite fault. An
+    ``evidence_ids`` entry names a claim, a source, a discovery lead or a discovery
+    statement -- the resolver every other part of the report uses takes all four --
+    and only a claim carries a relation, whose default is ``neutral``. On a live run
+    two ideas cited nothing but sources and neutral claims, every id of them resolved,
+    their Evidence Assessment listed the verified sources by name, and this section
+    told the reader that no finding in the report's evidence is cited for the idea.
     """
-    cited = set(candidate.evidence_ids)
-    sources = {
-        item.id: item for item in (record.evidence.sources if record.evidence else [])
-    }
-    stated: list[str] = []
-    for claim in record.evidence.claims if record.evidence else []:
-        if claim.id not in cited or claim.relation != "supports":
+    index = _evidence_index(record)
+    grouped = _CitedEvidence()
+    seen: set[str] = set()
+    for reference in dict.fromkeys(candidate.evidence_ids):
+        entry = index.get(reference)
+        if entry is None:
             continue
-        source = sources.get(claim.source_id or "")
         # Unannotated: a qualifier here would be counted against the ceiling that
         # keeps the tags rare, and the standing of this idea's evidence as a whole is
         # stated by the support verdict in the listing above.
-        marker = record.citations.marker([source.url], annotate=False) if source else ""
-        stated.append(
-            _sentence(f"{_sentence(claim.claim).rstrip('.')} {marker}".strip())
+        marker = (
+            record.citations.marker([entry.url], annotate=False) if entry.url else ""
         )
-    return stated
+        stated = _sentence(f"{_sentence(entry.text).rstrip('.')} {marker}".strip())
+        if not stated or stated in seen:
+            continue
+        seen.add(stated)
+        bucket = {
+            "supports": grouped.supports,
+            "contradicts": grouped.contradicts,
+        }.get(entry.relation, grouped.undirected)
+        bucket.append(stated)
+    return grouped
 
 
 _LOCATOR = re.compile(r"(?:https?://\S+|\b10\.\d{4,9}/\S+|\bPMID:?\s*\d+)", re.I)
@@ -5098,6 +5160,19 @@ class _EvidenceRecord:
     identifier: str
     text: str
     status: str
+    url: str = ""
+    """Where this record sits in the reference list, which is looked up by URL.
+
+    A discovery statement has none, and neither does a claim the evidence stage
+    recorded without a source behind it.
+    """
+    relation: str = ""
+    """Which way the evidence stage recorded this record as cutting, where it did.
+
+    Only a claim carries one, and only a claim the extraction stage judged: the
+    default there is ``neutral``, which is not the same statement as "argues for the
+    idea citing it" and was being read as one.
+    """
 
 
 # Shaped like an identifier and nothing like a sentence: one word, no spaces, at
@@ -5119,6 +5194,10 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
     citing a verified claim by id was labelled an unsourced one.
     """
     index: dict[str, _EvidenceRecord] = {}
+    source_urls = {
+        source.id: source.url
+        for source in (record.evidence.sources if record.evidence else [])
+    }
     for source in record.evidence.sources if record.evidence else []:
         index[source.id] = _EvidenceRecord(
             source.id,
@@ -5127,12 +5206,14 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
             # cut from the reference list.
             _without_search_chrome(" ".join(source.title.split())) or source.url,
             source.verification_status,
+            url=source.url,
         )
     for lead in record.discovery.source_leads if record.discovery else []:
         index[lead.id] = _EvidenceRecord(
             lead.id,
             _without_search_chrome(" ".join(lead.title.split())) or lead.canonical_url,
             lead.verification_status,
+            url=lead.canonical_url,
         )
     for narrative in record.discovery.narratives if record.discovery else []:
         for statement in narrative.statements:
@@ -5143,7 +5224,11 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
     # says is closer to what the statement was citing it for.
     for claim in record.evidence.claims if record.evidence else []:
         index[claim.id] = _EvidenceRecord(
-            claim.id, claim.claim, claim.verification_status
+            claim.id,
+            claim.claim,
+            claim.verification_status,
+            url=source_urls.get(claim.source_id or "", ""),
+            relation=claim.relation,
         )
     return index
 
