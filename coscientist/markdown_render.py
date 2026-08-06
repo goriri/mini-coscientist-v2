@@ -635,9 +635,10 @@ def table_of_contents(content: str) -> str:
     # nothing in the document is a finding.
     while head < len(lines) and not _HEADING.match(lines[head]):
         head += 1
-    return "\n".join(
-        [*lines[:head], "", CONTENTS_HEADING, "", *entries, "", *lines[head:]]
-    )
+    cover = lines[:head]
+    while cover and not cover[-1].strip():
+        cover.pop()
+    return "\n".join([*cover, "", CONTENTS_HEADING, "", *entries, "", *lines[head:]])
 
 
 def strip_table_of_contents(content: str) -> str:
