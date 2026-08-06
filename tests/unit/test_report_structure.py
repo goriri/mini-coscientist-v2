@@ -826,11 +826,19 @@ def test_titles_are_made_unique_without_falling_back_to_ids():
 def test_each_deep_dive_carries_rank_elo_and_a_category_path(body: str):
     deep_dives = body[body.rindex("\n# Top ideas in detail\n") :]
     ranks = re.findall(
-        r"^Rank: (\d+)(?:, tied on Elo with .+)?$", deep_dives, re.MULTILINE
+        r"^Rank: (\d+)(?:, shared on Elo with .+)?$", deep_dives, re.MULTILINE
     )
     elos = re.findall(r"^Elo: (\d+)$", deep_dives, re.MULTILINE)
     categories = re.findall(r"^Category: (.+)$", deep_dives, re.MULTILINE)
-    assert ranks == [str(n) for n in range(1, len(ranks) + 1)]
+    # An idea is numbered by its place in the standings, except that ideas which
+    # finished level share the position of the first of them: 1, 2, 2, 4, not 1, 2, 3, 4.
+    positions = [int(item) for item in ranks]
+    assert positions[:1] == [1]
+    for index, position in enumerate(positions[1:], start=2):
+        assert position in (index, positions[index - 2]), (
+            f"position {position} at place {index} is neither its own nor the one "
+            "above it"
+        )
     assert len(elos) == len(ranks)
     assert len(categories) == len(ranks)
     for category in categories:
@@ -3738,11 +3746,11 @@ def test_ideas_that_finished_level_are_not_printed_as_an_ordering():
 
     assert brief(1, 0).rank_line == "Rank: 1"
     assert brief(4, 1).rank_line == (
-        "Rank: 4, tied on Elo with another idea and ordered arbitrarily among them"
+        "Rank: 4, shared on Elo with another idea and listed arbitrarily among them"
     )
     assert brief(4, 2).rank_line == (
         # Spelled, as every other small count in prose is.
-        "Rank: 4, tied on Elo with two other ideas and ordered arbitrarily among them"
+        "Rank: 4, shared on Elo with two other ideas and listed arbitrarily among them"
     )
 
 
@@ -3777,6 +3785,48 @@ def test_the_standings_are_a_grid_and_level_ideas_share_a_position(
         by_elo.setdefault(elo, set()).add(position)
     for elo, positions in by_elo.items():
         assert len(positions) == 1, f"ideas level on {elo} were printed as an ordering"
+
+
+def test_a_level_idea_is_given_the_same_position_wherever_the_report_states_it(
+    rich_session: Session,
+):
+    """Table 9 folded three ideas on 1184 onto position 4 and section four called the
+    same three ideas rank 4, rank 5 and rank 6 "by sort order" -- two numberings of one
+    tournament, four pages apart, with nothing saying which the run produced."""
+    from coscientist.narrative import _section_four, _shared_positions
+
+    # A block of ties takes the position of its first member and the block after it
+    # resumes at its own place in the listing, which is what the tournament separated.
+    assert _shared_positions(
+        [("cand_a", 1290), ("cand_b", 1184), ("cand_c", 1184), ("cand_d", 1100)]
+    ) == {"cand_a": 1, "cand_b": 2, "cand_c": 2, "cand_d": 4}
+
+    record = load_record(rich_session)
+    briefs = build_idea_briefs(record)
+    grid = next(
+        iter(
+            next(
+                section
+                for section in synthesize_overview(record).sections
+                if section.number == 5
+            ).grids
+        )
+    )
+    stated = {row[1]: row[0] for row in grid.rows}
+    assert stated, "the standings table printed no rows to agree with"
+    written = {
+        section.title: " ".join(section.paragraphs)
+        for section in _section_four(record, briefs).subsections
+    }
+    for brief in briefs:
+        prose = written[brief.title]
+        position = stated[brief.title]
+        # Every idea states its standing one way or the other; which one depends on
+        # whether it finished level with anything.
+        assert (
+            f"shares position {position} with" in prose
+            or f"finished rank {position} on an Elo" in prose
+        ), f"{brief.title} is position {position} in the standings but not in prose"
 
 
 def test_the_evidence_subsection_names_the_findings_the_idea_cites(

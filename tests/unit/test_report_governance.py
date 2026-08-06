@@ -233,9 +233,15 @@ def test_a_withdrawn_hypothesis_gets_no_rank_and_no_deep_dive(rich_session):
 
     assert f"\n## {title}\n" not in report
     ranks = re.findall(
-        r"^Rank: (\d+)(?:, tied on Elo with .+)?$", report, flags=re.MULTILINE
+        r"^Rank: (\d+)(?:, shared on Elo with .+)?$", report, flags=re.MULTILINE
     )
-    assert [int(item) for item in ranks] == list(range(1, len(record.candidates) + 1))
+    # One rank line per surviving candidate and none for the withdrawal. The numbers
+    # are not consecutive: ideas that finished level share a position.
+    assert len(ranks) == len(record.candidates)
+    positions = [int(item) for item in ranks]
+    assert positions[:1] == [1]
+    for index, position in enumerate(positions[1:], start=2):
+        assert position in (index, positions[index - 2])
 
 
 def test_the_withdrawn_hypothesis_text_survives_its_removal(rich_session):

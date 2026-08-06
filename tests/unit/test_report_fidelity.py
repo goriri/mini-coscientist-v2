@@ -1507,7 +1507,7 @@ def test_a_rank_the_tournament_did_not_decide_is_not_reported_as_a_result():
         for paragraph in section.paragraphs
     )
     assert "It finished level with two other ideas on an Elo of 1184" in four
-    assert "listed at rank 5 by sort order" in four
+    assert "shares position 5 with them" in four
     assert "It finished rank 5 on an Elo" not in four
     # The idea that shares its rating with nobody still states the rank plainly.
     assert "It finished rank 1 on an Elo of 1290." in four

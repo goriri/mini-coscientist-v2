@@ -835,7 +835,7 @@ class IdeaBrief:
 
     @property
     def rank_line(self) -> str:
-        """The rank, saying so when the number is an ordering the record cannot make.
+        """The position, saying who else holds it and that the listing order is not one.
 
         Three ideas finished a live tournament on 1184 and were printed as ranks four,
         five and six. Nothing decided that order but the tie-break the sort happened to
@@ -847,13 +847,13 @@ class IdeaBrief:
         # raw it printed "tied on Elo with 2 other ideas" three rows above "averaging 4.2
         # of five", where the measured mean is the figure and the count is not.
         return (
-            f"Rank: {self.rank}, tied on Elo with "
+            f"Rank: {self.rank}, shared on Elo with "
             + (
                 "another idea"
                 if self.tied_with == 1
                 else _plural(self.tied_with, "other idea")
             )
-            + " and ordered arbitrarily among them"
+            + " and listed arbitrarily among them"
         )
 
     @property
@@ -4712,6 +4712,21 @@ def _idea_description(facts: dict[str, str], alternatives: Sequence[str]) -> lis
     ]
 
 
+def _shared_positions(standings: Sequence[tuple[str, int]]) -> dict[str, int]:
+    """Each idea's standing position, shared by everything that finished level.
+
+    ``standings`` is (candidate id, Elo) in the order the report lists them. An idea
+    takes the position of the first idea listed on its own rating, so a block of ties
+    reads 4, 4, 4, 7 -- the tournament separated the block from what came before and
+    after it, and separated nothing inside it.
+    """
+    first: dict[int, int] = {}
+    return {
+        candidate_id: first.setdefault(elo, index)
+        for index, (candidate_id, elo) in enumerate(standings, start=1)
+    }
+
+
 def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
     """Assemble one deep-dive brief per candidate, ordered by tournament rank."""
     ratings = record.tournament.ratings if record.tournament else {}
@@ -4746,8 +4761,14 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
         for review in reviews
         if review.section == "Novelty"
     ]
+    # Ideas that finished level share one position. Numbered off the sort instead,
+    # three live ideas on an Elo of 1184 were the standings table's position 4 and
+    # section four's "rank 5" and "rank 6" -- two numberings of one tournament, four
+    # pages apart, and the reader has no way to tell which one the run produced.
+    positions = _shared_positions([(item.id, shown_elo[item.id]) for item in ordered])
     briefs = []
-    for rank, candidate in enumerate(ordered, start=1):
+    for candidate in ordered:
+        rank = positions[candidate.id]
         matches, wins, losses, ties = played[candidate.id]
         citations = record.evidence_support.get(candidate.id)
         facts = _idea_facts(candidate)
@@ -6245,11 +6266,13 @@ def _section_four(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
             # ideas held an Elo of 1184 and were printed here as ranks four, five and
             # six, each in its own subsection and each reading as a result -- what put
             # them in that order was the sort's tie-break. Section five discloses the
-            # tie, four pages from the reader who is reading one idea.
+            # tie, four pages from the reader who is reading one idea. The position is
+            # the one the standings table prints, which those three share.
             standing = (
                 f"It finished level with "
                 f"{_plural(brief.tied_with, 'other idea')} on an Elo of {brief.elo}, "
-                f"listed at rank {brief.rank} by sort order."
+                f"and shares position {brief.rank} with "
+                + ("it." if brief.tied_with == 1 else "them.")
                 if brief.tied_with
                 else f"It finished rank {brief.rank} on an Elo of {brief.elo}."
             )
@@ -6445,17 +6468,6 @@ def _section_five(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
             "The full standings follow. Ideas that finished level on rating share a "
             "position; the order among them below is the sort's and not a result."
         )
-        ranks: dict[str, int] = {}
-        for index, brief in enumerate(briefs, start=1):
-            level = next(
-                (
-                    other
-                    for other in briefs[: index - 1]
-                    if other.elo == brief.elo and other.candidate_id in ranks
-                ),
-                None,
-            )
-            ranks[brief.candidate_id] = ranks[level.candidate_id] if level else index
         drew = any(brief.ties for brief in briefs)
         grids.append(
             NarrativeGrid(
@@ -6468,7 +6480,7 @@ def _section_five(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
                 ],
                 rows=[
                     [
-                        str(ranks[brief.candidate_id]),
+                        str(brief.rank),
                         brief.title,
                         str(brief.elo),
                         f"{brief.wins}-{brief.losses}-{brief.ties}"
