@@ -2307,10 +2307,14 @@ def shared_grounding_reach(
     return [
         f"Of the {_number_word(len(set(below))).lower()} ideas below, more than one "
         "rests on the same finding: "
+        # "Of them" once, on the first item: on a live run of three shared findings
+        # it was on all three, and the tail of the sentence read as three copies of
+        # one phrase with the numbers changed.
         + _names(
             [
-                f"{marker} by {_number_word(len(ids)).lower()} of them"
-                for marker, ids in shared
+                f"{marker} by {_number_word(len(ids)).lower()}"
+                + (" of them" if index == 0 else "")
+                for index, (marker, ids) in enumerate(shared)
             ]
         )
         + ". Each idea's Supporting Arguments section names the findings that idea "
