@@ -2458,6 +2458,22 @@ _SHARED_SUPPORT_BODIES = {
 }
 
 
+def _carried_by(count: int, total: int, *, first: bool) -> str:
+    """How many of the ideas carry a verdict, said so the counts add up to the ideas.
+
+    "Five of them are marked partially grounded. Two of them are marked grounded" stood
+    over eight ideas, and a reader who adds the two sentences up finds one idea
+    unaccounted for. The missing one carries a verdict too alarming to hoist, which
+    stays under its own idea by design. Naming the field once makes the shortfall
+    something the sentence states rather than something the reader has to catch.
+    """
+    if count == total:
+        return "Both" if total == 2 else f"All {_number_word(total).lower()}"
+    if first:
+        return f"{_number_word(count)} of the {_number_word(total).lower()}"
+    return f"{_number_word(count)} others"
+
+
 def shared_support_notices(
     supports: Sequence[str], *, detail: bool = True
 ) -> tuple[str, set[str]]:
@@ -2481,14 +2497,17 @@ def shared_support_notices(
     )
     if not recurring:
         return "", set()
+    share = [
+        _carried_by(counts[item], len(supports), first=not index)
+        for index, item in enumerate(recurring)
+    ]
     if not detail:
         return (
             "Each idea below carries a grounding verdict under its title: "
             + _names(
                 [
-                    f"{_number_word(counts[item]).lower()} are marked "
-                    f"{_SUPPORT_NOTICES[item][0]}"
-                    for item in recurring
+                    f"{held.lower()} are marked {_SUPPORT_NOTICES[item][0]}"
+                    for held, item in zip(share, recurring, strict=True)
                 ]
             )
             + ". What those verdicts mean is set out under Candidate Ideas above, "
@@ -2496,9 +2515,8 @@ def shared_support_notices(
             set(recurring),
         )
     parts = [
-        f"{_number_word(counts[item])} of them are marked "
-        f"{_SUPPORT_NOTICES[item][0]}. {_SHARED_SUPPORT_BODIES[item]}"
-        for item in recurring
+        f"{held} are marked {_SUPPORT_NOTICES[item][0]}. {_SHARED_SUPPORT_BODIES[item]}"
+        for held, item in zip(share, recurring, strict=True)
     ]
     return (
         "Each idea below carries a grounding verdict. What the recurring ones mean is "
@@ -7290,7 +7308,12 @@ def _objection_spread(spread: Sequence[tuple[str, int]], field: int) -> str:
             "the goal rather than of the ideas, and cannot be resolved by choosing "
             "differently among them."
             if escaped <= 1
-            else f" {_number_word(escaped)} of the ideas escaped "
+            # "At most", for the same reason the raise-count is a floor: the objections
+            # are grouped by topic and a phrasing that missed its group is an idea
+            # counted as escaping. "Raised against at least four of the eight ideas.
+            # Four of the ideas escaped it" put a floor and an exact figure in
+            # consecutive sentences and left them contradicting each other.
+            else f" At most {_number_word(escaped).lower()} of the ideas escaped "
             + (
                 "it, so it is not a property of the goal: whether a choice inherits "
                 "it depends on which idea is chosen."
@@ -7609,10 +7632,20 @@ def _reference_standing(record: ResearchRecord) -> str:
         if folded
         else ""
     )
+    # House style writes counts above twelve in figures mid-sentence, which is what
+    # _plural does, and this sentence spells its other two counts because they open
+    # clauses: "Twenty-five of the eighty were retrieved ... For the remaining 55
+    # sources" is one sentence writing the same kind of number two ways.
+    remaining = _opening(total - checked, "source")
     return (
-        f"{_number_word(checked)} of the {_number_word(total).lower()} were retrieved "
-        f"and checked against the document they name. For the remaining "
-        f"{_plural(total - checked, 'source')}, {outstanding}."
+        f"{_number_word(checked)} of the {_number_word(total).lower()} "
+        # "One of the three were retrieved and checked against the document they
+        # name" -- the verb and the pronoun were written for the plural and printed
+        # over a count of one.
+        + ("was" if checked == 1 else "were")
+        + " retrieved and checked against the document "
+        + ("it names" if checked == 1 else "they name")
+        + f". For the remaining {remaining[:1].lower()}{remaining[1:]}, {outstanding}."
         + reconciled
         # Only the cited sources are listed anywhere in this report, so pointing at
         # a per-source record for all of them pointed at a list that does not exist.

@@ -482,8 +482,11 @@ def test_an_objection_three_ideas_escape_is_not_called_a_property_of_the_goal():
 
     paragraph = _objection_spread(spread, 7)
     assert "raised against at least four of the seven ideas" in paragraph
+    # A ceiling, because the raise-count above it is a floor: two phrasings of one
+    # objection can still miss each other, and an objection that missed its group is
+    # an idea counted here as escaping.
     assert (
-        "Three of the ideas escaped it, so it is not a property of the goal"
+        "At most three of the ideas escaped it, so it is not a property of the goal"
         in paragraph
     )
     assert "cannot be resolved by choosing differently" not in paragraph

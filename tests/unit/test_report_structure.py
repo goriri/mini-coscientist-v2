@@ -1769,7 +1769,9 @@ def test_a_grounding_verdict_several_ideas_share_is_explained_once():
         ["unverified", "unverified", "uncited", "grounded"]
     )
     assert hoisted == {"unverified"}
-    assert "Two of them are marked unverified." in text
+    # Of the four, so that the two ideas whose verdicts are not hoisted are visibly
+    # unaccounted for rather than silently missing from the arithmetic.
+    assert "Two of the four are marked unverified." in text
     assert "uncited" not in text
     assert "grounded" not in text
 
@@ -1796,7 +1798,10 @@ def test_what_a_shared_grounding_verdict_means_is_explained_in_one_place_only():
     assert "rests on retrieved text rather than on checked evidence" in explained
     # The counts stay in both: which ideas are affected is a fact of the run and the
     # reader of either section needs it. What it means is stated once.
-    assert "five are marked unverified and three are marked uncited" in pointer
+    assert (
+        "five of the eight are marked unverified and three others are marked uncited"
+        in pointer
+    )
     assert "rests on retrieved text" not in pointer
     assert "Candidate Ideas above" in pointer
 

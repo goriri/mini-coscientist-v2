@@ -244,5 +244,18 @@ def test_the_reference_standing_counts_a_mixed_list_rather_than_flattening_it():
     said = _reference_standing(
         _standing("verified", "discovered_unverified", "inaccessible")
     )
-    assert "One of the three were retrieved and checked" in said
+    assert "One of the three was retrieved and checked" in said
     assert "remaining two sources" in said
+
+
+def test_the_reference_standing_spells_every_count_in_its_sentence():
+    """House style writes counts above twelve in figures, and the two counts that open
+    clauses in this sentence are spelled whatever their size. A live run put both rules
+    in one sentence: "Twenty-five of the eighty were retrieved ... For the remaining 55
+    sources" -- the same kind of number written two ways eleven words apart."""
+    said = _reference_standing(
+        _standing(*(["verified"] * 25 + ["discovered_unverified"] * 55))
+    )
+    assert "Twenty-five of the eighty were retrieved" in said
+    assert "For the remaining fifty-five sources" in said
+    assert "55" not in said
