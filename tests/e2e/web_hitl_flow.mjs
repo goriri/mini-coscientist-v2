@@ -517,18 +517,27 @@ try {
     );
     return responses;
   })()`);
+  // Named, not counted. A run that spent the better part of an hour reaching
+  // this line failed it with "One or more dossier exports failed." and nothing
+  // else -- the server log was the only place the 500 and its cause were
+  // written down, and this is the last assertion of the flow.
+  const failedExports = reportExports.filter((item) => item.status !== 200);
   assert(
-    reportExports.every((item) => item.status === 200),
-    "One or more dossier exports failed.",
+    failedExports.length === 0,
+    `Dossier exports failed: ${failedExports
+      .map((item) => `${item.label} returned ${item.status} (${item.type})`)
+      .join("; ")}.`,
+  );
+  const signatures = reportExports.map((item) =>
+    item.signature.map((byte) => String.fromCharCode(byte)).join(""),
   );
   assert(
-    reportExports[0].signature[0] === 80 &&
-      reportExports[0].signature[1] === 75 &&
-      reportExports[1].signature
-        .map((item) => String.fromCharCode(item))
-        .join("") === "%PDF-" &&
+    signatures[0].startsWith("PK") &&
+      signatures[1] === "%PDF-" &&
       reportExports[2].type.includes("text/markdown"),
-    "DOCX, PDF, or Markdown export signatures were invalid.",
+    `DOCX, PDF, or Markdown export signatures were invalid: ${reportExports
+      .map((item, index) => `${item.label} ${JSON.stringify(signatures[index])}`)
+      .join("; ")}.`,
   );
   await waitFor(
     cdp,
