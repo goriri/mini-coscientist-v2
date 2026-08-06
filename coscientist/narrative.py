@@ -635,9 +635,15 @@ DEEP_DIVE_PREAMBLE = (
     "document this run retrieved and checked, **[Literature Lead]** where it names "
     "one the search found but nothing confirmed, **[Retracted or Unretrievable]** "
     "where it names one this run went back to and could not stand behind, and "
-    "**[Unsourced claim]** where it names no document at all. A gap carries no "
-    "label, because a statement that no evidence exists is not one that can be "
-    "grounded.",
+    "**[Unsourced claim]** where it names no document at all. A statement resting "
+    "on more than one record takes the label of the weakest of them, because a "
+    "reader needs the reason to distrust a statement before the reasons to trust "
+    "it. A gap carries no label, because a statement that no evidence exists is "
+    "not one that can be grounded. These labels and the grounding verdict beside "
+    "each idea are counted from different fields — the labels from the records "
+    "each statement names, the verdict from the citation list the specialist filed "
+    "with the idea — so an idea whose verdict reads grounded can carry unsourced "
+    "statements here, and both are true of what they are about.",
     "Identified issues and validated risks are the risks the specialist that "
     "proposed the idea named against its own work. No reviewer was asked to confirm "
     "them, so the list is neither validated nor complete, and a risk missing from it "
@@ -5180,6 +5186,37 @@ class _EvidenceRecord:
 # specialist naming a record instead of saying what the record holds.
 _BARE_REFERENCE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+")
 
+# The same thing with the underscore left out. A live run's specialists wrote
+# "stmt5" and "stmt3" where the evidence base holds "stmt_5" and "pass4_stmt_5",
+# the pattern above did not see them, and "stmt5." went to the reader as the whole
+# of an idea's evidence for it -- eight bullets across four ideas, and the invented-
+# citation audit named none of them because it reads the same pattern. The pattern
+# cannot simply be widened: Al2O3, LiPF6 and NCM811 are this shape and are what the
+# ideas are about. So the letters have to be the leading word of an id this run
+# actually recorded, and the token has to stand alone rather than sit inside a
+# formula.
+_PREFIXED_REFERENCE = re.compile(
+    r"(?<![A-Za-z0-9_])([A-Za-z]{2,})(\d{1,3})(?![A-Za-z0-9_])"
+)
+
+
+def _reference_prefixes(index: Mapping[str, _EvidenceRecord]) -> frozenset[str]:
+    """The leading words of the ids this run recorded, to recognise a misspelt one."""
+    return frozenset(
+        word.lower()
+        for identifier in index
+        for part in identifier.split("_")
+        if len(word := part.rstrip("0123456789")) >= 2
+    )
+
+
+def _is_reference(token: str, prefixes: frozenset[str]) -> bool:
+    """Whether this token is a specialist naming a record rather than saying a thing."""
+    if _BARE_REFERENCE.fullmatch(token):
+        return True
+    match = _PREFIXED_REFERENCE.fullmatch(token)
+    return bool(match) and match.group(1).lower() in prefixes
+
 
 def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
     """Every record id a specialist could have cited, to what it says and its standing.
@@ -5250,6 +5287,7 @@ def _invented_ids(
     """
     named = list(citations.unresolved) if citations else []
     index = _evidence_index(record)
+    prefixes = _reference_prefixes(index)
     recorded = record.cited_evidence.get(
         candidate.id,
         [
@@ -5262,7 +5300,7 @@ def _invented_ids(
         for statement in statements:
             bare = _sentence(statement).rstrip(".").strip()
             if (
-                _BARE_REFERENCE.fullmatch(bare)
+                _is_reference(bare, prefixes)
                 and bare not in index
                 and bare not in named
             ):
@@ -5297,16 +5335,27 @@ def _grounding_badge(
 
     A cited record outranks a URL in the prose, because it is the run's own
     verdict on the document rather than a guess from the text of a sentence.
+
+    Worst-first over the records a statement names, which is the convention the
+    grounding verdict already follows: a label is a reason to trust the sentence
+    beside it, and the weakest record it rests on is the reason not to. Taking the
+    best instead printed "**[Verified Source]** Al2O3 coatings improve capacity
+    retention (the unverified claim drawn from ..., the claim drawn from ...)" on a
+    live run -- the badge asserting a check of two records, the sentence naming one
+    of them as unchecked -- and would have called a statement verified over a
+    retracted record cited beside a sound one.
     """
-    if any(entry.status in GROUNDED_STATUSES for entry in cited):
-        return VERIFIED_BADGE
-    # Checked before the lead: a record this run pulled and could not stand behind is
-    # not a lead to follow, and it is the same record whose citation elsewhere in the
-    # report discredits the grounding of the ideas that rest on it.
+    # A record this run pulled and could not stand behind is not a lead to follow,
+    # and it is the same record whose citation elsewhere in the report discredits
+    # the grounding of the ideas that rest on it.
     if any(entry.status in DISCREDITED_STATUSES for entry in cited):
         return DISCREDITED_BADGE
     if cited:
-        return LEAD_BADGE
+        return (
+            VERIFIED_BADGE
+            if all(entry.status in GROUNDED_STATUSES for entry in cited)
+            else LEAD_BADGE
+        )
     locators = {
         match.group(0).rstrip(".,;)").lower() for match in _LOCATOR.finditer(statement)
     }
@@ -5334,6 +5383,7 @@ def _evidence_notes(
     }
     index = _evidence_index(record)
     names = _record_names(record)
+    prefixes = _reference_prefixes(index)
     # As recorded, before the naming pass rewrote the ids out of them. Falling back
     # to the candidate's own fields covers a brief built from a record this function
     # was handed directly, which the tests do and the pipeline does not.
@@ -5362,7 +5412,9 @@ def _evidence_notes(
                     text, verified, known, _cited_records(text, index)
                 )
             )
-            notes.append((heading, badge, _stated_evidence(text, index, names)))
+            notes.append(
+                (heading, badge, _stated_evidence(text, index, names, prefixes))
+            )
     return notes
 
 
@@ -5376,11 +5428,14 @@ _CITED_PREFIX = re.compile(
 
 
 def _stated_evidence(
-    text: str, index: Mapping[str, _EvidenceRecord], names: Mapping[str, str]
+    text: str,
+    index: Mapping[str, _EvidenceRecord],
+    names: Mapping[str, str],
+    prefixes: frozenset[str] = frozenset(),
 ) -> str:
     """One evidence statement with its ids read out, however the specialist wrote it."""
     bare = text.rstrip(".").strip()
-    if _BARE_REFERENCE.fullmatch(bare):
+    if _is_reference(bare, prefixes):
         # The whole answer was an id. What the record says is the only thing here
         # worth printing; the id itself named nothing a reader of this page can look
         # up, and printing it beside the text was two ways of saying the same record.

@@ -1044,6 +1044,65 @@ def test_a_citation_that_argues_against_its_own_idea_is_declared():
     ]
 
 
+def test_a_statement_is_badged_by_the_weakest_record_it_names():
+    """The badge was the best standing among the records a statement names, so a live
+    bullet read "**[Verified Source]** Al2O3 coatings improve capacity retention (the
+    unverified claim drawn from ..., the claim drawn from ...)" -- asserting a check
+    of two records in the label and naming one of them as unchecked in the same line.
+    The same rule would have called a statement verified over a retracted record cited
+    beside a sound one."""
+    from coscientist.narrative import (
+        DISCREDITED_BADGE,
+        LEAD_BADGE,
+        VERIFIED_BADGE,
+        _EvidenceRecord,
+        _grounding_badge,
+    )
+
+    checked = _EvidenceRecord("claim_1", "Retention improves", "verified")
+    unchecked = _EvidenceRecord(
+        "claim_2", "Retention improves", "discovered_unverified"
+    )
+    pulled = _EvidenceRecord("claim_3", "Retention improves", "retracted")
+
+    assert _grounding_badge("s", set(), set(), [checked]) == VERIFIED_BADGE
+    assert _grounding_badge("s", set(), set(), [checked, unchecked]) == LEAD_BADGE
+    assert _grounding_badge("s", set(), set(), [checked, pulled]) == DISCREDITED_BADGE
+
+
+def test_an_evidence_bullet_that_is_only_an_id_says_so():
+    """ "- **[Unsourced claim]** stmt5." was the whole of an evidence bullet on the
+    live run, eight times across four ideas. The resolver reads a token as a record
+    id only where it carries an underscore, and the specialists wrote "stmt5" and
+    "stmt3" where the base holds "stmt_5" -- so the id was neither read out, nor
+    named by the invented-citation audit, which reads the same pattern."""
+    from coscientist.models import EvidenceClaim, EvidencePacket
+    from coscientist.narrative import _evidence_notes, _invented_ids
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        claims=[EvidenceClaim(id="stmt_5", claim="Thin coatings extend cycle life")],
+    )
+    candidate = _candidate("cand_a")
+    candidate.evidence_for = [
+        "stmt5",
+        "Al2O3 coatings suppress LiPF6 hydrolysis in NCM811 cells",
+        "stmt_5",
+    ]
+
+    stated = [text for _, _, text in _evidence_notes(record, candidate)]
+    assert "stmt5" in stated[0]
+    assert "no record of that id exists in this run's evidence base" in stated[0]
+    # A formula is the same shape as an id and is what the ideas are about, so the
+    # letters have to be the leading word of an id this run actually recorded.
+    assert stated[1] == "Al2O3 coatings suppress LiPF6 hydrolysis in NCM811 cells."
+    # An id that does resolve is still read out rather than printed.
+    assert stated[2] == "Thin coatings extend cycle life."
+
+    assert _invented_ids(record, candidate, None) == ["stmt5"]
+
+
 def test_an_idea_citing_sources_is_not_told_it_cites_no_evidence():
     """ "No finding in this report's evidence is cited for this idea." was printed
     under two live ideas that cite a source and a neutral claim apiece, every id of
