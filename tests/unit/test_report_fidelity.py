@@ -1248,6 +1248,51 @@ def test_one_flaw_reached_by_two_reviews_is_one_finding():
     assert checks[0][0] == "Fatal flaw recorded by the correctness review"
 
 
+def test_what_an_untested_objection_is_worth_is_said_once_over_all_of_them():
+    """The reading guide states it above the ideas, over every list it is true of.
+    Critical Flaws restated it verbatim under six of eight ideas -- forty words each,
+    and none of the six copies said anything the guide had not."""
+    from coscientist.narrative import DEEP_DIVE_PREAMBLE, _summary_sections
+
+    guide = " ".join(DEEP_DIVE_PREAMBLE)
+    assert "Nothing in this run tested any item in those lists" in guide
+
+    critical = _summary_sections(
+        _facts(),
+        [
+            _idea_review(section="Impact", score=2, objections=["The gain is small."]),
+            _idea_review(section="Correctness", score=5),
+        ],
+        rank=1,
+        elo=1200,
+        shortlisted=False,
+    )["Critical Flaws"]
+    # Which review scored it down is this idea's fact and stays here. Where to read
+    # the objection is a pointer, which is short; what the objection is worth untested
+    # is the guide's sentence and is not printed a second time.
+    assert critical.startswith("The impact review scored this idea at or below two")
+    assert "What it objected to is set out under Deep Verification below." in critical
+    assert "unresolved rather than established" not in critical
+    assert "Nothing else in this run has tested" not in critical
+
+
+def test_a_recorded_fatal_flaw_does_not_restate_the_guides_sentence_either():
+    from coscientist.narrative import _summary_sections
+
+    critical = _summary_sections(
+        _facts(),
+        [_idea_review(section="Correctness", score=1, fatal_flaws=["No such cell."])],
+        rank=1,
+        elo=1200,
+        shortlisted=False,
+    )["Critical Flaws"]
+    assert (
+        "printed in full under Deep Verification below, and no reviewer withdrew it"
+        in critical
+    )
+    assert "Nothing in this run tested it" not in critical
+
+
 def test_no_flaw_and_no_low_score_still_says_what_that_is_worth():
     """The clean case has to stay a statement about the reviews, not about the idea."""
     from coscientist.narrative import _summary_sections

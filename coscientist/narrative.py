@@ -3539,9 +3539,10 @@ def _fatal_flaw_notice(faulted: Sequence[IdeaReview]) -> str:
         # alongside Coherence and the Deep Verification lead-in.
         + " against this idea. "
         + ("It is" if flaws == 1 else "They are")
-        + " printed in full under Deep Verification below. Nothing in this run "
-        + ("tested it" if flaws == 1 else "tested them")
-        + ", and no reviewer withdrew "
+        # That nothing in the run tested the items in that list is the reading
+        # guide's, stated once over all of them. Restated here it was a second copy
+        # of one sentence inside the subsection the guide is about.
+        + " printed in full under Deep Verification below, and no reviewer withdrew "
         + ("it" if flaws == 1 else "any of them")
         + "."
     )
@@ -3572,19 +3573,18 @@ def _low_score_notice(low: Sequence[IdeaReview]) -> str:
             else f"{opening} It recorded no objection to go with the score, so what "
             "the score is a judgement about is not on the record."
         )
+    # What standing an untested objection has, and that Deep Verification attributes
+    # each item to the review that raised it, is the reading guide's -- stated once
+    # above the ideas, over every list it is true of. Restated here it ran verbatim
+    # under six of eight ideas, forty words apiece, and the six copies said nothing
+    # the guide had not. What varies from idea to idea is which reviews scored it
+    # down, which is the sentence above; the rest is a pointer.
     return (
         f"{opening} What "
         + ("they" if len(low) > 1 else "it")
         # "Deep verification" is not what the heading says. A reader searching the
         # document for the lower-case spelling this pointed them at finds nothing.
-        + " objected to is set out under Deep Verification below, attributed to the "
-        f"{'reviews' if len(low) > 1 else 'review'} that raised "
-        + ("them" if objections > 1 else "it")
-        + ". Nothing else in this run has tested "
-        + ("those objections" if objections > 1 else "that objection")
-        + ", so "
-        + ("they stand" if objections > 1 else "it stands")
-        + " unresolved rather than established."
+        + " objected to is set out under Deep Verification below."
     )
 
 
