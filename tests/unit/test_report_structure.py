@@ -1763,6 +1763,27 @@ def test_two_claims_whose_sources_went_unnamed_are_still_told_apart(
     assert "cited claim" not in body
 
 
+def test_a_review_writing_about_the_identifiers_keeps_the_identifiers(
+    rich_session: Session,
+):
+    """A live review read "cites invalid evidence IDs (claim_4, the unverified cited
+    claim) which are not in the citable evidence list", and its next sentence listed
+    the paper claim_4 names among the valid ones. Naming an id inside a sentence about
+    ids makes the report accuse a correctly cited paper of being a fabricated
+    identifier, and leaves the reader nothing to check against the evidence list."""
+    body = _findings(
+        rich_session,
+        "The idea cites invalid evidence IDs (claim_1, claim_9) which are not in "
+        "the citable evidence list.",
+        "The valid ids are used correctly to establish the baseline.",
+        "Its mechanism rests on claim_1, which is sound.",
+    )
+
+    assert "invalid evidence IDs (`claim_1`, `claim_9`)" in body
+    # Everywhere else the id is still the paper it names.
+    assert "Its mechanism rests on the claim drawn from Binder chemistry" in body
+
+
 def test_a_claim_too_long_to_splice_says_only_what_kind_of_record_it_is(
     rich_session: Session,
 ):
@@ -1816,13 +1837,22 @@ def test_a_finding_too_long_to_splice_is_named_rather_than_read_out(
     rich_session: Session,
 ):
     """A finding is a sentence, and a sentence spliced into the middle of a
-    reviewer's own sentence is only readable while it is short."""
+    reviewer's own sentence is only readable while it is short.
+
+    Where the run holds more than one such finding they cannot all be called the same
+    thing, so each opens with its own first few words and is shown as cut. What must
+    not happen either way is the whole finding arriving inside the reviewer's clause.
+    """
     record = load_record(rich_session)
     statement = record.discovery.narratives[0].statements[0]
     body = _findings(rich_session, f"This is answered by {statement.id}")
 
     _assert_no_record_ids(body)
-    assert "an unverified finding from the literature search" in body
+    named = "the finding that atomic layer deposition of alumina on silicon anodes …"
+    assert f"This is answered by {named}." in body
+    # The finding itself is printed in full in the Knowledge Base, which is where a
+    # reader who wants the whole of it goes; what the review carries is a name.
+    assert statement.text in body
 
 
 def test_a_waived_evidence_gate_is_a_blocking_warning_the_body_counts(

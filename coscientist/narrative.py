@@ -1945,6 +1945,9 @@ _HOUSE_TERMS: tuple[tuple[re.Pattern[str], str], ...] = (
 def _record_names(record: ResearchRecord) -> dict[str, str]:
     """Every id this run holds, mapped to the phrase that stands in for it in prose."""
     names: dict[str, str] = dict(record.titles)
+    # What each record says, kept for the records whose name is a category rather
+    # than a title: it is what tells two of them apart if the category cannot.
+    spoken: dict[str, tuple[str, str]] = {}
     if record.evidence:
         # The title as the search handed it over ends in the site it was found on
         # and the label on the link. Substituted into a reviewer's sentence, "the
@@ -1980,6 +1983,8 @@ def _record_names(record: ResearchRecord) -> dict[str, str]:
                     f"the {standing}cited claim",
                 )
             )
+            if not title:
+                spoken[claim.id] = (f"the {standing}claim that", claim.claim)
     for lead in record.discovery.source_leads if record.discovery else []:
         title = _without_search_chrome(" ".join(lead.title.split()))
         standing = _standing(lead.verification_status)
@@ -1997,6 +2002,8 @@ def _record_names(record: ResearchRecord) -> dict[str, str]:
                     "an unverified finding from the literature search",
                 ),
             )
+            spoken.setdefault(statement.id, ("the finding that", statement.text))
+    _distinguished(names, spoken)
     return names
 
 
@@ -2011,6 +2018,54 @@ def _named_by_text(opener: str, text: str, fallback: str) -> str:
     if not 0 < len(spoken) <= 120:
         return fallback
     return f"{opener} {spoken[:1].lower()}{spoken[1:]}"
+
+
+_DISTINGUISHING = 60
+"""How much of a record's own words stands in for a name the run cannot make unique."""
+
+
+def _distinguished(names: dict[str, str], spoken: dict[str, tuple[str, str]]) -> None:
+    """Give a record its own name where the category it fell back to is shared.
+
+    Naming a long finding by its kind is right while the kind identifies it. Two
+    claims whose sources went untitled were both called "the unverified cited claim"
+    inside one parenthesis of a live review: four words twice over, naming neither
+    and reading as one record printed twice. Where the fallback collides, each of the
+    colliding records opens with what it says instead -- a first few words, not the
+    finding, because the reason the kind was printed in the first place is that a
+    whole finding spliced into a reviewer's sentence is unreadable.
+    """
+    taken = Counter(names.values())
+    for record_id, (opener, text) in spoken.items():
+        if taken[names.get(record_id, "")] < 2:
+            continue
+        said = " ".join(text.split()).rstrip(".")
+        head = said[:_DISTINGUISHING].rsplit(" ", 1)[0].rstrip(" ,;:")
+        if len(head.split()) > 3:
+            names[record_id] = f"{opener} {head[:1].lower()}{head[1:]}" + (
+                " …" if len(head) < len(said) else ""
+            )
+
+
+# A sentence about the identifiers themselves. A live review read "cites invalid
+# evidence IDs (claim_4, claim_9) which are not in the citable evidence list", and the
+# naming pass turned the one id that does resolve into the paper it names -- so the
+# report accused a correctly cited paper of being an invalid identifier, and the very
+# next sentence of the same review listed that paper among the valid ones. Where the
+# subject is the id, the id is what the reader has to be given: it is the only thing
+# they can check against the evidence list the sentence is talking about.
+_ABOUT_THE_ID = re.compile(
+    r"\b(?:ids?|identifiers?)\b(?!\s+(?:of|for)\s+the\s+(?:paper|study|author))",
+    re.IGNORECASE,
+)
+
+
+def _sentence_around(text: str, position: int) -> str:
+    """The one sentence a match sits in, for deciding what the sentence is about."""
+    marks = (". ", "! ", "? ", "\n")
+    start = max(text.rfind(mark, 0, position) for mark in marks)
+    ends = [index for mark in marks if (index := text.find(mark, position)) != -1]
+    return text[start + 1 : min(ends, default=len(text))]
 
 
 def _name_ids_in_prose(record: ResearchRecord) -> None:
@@ -2032,8 +2087,12 @@ def _name_ids_in_prose(record: ResearchRecord) -> None:
         # hold, a record this session does not hold, a record this session does not
         # hold)", where the reader cannot tell how many distinct ids that is, whether
         # any two are the same, or which one to go and look for.
+        quoted = match.string[match.start() - 1 : match.start()] == "`"
         if match.group(0).lower() not in folded:
-            return f"`{match.group(0)}`"
+            return match.group(0) if quoted else f"`{match.group(0)}`"
+        # Where the sentence is about the identifiers, the identifier stays.
+        if _ABOUT_THE_ID.search(_sentence_around(match.string, match.start())):
+            return match.group(0) if quoted else f"`{match.group(0)}`"
         name = folded[match.group(0).lower()]
         # An id that opened the sentence takes the sentence's capital with it.
         opens = match.start() == 0 or match.string[: match.start()].rstrip().endswith(
