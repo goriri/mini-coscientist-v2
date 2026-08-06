@@ -253,6 +253,21 @@ class CitationRegistry:
         return found if len(found) == 1 else set()
 
     @property
+    def verification_standing(self) -> tuple[int, int]:
+        """How many sources available to cite were checked against their document.
+
+        Counted over every lead the registry can number rather than over the entries
+        that ended up cited, because the reference list is settled after the prose
+        describing it is written.
+        """
+        checked = sum(
+            1
+            for lead in self._leads.values()
+            if lead.verification_status in GROUNDED_STATUSES
+        )
+        return checked, len(self._leads)
+
+    @property
     def universal_qualifier(self) -> str:
         """The qualifier that holds of every cited source, if one does.
 
@@ -1484,6 +1499,40 @@ def load_record(session: Session) -> ResearchRecord:
     return record
 
 
+def _named_parents(evolved: EvolutionRecord) -> list[str]:
+    """Every parent this revision names, wherever the specialist wrote it down.
+
+    ``EvolutionRecord.parent_ids`` is where the contract puts it, but a specialist
+    that returns the flat ``records`` shape routinely puts the parent on the evolved
+    candidate instead, and the reshaper that unwraps the by-round shape only reads it
+    off the candidate. Either field is the specialist saying the same thing.
+    """
+    return list(dict.fromkeys([*evolved.parent_ids, *evolved.candidate.parent_ids]))
+
+
+def _ancestor_in_id(revision_id: str, known: Iterable[str]) -> str:
+    """The one ranked id a revision's own id is built out of, if exactly one is.
+
+    Live runs name revisions themselves, and the names they choose carry the parent:
+    ``cand_3_evolved_1``, ``evolved_cand_3_v2``. Nothing in the contract requires
+    that, so this is a recovery and not the route -- but a run whose lineage does not
+    resolve prints a different title for the same idea in the ranking and in the
+    recommendation, which is the defect this exists to stop.
+
+    Bounded on both sides so ``cand_1`` is not read out of ``cand_11``, and taken
+    only when a single ranked id matches: two matches name no one parent.
+    """
+    found = [
+        item
+        for item in known
+        if re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(item)}(?![A-Za-z0-9])",
+            revision_id,
+        )
+    ]
+    return found[0] if len(found) == 1 else ""
+
+
 def _trace_lineage(record: ResearchRecord, ranked: set[str]) -> None:
     """Walk each revision back to the candidate the tournament actually ranked.
 
@@ -1492,15 +1541,38 @@ def _trace_lineage(record: ResearchRecord, ranked: set[str]) -> None:
     specialist emitted them out of order. Repeating until nothing new resolves costs
     a handful of passes over a list that never exceeds the population size.
     """
+    # A parent named by title rather than by id. The reader-facing title is what the
+    # specialist has in front of it, and naming ideas by it is the commonest way the
+    # id goes missing. Exact after whitespace, and dropped where two ideas share it.
+    by_title = {
+        " ".join(title.split()).casefold(): candidate_id
+        for candidate_id, title in record.titles.items()
+        if candidate_id in ranked
+    }
+    for title, count in Counter(
+        " ".join(record.titles[item].split()).casefold()
+        for item in ranked
+        if item in record.titles
+    ).items():
+        if count > 1:
+            by_title.pop(title, None)
     pending = list(record.evolution.records if record.evolution else [])
     while pending:
         unresolved = []
         for evolved in pending:
+            named = _named_parents(evolved)
             ancestor = next(
                 (
                     parent if parent in ranked else record.lineage[parent]
-                    for parent in evolved.parent_ids
+                    for parent in named
                     if parent in ranked or parent in record.lineage
+                ),
+                "",
+            ) or next(
+                (
+                    by_title[key]
+                    for parent in named
+                    if (key := " ".join(parent.split()).casefold()) in by_title
                 ),
                 "",
             )
@@ -1509,9 +1581,25 @@ def _trace_lineage(record: ResearchRecord, ranked: set[str]) -> None:
             else:
                 unresolved.append(evolved)
         if len(unresolved) == len(pending):
-            # Every remaining revision descends from something outside this
-            # population. They are left unmapped rather than guessed at.
-            break
+            # Nothing left resolves through what the records name. Before giving up,
+            # read the ancestor out of the revision's own id, which is where a live
+            # specialist that omitted parent_ids altogether still put it.
+            still_unresolved = []
+            for evolved in unresolved:
+                found = _ancestor_in_id(
+                    evolved.candidate.id, [*ranked, *record.lineage]
+                )
+                if found:
+                    record.lineage[evolved.candidate.id] = record.lineage.get(
+                        found, found
+                    )
+                else:
+                    still_unresolved.append(evolved)
+            if len(still_unresolved) == len(unresolved):
+                # Every remaining revision descends from something outside this
+                # population. They are left unmapped rather than guessed at.
+                break
+            unresolved = still_unresolved
         pending = unresolved
 
 
@@ -5577,6 +5665,36 @@ def _open_flaw_consequence(record: ResearchRecord, ids: Sequence[str]) -> str:
     )
 
 
+def _reference_standing(record: ResearchRecord) -> str:
+    """Whether the sources this report cites were read, said in one sentence.
+
+    This used to be the flat assertion that every one of them was a lead nobody had
+    checked, printed on every run whatever verification had established. On the run
+    that finished today it stood two hundred lines below "every claim any of them
+    cites exists in this report and has been verified against its source", and the
+    two sentences described the same sources.
+    """
+    checked, total = record.citations.verification_standing
+    outstanding = (
+        "the workflow recorded where a statement came from, but inspecting the "
+        "original and confirming that it says what is attributed to it remains "
+        "outstanding"
+    )
+    if not total or not checked:
+        return f"Every one of them is a lead rather than a verified reference: {outstanding}."
+    if checked == total:
+        return (
+            "Every one of them was retrieved and checked against the document it "
+            "names, so a marker in the text points at a source this run has read."
+        )
+    return (
+        f"{_number_word(checked)} of the {_number_word(total).lower()} were retrieved "
+        f"and checked against the document they name. For the remaining "
+        f"{_plural(total - checked, 'source')}, {outstanding}; which is which is "
+        "recorded against each entry in the evidence appendix."
+    )
+
+
 def _section_eight(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft:
     manifest = record.manifest
     fatal = [
@@ -5602,11 +5720,8 @@ def _section_eight(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draf
             # reaches for it and the paragraph holding it can still be cut afterwards,
             # so the figure ran ahead of the reference list more often than not. What
             # survives into References is settled after this sentence is written.
-            "The sources this report draws on are listed under References. Every one "
-            "of them is a lead rather than a verified "
-            "reference: the workflow recorded where a statement came from, but "
-            "inspecting the original and confirming that it says what is attributed "
-            "to it remains outstanding."
+            "The sources this report draws on are listed under References. "
+            + _reference_standing(record)
         )
     else:
         core.append(
@@ -5985,10 +6100,21 @@ def _post_evolution_reordering(
     settled = [
         item for item in record.post_evolution_order if item in set(recommended_ids)
     ]
-    ranked = [
-        brief.candidate_id for brief in briefs if brief.candidate_id in set(settled)
-    ]
-    if len(settled) < 2 or settled == ranked:
+    # Through the lineage on both sides. The briefs are built from the live population,
+    # which after evolution holds the rewrites, so their ids are the revision ids and
+    # never appear in either list above -- both of which the caller has already
+    # resolved back to the ranked field. On a live run that made the second list empty
+    # and the paragraph read "ranked on the proposals ... they come out ." while the
+    # first list named four ideas.
+    ranked = list(
+        dict.fromkeys(
+            resolved
+            for brief in briefs
+            if (resolved := record.ranked_id(brief.candidate_id)) in set(settled)
+        )
+    )
+    # Two orders are compared, so there is nothing to say unless both are orders.
+    if len(settled) < 2 or len(ranked) < 2 or settled == ranked:
         return ""
     return (
         "That round did not agree with section four about the order. Ranked on the "
@@ -6055,17 +6181,34 @@ def _section_nine(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
     manifest = record.manifest
     # Resolved back to the ranked field. The meta-review names whichever revision was
     # current when it ran, and those ids carry claims the reader has not been shown.
-    recommended_ids = list(
+    resolved_ids = list(
         dict.fromkeys(
             record.ranked_id(item)
             for item in (manifest.recommendation_candidate_ids if manifest else [])
         )
     )
+    # Anything still holding a revision's own id did not resolve. Its title is derived
+    # from the rewritten claim, so on a live run this section recommended four ideas
+    # under four names that appear nowhere else in the report -- one of them stating
+    # the opposite of the ranked idea it was a rewrite of, because the rewrite had
+    # reversed the claim and the title follows the claim. Reported as unmatched now,
+    # rather than presented as a fifth, sixth, seventh and eighth idea.
+    unresolved = {
+        item.candidate.id
+        for item in (record.evolution.records if record.evolution else [])
+    }
+    recommended_ids = [item for item in resolved_ids if item not in unresolved]
+    unmatched_ids = [item for item in resolved_ids if item in unresolved]
     recommended = [record.title_for(item) for item in recommended_ids]
+    # Only where the idea's own section will carry the rewrite. This paragraph sends
+    # the reader to a Revised Form heading under each recommended idea, and the block
+    # that prints it stands down when the rewrite changed none of the fields the
+    # report shows -- so the promise was made and nothing kept it.
+    printed = {brief.candidate_id for brief in briefs if brief.revised_form}
     revised = [
         (item, record.title_for(item), revision)
         for item in recommended_ids
-        if (revision := record.revision_of(item)) is not None
+        if item in printed and (revision := record.revision_of(item)) is not None
     ]
     core = [
         "The recommendation below is a proposal for what to do next, conditional on "
@@ -6135,6 +6278,26 @@ def _section_nine(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
                 "thing to test first, and a result against it takes more than one idea "
                 "off this list at once."
             )
+    if unmatched_ids:
+        core.append(
+            "The meta-review also recommended "
+            + _plural(len(unmatched_ids), "candidate")
+            + " this report cannot match to any idea it ranked: "
+            + _join([f"`{item}`" for item in unmatched_ids], fallback="none").rstrip(
+                "."
+            )
+            + ". The identifier belongs to a rewrite whose parent the evolution stage "
+            "did not record, so nothing here says which of the ranked ideas "
+            + ("it is" if len(unmatched_ids) == 1 else "they are")
+            + " a rewrite of. "
+            + (
+                "That recommendation"
+                if len(unmatched_ids) == 1
+                else "Those recommendations"
+            )
+            + " should be read off the evolution stage's own output rather than "
+            "from this report."
+        )
     if revised:
         core.append(
             "The recommendation is for the revised form of each of these, not the form "

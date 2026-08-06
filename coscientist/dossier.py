@@ -67,6 +67,7 @@ from .narrative import (
     _number_word,
     _opening,
     _plural,
+    _reference_standing,
     build_idea_briefs,
     evidence_integrity_lines,
     load_record,
@@ -410,7 +411,14 @@ def _link_text(url: str) -> str:
     """
     if len(url) <= _LINK_TEXT_CEILING:
         return url
-    return url[: _LINK_TEXT_CEILING - 1].rstrip("/_-") + "…"
+    # On a separator the URL itself supplies. The bare slice cut inside the words a
+    # locator carries in its path -- ".../Effect_of_Al2O3_coating_on_the_electroch…"
+    # -- which reads as a broken link rather than an abbreviated one.
+    head = url[: _LINK_TEXT_CEILING - 1]
+    cut = max(head.rfind(character) for character in "/_-.?&=")
+    if cut > _LINK_TEXT_CEILING // 2:
+        head = head[:cut]
+    return head.rstrip("/_-.?&=") + "…"
 
 
 def _reference_line(citation: Citation, *, distinguisher: str = "") -> str:
@@ -534,7 +542,14 @@ def _knowledge_base(record: ResearchRecord, overview: ResearchOverview) -> list[
         "",
     ]
     if references:
-        lead_in = _REFERENCE_QUALIFIERS.get(record.citations.universal_qualifier)
+        # A qualifier that holds of the whole list gets the sentence written for it.
+        # Where the list is mixed there is no universal qualifier, and this stood
+        # empty -- so the reference list of a run that had checked some of its
+        # sources and not others said nothing at all about which were which, while
+        # the findings section two chapters above stated a figure.
+        lead_in = _REFERENCE_QUALIFIERS.get(
+            record.citations.universal_qualifier
+        ) or _reference_standing(record)
         if lead_in:
             lines.extend([lead_in, ""])
         if any(_redirect_only(citation) for citation in references):

@@ -120,6 +120,7 @@ def _brief(
     matches: list | None = None,
     facts: dict[str, str] | None = None,
     candidate_id: str = "",
+    revised_form: list[tuple[str, str]] | None = None,
 ) -> IdeaBrief:
     return IdeaBrief(
         title=title,
@@ -140,6 +141,7 @@ def _brief(
         losses=0,
         ties=0,
         shortlisted=shortlisted,
+        revised_form=list(revised_form or []),
     )
 
 
@@ -1119,7 +1121,17 @@ def test_the_change_log_covers_every_round_of_a_rewrite_not_the_last_one():
     """
     core = _nine(
         _twice_revised(),
-        [_brief("A TiO2 coating", [], facts=_facts(), candidate_id="cand_a")],
+        [
+            _brief(
+                "A TiO2 coating",
+                [],
+                facts=_facts(),
+                candidate_id="cand_a",
+                # The change log is only promised where the idea's own section will
+                # carry the rewrite, which is what this brief says it does.
+                revised_form=[("Claim", "An Al2O3 coating raises retention.")],
+            )
+        ],
     )
     assert "TiO2 to Al2O3 to match the baseline material" in core
     assert "H14-grade HEPA filtration" in core
@@ -1191,7 +1203,17 @@ def test_the_go_no_go_the_reader_is_sent_to_run_belongs_to_the_recommended_form(
     form is what is recommended, and the rewrite had changed the test."""
     core = _nine(
         _twice_revised(),
-        [_brief("A TiO2 coating", [], facts=_facts(), candidate_id="cand_a")],
+        [
+            _brief(
+                "A TiO2 coating",
+                [],
+                facts=_facts(),
+                candidate_id="cand_a",
+                # The change log is only promised where the idea's own section will
+                # carry the rewrite, which is what this brief says it does.
+                revised_form=[("Claim", "An Al2O3 coating raises retention.")],
+            )
+        ],
     )
     assert "Confirm loading within five per cent by ICP-OES" in core
     assert "as the rewrite recommended below states it" in core
@@ -1365,7 +1387,16 @@ def test_the_rereview_count_and_its_verdict_are_not_run_together():
     ]
     record.evolution.ranking_history = [TournamentState(ratings={"cand_a_v3": 1200.0})]
     core = _nine(
-        record, [_brief("A TiO2 coating", [], facts=_facts(), candidate_id="cand_a")]
+        record,
+        [
+            _brief(
+                "A TiO2 coating",
+                [],
+                facts=_facts(),
+                candidate_id="cand_a",
+                revised_form=[("Claim", "An Al2O3 coating raises retention.")],
+            )
+        ],
     )
     assert (
         "Both checks were run again on the rewrites: two re-reviews, every one of "
@@ -2528,6 +2559,7 @@ def test_the_two_orders_a_reordering_reports_are_set_as_two_sentences():
     record = SimpleNamespace(
         post_evolution_order=["b", "a", "c"],
         title_for=titles.__getitem__,
+        ranked_id=lambda item: item,
     )
     briefs = [SimpleNamespace(candidate_id=item) for item in ("a", "b", "c")]
     said = _post_evolution_reordering(record, ["a", "b", "c"], briefs)
@@ -2538,7 +2570,11 @@ def test_the_two_orders_a_reordering_reports_are_set_as_two_sentences():
     # The section says nothing at all when the two rounds agree, which is the common
     # case: a reader is told about a reordering only when there was one.
     assert not _post_evolution_reordering(
-        SimpleNamespace(post_evolution_order=["a", "b", "c"], title_for=titles.get),
+        SimpleNamespace(
+            post_evolution_order=["a", "b", "c"],
+            title_for=titles.get,
+            ranked_id=lambda item: item,
+        ),
         ["a", "b", "c"],
         briefs,
     )
