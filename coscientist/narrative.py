@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import pairwise
 from typing import Any, Literal
@@ -765,11 +765,51 @@ def derive_idea_title(claim: str, *, max_words: int = 9) -> str:
         words.pop(0)
         while words and words[0].strip(",.;:").lower() in _TITLE_FILLER_WORDS:
             words.pop(0)
-    truncated = len(words) > max_words
-    words = _trimmed_tail(words[:max_words], truncated)
+    budget = _title_budget(words, max_words)
+    truncated = len(words) > budget
+    words = _trimmed_tail(words[:budget], truncated)
     words = _trimmed_tail(_whole_phrase(_closed_brackets(words), truncated), truncated)
     title = " ".join(words).strip(" ,;:.")
     return _title_case(title) if title else "Unnamed Research Idea"
+
+
+_TITLE_NEGATIONS = frozenset({"not", "never", "no", "cannot", "neither", "nor"})
+_TITLE_COORDINATORS = frozenset({"and", "or", "nor"})
+_TITLE_BUDGET_SLACK = 5
+"""How far past the budget a title may run to finish the phrase it is inside."""
+
+
+def _title_budget(words: list[str], max_words: int) -> int:
+    """How many words this particular claim needs, where the budget cuts it wrong.
+
+    Two cases, both from headings a live run printed. A negated claim trimmed back
+    to a whole phrase loses the negation with the words after it: "Ultrathin (1-5
+    nm) Metal Oxide Coatings Do Not Fundamentally" was the one idea in the run
+    arguing that coatings do not work, and trimming the dangling adverb leaves
+    "Ultrathin (1-5 nm) Metal Oxide Coatings" -- the claim with its stance
+    removed, under which the section, the summary row and six tournament tables
+    all name it. A cut landing immediately before "and" splits a coordination:
+    "Applying a 2.5 nm Nanolaminate Coating of Alternating Al2O3" names a
+    laminate alternating with nothing, because "and TiO2" was the next two words.
+
+    In both the budget moves rather than the phrase, and never by more than the
+    slack -- a title is a title.
+    """
+    if len(words) <= max_words:
+        return max_words
+    tokens = [word.strip(",.;:").lower() for word in words]
+    if any(token in _TITLE_NEGATIONS for token in tokens[:max_words]):
+        # To the end of the clause, which is all that is left of the sentence by
+        # this point: a negation reaches its verb or it says the opposite thing.
+        if len(words) <= max_words + _TITLE_BUDGET_SLACK:
+            return len(words)
+    if tokens[max_words] in _TITLE_COORDINATORS:
+        for count in range(max_words + 2, max_words + _TITLE_BUDGET_SLACK + 1):
+            if count > len(words):
+                break
+            if not _is_dangling(words[count - 1], True, words[count - 2]):
+                return count
+    return max_words
 
 
 def _trimmed_tail(words: list[str], truncated: bool) -> list[str]:
@@ -3788,14 +3828,92 @@ LEAD_BADGE = "[Literature Lead]"
 UNSOURCED_BADGE = "[Unsourced claim]"
 
 
-def _grounding_badge(statement: str, verified: set[str], known: set[str]) -> str:
+@dataclass(frozen=True)
+class _EvidenceRecord:
+    """One record of this run's evidence base, as an evidence statement can name it."""
+
+    identifier: str
+    text: str
+    status: str
+
+
+# Shaped like an identifier and nothing like a sentence: one word, no spaces, at
+# least one underscore-separated part. A statement that is only this is a
+# specialist naming a record instead of saying what the record holds.
+_BARE_REFERENCE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+")
+
+
+def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
+    """Every record id a specialist could have cited, to what it says and its standing.
+
+    The generation stage is given the evidence base with its identifiers and is
+    asked for statements. On a live run four of the eight ideas answered with the
+    identifiers: "Evidence for: claim_6_1." was printed to the reader as the whole
+    of what the literature says for the second-ranked hypothesis, over an id
+    defined nowhere in the document. Resolving them here prints the claim; it also
+    gives the badge something to read, which is the other half of the same defect
+    -- the badge was decided by looking for a URL in the sentence, so a statement
+    citing a verified claim by id was labelled an unsourced one.
+    """
+    index: dict[str, _EvidenceRecord] = {}
+    for source in record.evidence.sources if record.evidence else []:
+        index[source.id] = _EvidenceRecord(
+            source.id,
+            source.title.strip() or source.url,
+            source.verification_status,
+        )
+    for lead in record.discovery.source_leads if record.discovery else []:
+        index[lead.id] = _EvidenceRecord(
+            lead.id,
+            lead.title.strip() or lead.canonical_url,
+            lead.verification_status,
+        )
+    for narrative in record.discovery.narratives if record.discovery else []:
+        for statement in narrative.statements:
+            index[statement.id] = _EvidenceRecord(
+                statement.id, statement.text, "discovered_unverified"
+            )
+    # Claims last: where a claim and a source carry the same id, what the claim
+    # says is closer to what the statement was citing it for.
+    for claim in record.evidence.claims if record.evidence else []:
+        index[claim.id] = _EvidenceRecord(
+            claim.id, claim.claim, claim.verification_status
+        )
+    return index
+
+
+def _cited_records(
+    statement: str, index: Mapping[str, _EvidenceRecord]
+) -> list[_EvidenceRecord]:
+    """Which of the run's own records this statement names, in the order named."""
+    found: list[_EvidenceRecord] = []
+    for match in _BARE_REFERENCE.finditer(statement):
+        entry = index.get(match.group(0))
+        if entry is not None and entry not in found:
+            found.append(entry)
+    return found
+
+
+def _grounding_badge(
+    statement: str,
+    verified: set[str],
+    known: set[str],
+    cited: Sequence[_EvidenceRecord] = (),
+) -> str:
     """What stands behind one of a candidate's own evidence statements.
 
     Three labels rather than two, because the third case is the common one and
     the other two do not cover it: a specialist writes "contradictory findings
     are reported in the literature" and names no paper. Calling that a
     literature lead would tell a reader there is something to follow.
+
+    A cited record outranks a URL in the prose, because it is the run's own
+    verdict on the document rather than a guess from the text of a sentence.
     """
+    if any(entry.status in GROUNDED_STATUSES for entry in cited):
+        return VERIFIED_BADGE
+    if cited:
+        return LEAD_BADGE
     locators = {
         match.group(0).rstrip(".,;)").lower() for match in _LOCATOR.finditer(statement)
     }
@@ -3821,6 +3939,7 @@ def _evidence_notes(
         for source in sources
         if source.url and source.verification_status in GROUNDED_STATUSES
     }
+    index = _evidence_index(record)
     notes: list[tuple[str, str, str]] = []
     for heading, statements in (
         ("Evidence for", candidate.evidence_for),
@@ -3831,12 +3950,26 @@ def _evidence_notes(
             text = _sentence(statement)
             if not text:
                 continue
+            bare = text.rstrip(".").strip()
+            if _BARE_REFERENCE.fullmatch(bare):
+                entry = index.get(bare)
+                text = (
+                    _sentence(f"{entry.text.rstrip('.')} ({bare})")
+                    if entry is not None
+                    else _sentence(
+                        f'The specialist gave the record id "{bare}" here and no '
+                        "statement beside it, and no record of that id exists in "
+                        "this run's evidence base"
+                    )
+                )
             # A gap is a statement that no evidence exists, so grounding it is
             # not a question that can be asked of it.
             badge = (
                 ""
                 if heading == "Evidence gaps"
-                else _grounding_badge(text, verified, known)
+                else _grounding_badge(
+                    text, verified, known, _cited_records(text, index)
+                )
             )
             notes.append((heading, badge, text))
     return notes

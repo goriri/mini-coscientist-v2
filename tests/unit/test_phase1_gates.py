@@ -232,7 +232,7 @@ def test_v3_candidate_schema_and_mermaid_diagrams():
         draft = flow.preview()
         flow.accept(draft)
     report_md = compile_dossier(flow.session)
-    assert "### Executive Candidate Summary" in report_md
+    assert "## Executive Candidate Summary" in report_md
     assert (
         "| Rank | Candidate Title | Strategy | Primary Claim | Falsifier Summary |"
         in report_md

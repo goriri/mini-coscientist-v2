@@ -18,6 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from coscientist.dossier import (
+    CHAPTER_SECTIONS,
     _match_summary,
     _verdict_line,
     compile_dossier,
@@ -68,6 +69,33 @@ def report(rich_session: Session) -> str:
 @pytest.fixture
 def body(report: str) -> str:
     return report.split(_APPENDIX)[0]
+
+
+def _idea_sections(body: str) -> list[str]:
+    """The per-idea sections of the deep-dive chapter, and nothing else.
+
+    The chapter opens on two sections of its own -- the summary table and the
+    reading guide -- which are level two beside the ideas rather than level three
+    under them, so a bare split on the heading level returns them as ideas.
+    """
+    chapter = body[body.rindex("\n# Top ideas in detail\n") :]
+    return [
+        section
+        for section in chapter.split("\n## ")[1:]
+        if section.split("\n", 1)[0].strip() not in CHAPTER_SECTIONS
+    ]
+
+
+def _chapter_preamble(body: str) -> str:
+    """Everything in the deep-dive chapter above the first idea."""
+    chapter = body[body.index("\n# Top ideas in detail\n") :]
+    parts = chapter.split("\n## ")
+    kept = [parts[0]]
+    for section in parts[1:]:
+        if section.split("\n", 1)[0].strip() not in CHAPTER_SECTIONS:
+            break
+        kept.append(section)
+    return "\n## ".join(kept)
 
 
 def _headings(text: str) -> list[tuple[int, str]]:
@@ -335,7 +363,7 @@ def test_a_question_every_review_asks_of_every_idea_is_asked_once(
 
     for question in asked:
         assert body.count(question) == 1, f"asked under every idea: {question}"
-    hoisted = body[body.index("\n# Top ideas in detail\n") :].split("\n## ")[0]
+    hoisted = _chapter_preamble(body)
     for question in asked:
         assert question in hoisted, "hoisted above the ideas, not dropped"
     assert "Who asks what is set out here rather than under each idea" in hoisted
@@ -2179,7 +2207,7 @@ def test_an_objection_is_printed_once_per_idea_and_counted_under_its_review(
     in the report and belongs in the preamble; under each review it was forty copies of
     one signpost."""
     briefs = build_idea_briefs(load_record(rich_session))
-    dives = body[body.rindex("\n# Top ideas in detail\n") :].split("\n## ")[1:]
+    dives = _idea_sections(body)
     assert len(dives) == len(briefs)
 
     assert "Objections raised:" not in body
@@ -2210,7 +2238,7 @@ def test_a_response_is_printed_once_per_idea_and_counted_under_its_review(
     one thing the summary cannot show: that it answered rather than stood pat.
     """
     briefs = build_idea_briefs(load_record(rich_session))
-    dives = body[body.rindex("\n# Top ideas in detail\n") :].split("\n## ")[1:]
+    dives = _idea_sections(body)
 
     assert "Rebuttals offered:" not in body
     counted = 0
@@ -3056,7 +3084,7 @@ def test_no_paragraph_is_printed_three_times_inside_one_idea(body: str):
     """Description, the summary and Deep Verification each reprinted the mechanism."""
     import difflib
 
-    dives = body[body.rindex("\n# Top ideas in detail\n") :].split("\n## ")[1:]
+    dives = _idea_sections(body)
     assert dives
     for dive in dives:
         # A per-match notice is repeated once per match by design, so the check runs

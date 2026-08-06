@@ -1645,6 +1645,11 @@ def compile_dossier(session: Session) -> str:
         # to find out which one. Everything in the row is in the idea's own
         # section below; the row is the handle for reaching it.
         lines += _candidate_summary_table(briefs)
+        # Under a heading of its own, at the level of the sections around it. The
+        # manual used to run on unheaded from the bottom of the summary table to
+        # the first idea -- fourteen paragraphs a reader had no way to recognise
+        # as a manual, skip past, or come back to.
+        lines += [READING_GUIDE_HEADING, ""]
         for paragraph in DEEP_DIVE_PREAMBLE:
             lines += [paragraph, ""]
         if grounding:
@@ -1668,6 +1673,14 @@ def compile_dossier(session: Session) -> str:
     return table_of_contents(number_figures_and_tables(report))
 
 
+SUMMARY_TABLE_HEADING = "## Executive Candidate Summary"
+READING_GUIDE_HEADING = "## How to read each idea"
+CHAPTER_SECTIONS = frozenset(
+    heading.removeprefix("## ")
+    for heading in (SUMMARY_TABLE_HEADING, READING_GUIDE_HEADING)
+)
+"""The sections of the deep-dive chapter that are not an idea."""
+
 _SUMMARY_CELL_CEILING = 140
 
 
@@ -1680,7 +1693,17 @@ def _cell(text: str, ceiling: int = _SUMMARY_CELL_CEILING) -> str:
     flat = " ".join(plain_text(text).split()).replace("|", "—")
     if len(flat) <= ceiling:
         return flat
-    return flat[: ceiling - 1].rstrip(" ,;.") + "…"
+    # On a word boundary. The bare slice cut inside words -- "improving capacity
+    # reten…", "by the chemical red…" -- in five of the eight rows of one live
+    # summary table, which reads as a rendering fault rather than as an
+    # abbreviation. An unclosed bracket goes with the word that opened it.
+    head = flat[: ceiling - 1]
+    space = head.rfind(" ")
+    if space > ceiling // 2:
+        head = head[:space]
+    if head.count("(") > head.count(")"):
+        head = head[: head.rfind("(")]
+    return head.rstrip(" ,;.:—-([") + "…"
 
 
 def _candidate_summary_table(briefs: Sequence) -> list[str]:
@@ -1694,7 +1717,11 @@ def _candidate_summary_table(briefs: Sequence) -> list[str]:
     if not briefs:
         return []
     lines = [
-        "### Executive Candidate Summary",
+        # Level two, with the eight idea sections it summarises. At level three it
+        # was a child of them in the contents while standing above all of them on
+        # the page, and its parent heading is level one, so the document skipped
+        # a level here and nowhere else.
+        SUMMARY_TABLE_HEADING,
         "",
         "| Rank | Candidate Title | Strategy | Primary Claim | Falsifier Summary | Elo | Evidence |",
         "| ---: | --- | --- | --- | --- | ---: | --- |",
@@ -1706,7 +1733,10 @@ def _candidate_summary_table(briefs: Sequence) -> list[str]:
             f"| {_cell(brief.strategy, 24)} "
             f"| {_cell(brief.facts.get('Core idea', ''))} "
             f"| {_cell(brief.facts.get('Falsifier', ''))} "
-            f"| {brief.elo} | {brief.support} |"
+            # The verdict as the rest of the report words it. The raw field went
+            # into this column, so one row read "partially_grounded" against the
+            # paragraph below that calls the same verdict "partially grounded".
+            f"| {brief.elo} | {brief.support_label or brief.support} |"
         )
     lines.extend(
         [
