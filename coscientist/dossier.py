@@ -1257,13 +1257,40 @@ def _idea_deep_dive(
     lines.extend(["### Idea Proposal", "", brief.proposal, "", "### Description", ""])
     for paragraph in brief.description:
         lines.extend([paragraph, ""])
+    # The protocol and the diagram of it are one thing to a reader who intends to run
+    # the idea, so they are set together and ahead of the specialist arguing for it.
+    lines.extend(_validation_protocol(brief))
+    lines.extend(_workflow_diagram(brief))
     lines.extend(_authors_own_sections(brief))
     lines.extend(_self_rating(brief))
-    lines.extend(_workflow_diagram(brief))
     lines.extend(_evidence_assessment(brief))
     lines.extend(_revised_form_block(brief))
     lines.extend(_review_block(brief, hoisted_questions))
     lines.extend(_match_summary(brief, hoisted_matches, transcribed))
+    return lines
+
+
+def _validation_protocol(brief: IdeaBrief) -> list[str]:
+    """The experiment the specialist designed, step by step as it numbered them.
+
+    ``validation_protocol`` is required by the contract, asked for by every generation
+    prompt and checked by normalisation, and no exporter read it: the sample size and
+    its power rationale, the calibration, the blinding, the abort limits and the
+    go/no-go threshold were in the saved session for all eight live ideas and in none
+    of the three exports. Without it the report proposes hypotheses and says nothing
+    about how to test them.
+    """
+    if not brief.validation_protocol:
+        return []
+    lines = ["### Validation Protocol", ""]
+    if len(brief.validation_protocol) == 1:
+        lines.extend([brief.validation_protocol[0], ""])
+        return lines
+    lines.extend(
+        f"{index}. {step}"
+        for index, step in enumerate(brief.validation_protocol, start=1)
+    )
+    lines.append("")
     return lines
 
 

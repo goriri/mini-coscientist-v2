@@ -819,6 +819,16 @@ class IdeaBrief:
     """
     strategy: str = ""
     """Which of the four generation strategies proposed this idea."""
+    validation_protocol: list[str] = field(default_factory=list)
+    """The experiment the specialist designed, as the steps it numbered.
+
+    ``validation_protocol`` is a required field of the contract, the generation prompt
+    asks for a comprehensive paragraph of it, and normalisation rejects a candidate
+    that leaves it short -- and no exporter read it. Every live idea carried a full
+    design in it, sample size and power, calibration, blinding, abort limits and a
+    go/no-go threshold, and none of that was in the Markdown, the PDF or the DOCX. A
+    report of hypotheses nobody can run is a report of opinions.
+    """
     mermaid: str = ""
     """The specialist's own workflow diagram, when it drew one."""
     evidence_notes: list[tuple[str, str, str]] = field(default_factory=list)
@@ -3263,6 +3273,10 @@ _UNSTATED = {
     ),
     "Discriminating predictions": "The specialist stated no discriminating prediction.",
     "Alternative explanations": "No competing explanation was recorded for this idea.",
+    "Validation protocol": (
+        "The specialist recorded no protocol for testing this idea, so nothing here "
+        "says how it would be run."
+    ),
     "Falsifier": "Not stated by the specialist.",
     "Required inputs and dependencies": (
         "No external dependency was recorded for this idea."
@@ -3318,6 +3332,31 @@ def _authors_own_parts(text: str) -> tuple[str, list[tuple[str, str]]]:
     return source[: marks[0].start()].rstrip(), parts
 
 
+# The heading a specialist puts over the mechanism itself, because the generation
+# prompt asks for the field under that name. It names the field rather than a section
+# inside it, and the flattener turns a heading over prose into a label in front of it,
+# so every Mechanism cell in the comparison grid would open "Rich Technical Narrative:".
+_MECHANISM_HEADING = re.compile(
+    r"\A[ \t]*(?:#{1,6}[ \t]*)?\**[ \t]*Rich Technical Narrative"
+    r"[ \t]*\**[ \t]*:?[ \t]*\**[ \t]*\n?",
+    re.IGNORECASE,
+)
+
+
+def _mechanism_source(candidate: Candidate) -> str:
+    """The field the specialist actually put the mechanism in.
+
+    The contract carries ``mechanism_model`` and ``rationale`` separately, every
+    generation prompt asks for the mechanism in the first, and the report read only
+    the second. On a live run all eight ideas filled both and the two differed in
+    every case: up to 3,330 characters of reaction pathway, precursor chemistry and
+    fragmentation points in ``mechanism_model``, and the motivation in ``rationale``.
+    So the report printed the motivation under the heading Mechanism, and the
+    mechanism was in no export at all.
+    """
+    return candidate.mechanism_model.strip() or candidate.rationale
+
+
 def _mechanism(candidate: Candidate) -> str:
     """The mechanism the specialist wrote, without what it wrote after the mechanism.
 
@@ -3325,8 +3364,72 @@ def _mechanism(candidate: Candidate) -> str:
     rating rather than as part of the mechanism it was written after, and the
     sections the specialist headed itself are printed under their own headings.
     """
-    lead, _ = _authors_own_parts(_authors_own_table(candidate.rationale)[0])
-    return _sentence(lead, fallback=_UNSTATED["Mechanism and rationale"])
+    lead, _ = _authors_own_parts(_authors_own_table(_mechanism_source(candidate))[0])
+    return _sentence(
+        _MECHANISM_HEADING.sub("", lead.lstrip()),
+        fallback=_UNSTATED["Mechanism and rationale"],
+    )
+
+
+def _authored_extras(
+    candidate: Candidate,
+) -> tuple[str, list[list[str]], list[tuple[str, str]]]:
+    """The table and the headed sections the specialist wrote, out of both prose fields.
+
+    Returned as (the table's own heading, the table, the sections). Read from one
+    field this found three of the eight live tables and dropped five: the specialists
+    put the evaluation table in ``mechanism_model`` five times and in ``rationale``
+    three, and which field a given idea used is the specialist's choice rather than
+    anything the run controls. Sections are deduplicated on what they say, because a
+    specialist that fills both fields tends to repeat the shorter one.
+    """
+    title = ""
+    table: list[list[str]] = []
+    sections: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for text in (_mechanism_source(candidate), candidate.rationale):
+        remainder, found_title, found = _authors_own_table(text)
+        if found and not table:
+            title, table = found_title, found
+        for label, body in _authors_own_parts(remainder)[1]:
+            if (key := (label, " ".join(body.split()))) not in seen:
+                seen.add(key)
+                sections.append((label, body))
+    # In the order the prompt asks for them rather than in the order the two fields
+    # happen to be read: the motivation argues for the idea and the judgment weighs
+    # it, and reading them the other way round put the verdict before the case.
+    order = {name: index for index, name in enumerate(AUTHORS_OWN_PARTS)}
+    sections.sort(key=lambda section: order.get(section[0], len(order)))
+    return title, table, sections
+
+
+# A protocol arrives as one prose field holding the steps the specialist numbered:
+# "1. Fabricate ... 2. Assemble CR2032 coin cells (n=5 coated ...". Printed as the
+# paragraph the field is declared to be, a nine-step experimental design with its
+# power analysis, its blinding and its abort limits reads as one sentence that will
+# not end, and nobody can follow it at a bench.
+_PROTOCOL_STEP = re.compile(r"(?:\A|(?<=[.;:!?\)])\s|\n)\s*(\d{1,2})[.)]\s+(?=\S)")
+
+
+def _protocol_steps(text: str) -> list[str]:
+    """The steps of a validation protocol, or one item where it was written as prose.
+
+    The numbers have to run consecutively from one before this splits anything: a
+    protocol that cites "4.3 V" or "n=5" mid-sentence would otherwise be cut into
+    steps at the citation, which is worse than leaving it whole.
+    """
+    body = _blocks_as_prose(text).strip()
+    marks = list(_PROTOCOL_STEP.finditer(body))
+    if len(marks) < 2 or [int(mark.group(1)) for mark in marks] != list(
+        range(1, len(marks) + 1)
+    ):
+        return [step] if (step := _sentence(body, fallback="")) else []
+    steps = []
+    for index, mark in enumerate(marks):
+        end = marks[index + 1].start() if index + 1 < len(marks) else len(body)
+        if step := _sentence(body[mark.end() : end], fallback=""):
+            steps.append(step)
+    return steps
 
 
 def _idea_facts(candidate: Candidate) -> dict[str, str]:
@@ -3341,6 +3444,10 @@ def _idea_facts(candidate: Candidate) -> dict[str, str]:
         "Alternative explanations": _join(
             candidate.alternatives,
             fallback=_UNSTATED["Alternative explanations"],
+        ),
+        "Validation protocol": _join(
+            _protocol_steps(candidate.validation_protocol),
+            fallback=_UNSTATED["Validation protocol"],
         ),
         "Falsifier": _sentence(candidate.falsifier, fallback=_UNSTATED["Falsifier"]),
         "Required inputs and dependencies": _join(
@@ -4854,8 +4961,7 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
         )
         revision = record.revision_of(candidate.id)
         revised_facts = _idea_facts(revision.candidate) if revision else None
-        without_table, rating_title, rating = _authors_own_table(candidate.rationale)
-        _, authors_own = _authors_own_parts(without_table)
+        rating_title, rating, authors_own = _authored_extras(candidate)
         briefs.append(
             IdeaBrief(
                 title=record.title_for(candidate.id),
@@ -4906,6 +5012,7 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
                 self_rating_title=rating_title,
                 self_rating=rating,
                 strategy=candidate.generation_strategy.replace("_", " "),
+                validation_protocol=_protocol_steps(candidate.validation_protocol),
                 mermaid=candidate.workflow_diagram_mermaid.strip(),
                 evidence_notes=_evidence_notes(record, candidate),
                 revised_is_recommended=recommended,

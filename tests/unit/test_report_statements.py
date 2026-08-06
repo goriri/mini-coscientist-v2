@@ -375,8 +375,11 @@ def _rated_candidate():
         id="candidate_0001",
         title="A 2.5 nm LiNbO3 Coating",
         claim="A 2.5 nm coating raises retention.",
-        rationale=MECHANISM_WITH_A_SCORECARD,
-        mechanism_model="The coating buffers oxygen.",
+        # The table goes where the live specialists put it: five of eight put theirs
+        # in mechanism_model and three in rationale, and the report has to find it
+        # either way.
+        rationale="The literature reports gains from thin oxide layers.",
+        mechanism_model=MECHANISM_WITH_A_SCORECARD,
         validation_protocol="Coin cells against an uncoated control.",
         falsifier="No difference at 500 cycles.",
     )
@@ -395,6 +398,94 @@ def test_the_mechanism_cell_holds_the_mechanism_and_not_the_self_rating():
     )
     assert "Judgment" not in mechanism
     assert "Evaluation of Idea" not in mechanism
+
+
+def test_the_mechanism_comes_from_the_field_the_specialist_wrote_it_in():
+    """``mechanism_model`` is a required field of the contract, every generation
+    prompt asks for the mechanism in it, and no exporter read it. On a live run all
+    eight ideas filled it and filled ``rationale`` with something else, so the report
+    printed the motivation under the heading Mechanism and the mechanism -- up to
+    3,330 characters of reaction pathway and precursor chemistry -- reached no export
+    at all."""
+    from coscientist.models import Candidate
+    from coscientist.narrative import _authored_extras, _mechanism
+
+    candidate = Candidate(
+        title="A 2.5 nm LiNbO3 Coating",
+        claim="A 2.5 nm coating raises retention.",
+        # The heading the prompt asks the specialist to put over the field. It names
+        # the field rather than a section inside it, so it is not a label to print.
+        mechanism_model=(
+            "### Rich Technical Narrative\nLiNbO3 conducts lithium and blocks HF."
+        ),
+        rationale=(
+            "### Motivation and Supporting Evidence\nThin niobate layers have been "
+            "reported to raise retention."
+        ),
+        validation_protocol="Coin cells against an uncoated control.",
+        falsifier="No difference at 500 cycles.",
+    )
+
+    assert _mechanism(candidate) == "LiNbO3 conducts lithium and blocks HF."
+    # And what the specialist headed in the other field is still its own section,
+    # rather than being displaced by the field the mechanism came from.
+    assert _authored_extras(candidate)[2] == [
+        (
+            "Motivation and Supporting Evidence",
+            "Thin niobate layers have been reported to raise retention.",
+        )
+    ]
+
+
+def test_the_protocol_is_printed_as_the_steps_the_specialist_numbered():
+    """``validation_protocol`` is required by the contract, asked for by every
+    generation prompt and checked by normalisation, and no exporter read it: the
+    sample size, its power rationale, the blinding and the abort limits were in the
+    saved session for all eight live ideas and in none of the three exports."""
+    from coscientist.dossier import _validation_protocol
+    from coscientist.narrative import IdeaBrief, _protocol_steps
+
+    steps = _protocol_steps(
+        "1. Fabricate NMC811 cathodes and apply 2 nm Al2O3 by ALD. "
+        "2. Assemble CR2032 coin cells (n=5 per arm) in an argon glovebox. "
+        "3. Cycle at 1C to 500 cycles and abort above 45 degrees."
+    )
+    assert steps == [
+        "Fabricate NMC811 cathodes and apply 2 nm Al2O3 by ALD.",
+        "Assemble CR2032 coin cells (n=5 per arm) in an argon glovebox.",
+        "Cycle at 1C to 500 cycles and abort above 45 degrees.",
+    ]
+    # A number inside a step is not a step: a protocol that says "4.3 V" or "n=5"
+    # would be cut into pieces at the measurement, which is worse than one paragraph.
+    assert _protocol_steps(
+        "Charge to 4.3 V and hold. 25 cells per arm are cycled to 500 cycles."
+    ) == ["Charge to 4.3 V and hold. 25 cells per arm are cycled to 500 cycles."]
+
+    lines = _validation_protocol(
+        IdeaBrief(
+            title="A 2.5 nm LiNbO3 Coating",
+            candidate_id="candidate_0001",
+            rank=1,
+            elo=1200,
+            category="",
+            proposal="",
+            description=[],
+            facts={},
+            summary={},
+            table_rows=[],
+            reviews=[],
+            coherence=[],
+            deep_verification=[],
+            matches=[],
+            wins=0,
+            losses=0,
+            ties=0,
+            shortlisted=False,
+            validation_protocol=steps,
+        )
+    )
+    assert lines[0] == "### Validation Protocol"
+    assert lines[2:5] == [f"{index}. {step}" for index, step in enumerate(steps, 1)]
 
 
 def test_the_self_rating_is_printed_as_the_specialists_own_table():

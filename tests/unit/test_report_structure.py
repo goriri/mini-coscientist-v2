@@ -2555,6 +2555,8 @@ def test_an_unstated_field_is_not_introduced_as_though_it_were_stated():
     bare = SimpleNamespace(
         claim="A coating extends cycle life.",
         rationale="It blocks the electrolyte.",
+        mechanism_model="",
+        validation_protocol="",
         predictions=[],
         alternatives=[],
         falsifier="",
@@ -2637,6 +2639,8 @@ def test_a_check_list_is_introduced_by_where_its_items_came_from():
         SimpleNamespace(
             claim="A coating extends cycle life.",
             rationale="It blocks the electrolyte.",
+            mechanism_model="",
+            validation_protocol="Ten cells per arm against an uncoated control.",
             predictions=["Coated cells outlast uncoated cells by 15%."],
             alternatives=["The gain comes from the binder, not the coating."],
             falsifier="No difference at N=10 per arm.",

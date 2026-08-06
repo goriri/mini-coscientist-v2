@@ -104,6 +104,8 @@ def _facts() -> dict[str, str]:
         SimpleNamespace(
             claim="A coating extends cycle life.",
             rationale="It blocks the electrolyte.",
+            mechanism_model="",
+            validation_protocol="Cycle ten cells per arm and compare retention.",
             predictions=["Coated cells outlast uncoated cells by fifteen per cent."],
             alternatives=["The gain comes from the binder."],
             falsifier="No difference at ten cells per arm.",
