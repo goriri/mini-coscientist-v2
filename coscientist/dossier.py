@@ -26,6 +26,7 @@ from .advisories import (
 from .debate import (
     readable_exchange,
     readable_turn,
+    standalone_opening,
     strip_rationale_label,
     strip_turn_label,
     unemphasised,
@@ -879,7 +880,10 @@ def _verdict_line(match) -> str:
         # point at now says so.
         pass
     elif rationale:
-        verdict = f"{verdict} Rationale: {rationale}"
+        # Opened after the containment test above, which reads the judge's own
+        # words: an opening dropped before the test stops matching the turn that
+        # carries it, and the paragraph goes back to being printed twice.
+        verdict = f"{verdict} Rationale: {standalone_opening(rationale)}"
     else:
         verdict = f"{verdict} No rationale was recorded for it."
     # The note used to sit between the verdict and the sentence that opens on "Its",
@@ -900,8 +904,10 @@ def _match_rationale(match) -> str:
     note, _, tail = match.rationale.strip().partition("]")
     if note.startswith("["):
         remainder = tail
-    return " ".join(
-        unemphasised(strip_rationale_label(strip_turn_label(remainder))).split()
+    return standalone_opening(
+        " ".join(
+            unemphasised(strip_rationale_label(strip_turn_label(remainder))).split()
+        )
     )
 
 

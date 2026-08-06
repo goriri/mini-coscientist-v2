@@ -2818,3 +2818,83 @@ def test_the_two_orders_a_reordering_reports_are_set_as_two_sentences():
         ["a", "b", "c"],
         briefs,
     )
+
+
+# --- a recorded reason has to stand on its own -------------------------------
+
+
+def _judged(rationale: str, *, opponent: str = "A LiAlF4 Coating"):
+    from coscientist.narrative import IdeaMatch
+
+    return IdeaMatch(
+        round_number=2,
+        opponent_title=opponent,
+        outcome="win",
+        elo_before=1200.0,
+        elo_after=1216.0,
+        confidence=0.75,
+        rationale=rationale,
+        judge="llm_comparison",
+    )
+
+
+def test_a_reason_opening_on_a_contrast_does_not_start_the_reader_mid_argument():
+    """ "However, the deciding factor is safety and feasibility" opened a match bullet
+    of a live report. Only the judge's closing paragraphs are recorded, so the thing
+    the sentence contrasts with is nowhere on the page."""
+    from coscientist.dossier import _match_summary
+
+    said = "\n".join(
+        _match_summary(
+            _brief(
+                "Idea",
+                [],
+                matches=[
+                    _judged(
+                        "However, the deciding factor is safety and feasibility. "
+                        "The opposing idea uses HF-pyridine precursors."
+                    )
+                ],
+            )
+        )
+    )
+
+    assert "However" not in said
+    assert (
+        "**Round 2 against A LiAlF4 Coating (win):** The deciding factor is safety "
+        "and feasibility." in said
+    )
+
+
+def test_a_reason_that_already_stands_alone_is_printed_word_for_word():
+    from coscientist.dossier import _match_summary
+
+    said = "\n".join(
+        _match_summary(
+            _brief(
+                "Idea",
+                [],
+                matches=[_judged("The opposing idea uses HF-pyridine precursors.")],
+            )
+        )
+    )
+
+    assert "The opposing idea uses HF-pyridine precursors." in said
+
+
+def test_the_rematch_note_keeps_its_place_in_front_of_the_reason():
+    """The note is the report's own bracketed aside, so the connective to drop is the
+    one after it rather than the bracket the line opens on."""
+    from coscientist.debate import standalone_opening
+
+    said = standalone_opening(
+        "[Rematch: this pair also met in Swiss round 2.] Therefore, this idea wins."
+    )
+
+    assert said == "[Rematch: this pair also met in Swiss round 2.] This idea wins."
+
+
+def test_a_reason_that_is_nothing_but_a_connective_is_left_as_recorded():
+    from coscientist.debate import standalone_opening
+
+    assert standalone_opening("However,") == "However,"

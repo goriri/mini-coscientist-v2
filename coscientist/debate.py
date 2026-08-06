@@ -619,10 +619,31 @@ def _rationale_before(body: str, terminator_start: int) -> str:
 # a standalone conclusion are listed: "This" and "The" routinely do.
 _CONTINUATION_RE = re.compile(
     r"^(?:and|but|or|so|therefore|thus|hence|however|moreover|furthermore|"
+    r"additionally|nevertheless|nonetheless|conversely|(?:in|by) contrast|"
     r"consequently|accordingly|in conclusion|for (?:these|those|this) reasons?|"
     r"on balance|overall|given (?:this|that|these))\b[,\s]",
     re.IGNORECASE,
 )
+
+
+def standalone_opening(text: str) -> str:
+    """A recorded reason with no connective reaching back to prose nobody kept.
+
+    Only the judge's closing paragraphs are kept, so a reason that opens on a
+    contrast contrasts with a sentence the report cannot print: a live report
+    began a match bullet "However, the deciding factor is safety and feasibility."
+    What follows the connective is the whole of the recorded reason, so the
+    connective goes and the reason stays. The openers are the same ones the
+    parser reads as leaning on a paragraph above, so what cannot be recovered
+    there is what is dropped here.
+    """
+    note, _, tail = text.strip().partition("]")
+    # A rematch note is prepended in brackets, and the connective the reader trips
+    # over is the one after it rather than the "[" the note opens on.
+    if note.startswith("[") and tail.strip():
+        return f"{note}] {standalone_opening(tail)}"
+    opened = _CONTINUATION_RE.sub("", text.strip(), count=1).lstrip()
+    return f"{opened[:1].upper()}{opened[1:]}" if opened else text.strip()
 
 
 def _continues(block: str) -> str | re.Match[str] | None:

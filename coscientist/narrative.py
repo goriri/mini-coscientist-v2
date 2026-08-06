@@ -21,6 +21,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from .citations import GROUNDED_STATUSES, CandidateCitations, resolve_population
+from .debate import standalone_opening
 from .evidence import GROUNDING_REDIRECT_MARKER
 from .governance import open_blockers
 from .models import (
@@ -6014,7 +6015,7 @@ def _section_five(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
             f"{decisive.round_number} pairing against {decisive.opponent_title}, a "
             f"{decisive.outcome} that took it from {decisive.shown_before} to "
             f"{decisive.shown_after} at a stated confidence of {decisive.confidence:.2f}. "
-            f"{decisive.rationale}"
+            f"{standalone_opening(decisive.rationale)}"
         )
     return _Draft(5, "Comparison of Candidate Ideas", core, extra, grids=grids)
 
