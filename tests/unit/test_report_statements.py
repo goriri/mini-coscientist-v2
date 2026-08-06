@@ -70,6 +70,15 @@ def test_ordinary_prose_is_left_exactly_as_written():
     assert _blocks_as_prose(text) == text
 
 
+def test_a_space_left_in_front_of_a_comma_is_closed_up():
+    """ "in the voltage range of 2-4.8 V , compared to" stood in four places of a
+    live report, each a quotation of the same claim. The space is an artefact of the
+    field the sentence arrived in, not part of what was said."""
+    said = _sentence("Retention held at 2-4.8 V , and rose at 30 C .")
+
+    assert said == "Retention held at 2-4.8 V, and rose at 30 C."
+
+
 def test_the_sentence_writer_collapses_a_table_into_one_line_of_prose():
     said = _sentence(TABLE)
 
@@ -252,6 +261,21 @@ def _review(section: str, score: int, recommendation: str = "revise") -> IdeaRev
         score=score,
         recommendation=recommendation,
     )
+
+
+def test_reviews_that_all_scored_alike_are_not_reported_as_a_span():
+    """ "The five reviews of this idea span 5 to 5 of five" is a range with one end,
+    and takes three numbers to say what one says."""
+    lines, _ = _coherence([_review("Correctness", 5), _review("Feasibility", 5)], {})
+
+    assert "span 5 to 5" not in lines[0]
+    assert "all came in at 5 of five" in lines[0]
+
+
+def test_reviews_that_did_not_score_alike_still_report_both_ends():
+    lines, _ = _coherence([_review("Correctness", 2), _review("Feasibility", 5)], {})
+
+    assert "span 2 to 5 of five" in lines[0]
 
 
 def test_a_falsifier_settles_a_disagreement_only_where_the_reviews_disagree():

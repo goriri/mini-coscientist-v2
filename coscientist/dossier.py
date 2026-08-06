@@ -58,12 +58,14 @@ from .narrative import (
     DEEP_DIVE_PREAMBLE,
     DISCOVERY_STOOD_IN,
     REVIEW_SECTIONS,
+    AdjudicationNote,
     Citation,
     IdeaBrief,
     ProvenanceNote,
     ResearchOverview,
     ResearchRecord,
     _counted,
+    _joined_titles,
     _judge_column,
     _judge_label,
     _labelled_bullets,
@@ -241,6 +243,35 @@ def _overview_body(
     return lines
 
 
+def _shared_override_note(notes: Sequence[AdjudicationNote]) -> str:
+    """What every override on this run left standing, said once over all of them."""
+    return (
+        f"{_opening(len(notes), 'of the decisions below is', 'of the decisions below are')} "
+        "an override: the adjudicator accepted the flaw rather than fixing, "
+        "withdrawing or mitigating it, and the decision on the record is to proceed "
+        "while carrying it. "
+        + _joined_titles([note.title for note in notes], fallback="No idea")
+        + " therefore remain live in this report and are ranked alongside the other "
+        "ideas. A rank says nothing about a flaw: no reviewer withdrew any of these "
+        "findings and no mitigation was recorded against them. Read each of those "
+        "ideas' sections with the decision below in mind."
+    )
+
+
+def _shared_withdrawal_note(notes: Sequence[AdjudicationNote]) -> str:
+    """The same, for the ideas an adjudicator removed rather than accepted."""
+    return (
+        f"{_opening(len(notes), 'of the decisions below is', 'of the decisions below are')} "
+        "a withdrawal: the adjudicator removed the hypothesis from the population in "
+        "answer to the flaw, so it never entered the tournament and carries no rank "
+        "and no Elo. "
+        + _joined_titles([note.title for note in notes], fallback="No idea")
+        + " are therefore absent from the per-idea sections of this report as well. "
+        "They were removed by decision rather than defeated on merit, and the "
+        "population they were removed from is retained as superseded history."
+    )
+
+
 def _governance_block(record: ResearchRecord) -> list[str]:
     """Replay every human answer to a fatal governance finding, verbatim.
 
@@ -264,13 +295,17 @@ def _governance_block(record: ResearchRecord) -> list[str]:
                 # unconditionally, so a run holding an unanswered blocker told the
                 # reader every block had been decided, two headings above the list of
                 # the ones that had not.
+                # "A person's answer" is more than the record supports. What the run
+                # holds is a name typed at the command line, and the paragraph three
+                # below says so; a live report opened this section by calling
+                # "Automated verification run (Claude Code)" a person.
                 f"{_opening(answered, 'governance adjudication')} "
                 + (
-                    "is recorded for this run: a person's answer"
+                    "is recorded for this run: an answer entered"
                     if answered == 1
-                    else "are recorded for this run, each of them a person's answer"
+                    else "are recorded for this run, each of them an answer entered"
                 )
-                + " to a fatal flaw the safety and governance review raised. "
+                + " against a fatal flaw the safety and governance review raised. "
                 + ("It is" if answered == 1 else "Each is")
                 + " set out below with the flaw it responds to and the reason given, "
                 "both reprinted word for word. The wording is theirs; nothing here is "
@@ -310,34 +345,59 @@ def _governance_block(record: ResearchRecord) -> list[str]:
                 "",
             ]
         )
+        # What an override means, and what it leaves standing, is the same wherever it
+        # is said. Three overrides on a live run printed the identical two sentences
+        # under the resolution line and the identical four-sentence paragraph after
+        # the quotations -- a hundred and twenty words repeated twice over, between
+        # which the only thing that changed was the title.
+        overridden = [note for note in record.adjudications if not note.withdrawn]
+        pulled = [note for note in record.adjudications if note.withdrawn]
+        hoisted: set[str] = set()
+        if len(overridden) > 1:
+            hoisted.add("override")
+            lines.extend([_shared_override_note(overridden), ""])
+        if len(pulled) > 1:
+            hoisted.add("withdrawal")
+            lines.extend([_shared_withdrawal_note(pulled), ""])
         # One justification answering several flaws. Reprinted under each of them it
         # reads as several considered answers, and on a live run the same forty words
         # stood under three different flaws and named containment controls that bore
-        # on only one of them. The wording is still printed in full under each, which
-        # is what lets a reader see the mismatch; what is added is that it is one
-        # wording, said before the reader meets the first copy of it.
-        repeated = [
-            count
-            for _, count in Counter(
+        # on only one of them.
+        shared_reasons = {
+            text: count
+            for text, count in Counter(
                 " ".join(note.justification.split())
                 for note in record.adjudications
                 if note.justification.strip()
             ).items()
             if count > 1
-        ]
-        if repeated:
+        }
+        for text, count in shared_reasons.items():
+            given_by = _listed(
+                sorted(
+                    {
+                        note.adjudicator
+                        for note in record.adjudications
+                        if " ".join(note.justification.split()) == text
+                    }
+                )
+            )
             lines.extend(
                 [
-                    "One justification below is given word for word against "
-                    + _plural(max(repeated), "flaw")
-                    + ". It was written once and applied to all of them, so it should "
-                    "be read as a single decision covering "
-                    + ("both" if max(repeated) == 2 else "all of them")
-                    + " rather than as a separate answer to each.",
+                    f"One justification below is given word for word against "
+                    f"{_plural(count, 'flaw')}. It was written once by {given_by} and "
+                    "applied to "
+                    + ("both" if count == 2 else "all of them")
+                    + ", so it is quoted here once and read as a single decision "
+                    "covering them rather than as a separate answer to each:",
+                    "",
+                    f"> {text}",
                     "",
                 ]
             )
     for index, note in enumerate(record.adjudications, start=1):
+        outcome = "withdrawal" if note.withdrawn else "override"
+        reason = " ".join(note.justification.split())
         lines.extend(
             [
                 f"### {index}. {note.heading}",
@@ -346,19 +406,36 @@ def _governance_block(record: ResearchRecord) -> list[str]:
                 # adjudicator's name and the justification below is attributed to it
                 # again, so the label was the third copy of one string inside a block
                 # four lines deep.
-                f"Resolution: {'withdrawal' if note.withdrawn else 'override'}. "
-                f"{note.resolution_sentence}",
+                f"Resolution: {outcome}, adjudicated by {note.adjudicator}."
+                if outcome in hoisted
+                else f"Resolution: {outcome}. {note.resolution_sentence}",
                 "",
                 "Fatal flaw recorded by the safety and governance review, verbatim:",
                 "",
                 f"> {note.flaw_text}",
                 "",
-                f"Justification given by {note.adjudicator}, verbatim:",
-                "",
-                f"> {' '.join(note.justification.split())}",
-                "",
             ]
         )
+        if reason in shared_reasons:
+            lines.extend(
+                [
+                    f"Justification: the wording quoted above, which {note.adjudicator}"
+                    " wrote once and applied to this flaw along with "
+                    f"{_plural(shared_reasons[reason] - 1, 'other')}.",
+                    "",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"Justification given by {note.adjudicator}, verbatim:",
+                    "",
+                    f"> {reason}",
+                    "",
+                ]
+            )
+        if outcome in hoisted:
+            continue
         if note.withdrawn:
             lines.extend(
                 [

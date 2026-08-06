@@ -627,10 +627,48 @@ def test_one_justification_answering_two_flaws_is_declared_as_one_decision(
     )
 
     assert "One justification below is given word for word against two flaws" in block
-    assert "read as a single decision covering both" in block
-    # The wording still stands in full under each flaw: that is what lets a reader
-    # see for themselves that it does not fit both.
-    assert block.count(_flat(SECOND_JUSTIFICATION)) == 2
+    assert "read as a single decision covering them" in block
+    # Quoted once, where it is declared to be one wording, and pointed at from each
+    # of the flaws it was applied to. Printed in full under both it was forty words
+    # twice over, reading as two considered answers.
+    assert block.count(_flat(SECOND_JUSTIFICATION)) == 1
+    assert block.count("the wording quoted above") == 2
+    assert "wrote once and applied to this flaw along with one other" in block
+
+
+def test_what_an_override_leaves_standing_is_said_once_over_all_of_them(rich_session):
+    """Three overrides on a live run printed the same two sentences under the
+    resolution line and the same four-sentence paragraph after the quotations: a
+    hundred and twenty words twice repeated, with only the title changing."""
+    ids = _population_ids(rich_session)
+    _override(rich_session, ids[0], flaw=FLAW)
+    _override(rich_session, ids[1], flaw=SECOND_FLAW)
+
+    block = _flat(
+        _section(compile_dossier(rich_session), "## Governance adjudications")
+    )
+
+    assert "Two of the decisions below are an override" in block
+    assert (
+        block.count("the decision on the record is to proceed while carrying it") == 1
+    )
+    assert block.count("A rank says nothing about a flaw") == 1
+    assert "remains live in this report and still carries this flaw" not in block
+    # Each decision still says which way it went and who made it.
+    assert (
+        block.count(f"Resolution: override, adjudicated by {SECOND_ADJUDICATOR}") == 2
+    )
+
+
+def test_a_lone_override_keeps_its_meaning_beside_it(rich_session):
+    _override(rich_session, _population_ids(rich_session)[0])
+
+    block = _flat(
+        _section(compile_dossier(rich_session), "## Governance adjudications")
+    )
+
+    assert "remains live in this report and still carries this flaw" in block
+    assert "of the decisions below are an override" not in block
 
 
 def test_distinct_justifications_are_not_declared_repeated(rich_session):

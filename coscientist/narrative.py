@@ -2420,6 +2420,14 @@ def _blocks_as_prose(text: str) -> str:
     return "\n".join(out)
 
 
+# A specialist writing a unit before a comma leaves the space in front of it: "in the
+# voltage range of 2-4.8 V , compared to" reached four places in a live report, each
+# of them a quotation of the same claim. The space is a transcription artefact of the
+# field it arrived in, not part of what was said, and nothing else in the document
+# spaces its punctuation that way.
+_SPACED_PUNCTUATION = re.compile(r"[ \t]+([,;:.!?])")
+
+
 def _sentence(text: str, *, fallback: str = "Not stated by the specialist.") -> str:
     """Normalise a payload string into one sentence, never an empty or 'N/A' stub.
 
@@ -2427,7 +2435,7 @@ def _sentence(text: str, *, fallback: str = "Not stated by the specialist.") -> 
     instead of printed: a reader cannot audit a JSON blob, and a report that shows one
     has stopped being a report. The fallback says so rather than hiding the gap.
     """
-    cleaned = " ".join(_blocks_as_prose(text).split())
+    cleaned = _SPACED_PUNCTUATION.sub(r"\1", " ".join(_blocks_as_prose(text).split()))
     if not cleaned or cleaned.lower() in _STUB_VALUES:
         return fallback
     if _looks_serialised(cleaned):
@@ -3659,7 +3667,14 @@ def _coherence(
         # five reviews" while this wrote "The 5 reviews", in one section.
         f"The {_number_word(len(reviews)).lower()} "
         + ("review" if len(reviews) == 1 else "reviews")
-        + f" of this idea span {min(scores)} to {max(scores)} of five"
+        # A span needs two ends. Every review on the same score printed "span 5 to 5
+        # of five", which reads as a range the writer forgot to fill in and takes
+        # three numbers to say what one says.
+        + (
+            f" of this idea all came in at {min(scores)} of five"
+            if spread == 0
+            else f" of this idea span {min(scores)} to {max(scores)} of five"
+        )
         + (", " if spread > 1 else ". ")
         + agreement
     ]
