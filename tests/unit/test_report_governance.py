@@ -438,8 +438,45 @@ def test_an_overridden_idea_carries_the_flaw_into_its_critical_flaws_summary(
     dive = _idea_chapter(report, title)
     critical = _section(dive, "##### 2. Critical Flaws")
 
-    assert _flat(SECOND_FLAW) in _flat(critical)
+    # A subsection headed Critical Flaws cannot be silent about the one flaw
+    # nobody resolved, but the chapter quoted it sixty lines above: it is recalled
+    # here, not printed a second time for the reader to compare word by word.
+    assert "quoted at the head of this section" in critical
+    assert "still stands" in critical
     assert SECOND_ADJUDICATOR in critical
+    assert _flat(SECOND_FLAW) not in _flat(critical)
+
+
+def test_the_accepted_flaw_is_quoted_once_in_the_idea_that_carries_it(rich_session):
+    """It was quoted at the chapter head and again under Critical Flaws."""
+    victim = _override(rich_session, _population_ids(rich_session)[0])
+    title = load_record(rich_session).title_for(victim)
+
+    dive = _idea_chapter(compile_dossier(rich_session), title)
+
+    assert _flat(dive).count(_flat(SECOND_FLAW)) == 1
+
+
+def test_an_idea_chapter_points_back_to_the_governance_block_above_it(rich_session):
+    """The block sits a sixth of the way in; the chapters are hundreds of lines on."""
+    victim = _override(rich_session, _population_ids(rich_session)[0])
+    record = load_record(rich_session)
+    title = record.title_for(victim)
+
+    report = compile_dossier(rich_session)
+    dive = _idea_chapter(report, title)
+    listing = next(
+        _section(report, f"##### {line}")
+        for line in _idea_slots(report)
+        if title in line
+    )
+
+    assert "under Governance adjudications above" in dive
+    assert "under Governance adjudications below" not in dive
+    # The same warning in the ranked listing is printed before the block, so there
+    # the reader is sent forward.
+    assert "under Governance adjudications below" in listing
+    assert report.index("## Governance adjudications") < report.index(f"## {title}")
 
 
 def test_an_overridden_idea_is_flagged_where_the_ideas_are_listed(rich_session):

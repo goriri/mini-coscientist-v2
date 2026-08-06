@@ -27,6 +27,7 @@ from .debate import (
     readable_turn,
     strip_rationale_label,
     strip_turn_label,
+    unemphasised,
 )
 from .evidence import GROUNDING_REDIRECT_MARKER, names_a_document
 from .markdown_render import (
@@ -784,7 +785,9 @@ def _verdict_line(match) -> str:
         note = note[1:].strip()
     else:
         note, remainder = "", match.rationale
-    rationale = " ".join(strip_rationale_label(strip_turn_label(remainder)).split())
+    rationale = " ".join(
+        unemphasised(strip_rationale_label(strip_turn_label(remainder))).split()
+    )
     # Containment, not suffix: a judge that repeats its rationale mid-turn and
     # then closes on a further sentence still printed the paragraph twice.
     if rationale and rationale in " ".join(tail.split()):
@@ -802,6 +805,23 @@ def _verdict_line(match) -> str:
     # so the pronoun reached back across a bracketed aside about a different match.
     # It is an aside about the pairing, so it goes after what it is an aside from.
     return f"{verdict} {note}" if note else verdict
+
+
+def _match_rationale(match) -> str:
+    """One judge's stated reason, as prose rather than as the markup it arrived in.
+
+    Read at render time as well as at parse time, because the sessions this has to
+    print were recorded before the parser cleaned any of it: a live dossier carried
+    "**Conclusion:** Hypothesis 2 ..." inside a bullet whose own label is bold, and
+    the stray asterisks closed the report's emphasis instead of the judge's.
+    """
+    remainder = match.rationale
+    note, _, tail = match.rationale.strip().partition("]")
+    if note.startswith("["):
+        remainder = tail
+    return " ".join(
+        unemphasised(strip_rationale_label(strip_turn_label(remainder))).split()
+    )
 
 
 def _undebated(brief: IdeaBrief) -> list:
@@ -834,14 +854,12 @@ def shared_match_notes(briefs: Sequence[IdeaBrief]) -> tuple[list[str], frozense
         return [], frozenset()
     matches = [match for group in groups for match in group]
     reasons = {
-        " ".join(match.rationale.split()).rstrip(".")
-        for match in matches
-        if match.rationale.strip()
+        said.rstrip(".") for match in matches if (said := _match_rationale(match))
     }
     # Whether every one of them carries a reason decides both what this note may
     # claim and whether the ideas below may stop repeating it. Written flat, the note
     # asserted a stated reason for matches whose judge recorded none.
-    complete = all(match.rationale.strip() for match in matches)
+    complete = all(_match_rationale(match) for match in matches)
     hoisted = {"judges"} | ({"tail"} if complete else set())
     notes = [
         "Not every match was argued. Where an idea's table below shows a match with "
@@ -958,12 +976,12 @@ def _match_summary(
         # telling the reader that reasoning it was withholding did not exist. What
         # these matches actually lack is a transcript -- the argument that produced
         # the line -- so the rationale is printed and the shortfall stated exactly.
-        reasoned = [match for match in undebated if match.rationale.strip()]
+        reasoned = [match for match in undebated if _match_rationale(match)]
         # A judge that writes one line and reuses it is not giving a reason per match.
         # Printed as a bullet per round it read as four findings; over seven ideas it
         # was twenty-four copies of one sentence. Identical text is folded to one
         # statement, and that it is identical is itself the thing worth reporting.
-        distinct = {" ".join(match.rationale.split()).rstrip(".") for match in reasoned}
+        distinct = {_match_rationale(match).rstrip(".") for match in reasoned}
         folded = len(distinct) == 1 and len(reasoned) > 1
         # What a missing transcript costs the reader is set out once, under Comparison
         # of Candidate Ideas. Eight ideas each carrying their own copy of that
@@ -1027,7 +1045,7 @@ def _match_summary(
             for match in reasoned:
                 lines.append(
                     f"- **Round {match.round_number} against {match.opponent_title}"
-                    f" ({match.outcome}):** {match.rationale.rstrip('.')}."
+                    f" ({match.outcome}):** {_match_rationale(match).rstrip('.')}."
                 )
             if reasoned:
                 lines.append("")
@@ -1054,8 +1072,8 @@ def _idea_deep_dive(
     ]
     # An idea that is still live because a person accepted its fatal flaw cannot be
     # read past this point without meeting the flaw, so it precedes the grounding note.
-    if brief.governance_notice:
-        lines.extend([brief.governance_notice, ""])
+    if brief.chapter_governance_notice:
+        lines.extend([brief.chapter_governance_notice, ""])
     # The verdict is a field of this idea and stays here. What it means is the same
     # sentence for every idea that shares it, and where they all do it is stated above
     # the ideas instead of eight times below.

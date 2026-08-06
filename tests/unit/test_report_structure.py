@@ -3130,3 +3130,32 @@ def test_a_lead_with_no_title_is_named_by_the_publisher_its_link_points_at():
     assert _reference_title(SourceLead(canonical_url="", title="")) == (
         "Untitled source lead"
     )
+
+
+def test_a_judges_own_markup_does_not_reach_the_bullet_that_quotes_it():
+    """A live dossier carried "**Conclusion:** Hypothesis 2 ..." inside a bullet whose
+    own label is bold, so the stray asterisks closed the report's emphasis rather than
+    the judge's and the rest of the line ran on in bold."""
+    block = _match_block(
+        _undebated_match(1, "**Conclusion:** Hypothesis 1 isolates the **mechanism**."),
+        _undebated_match(2, "Turn 4: Rationale: the control is confounded."),
+    )
+
+    assert "- **Round 1 against Opponent 1 (win):** Hypothesis 1 isolates the " in block
+    assert "**Conclusion" not in block
+    assert "Rationale:" not in block
+    assert "Turn 4" not in block
+
+
+def test_a_rematch_note_is_not_printed_inside_the_reason_it_precedes():
+    block = _match_block(
+        _undebated_match(
+            1,
+            "[Rematch: this pair also met in Swiss round 1.] "
+            "Hypothesis 1 isolates the mechanism.",
+        ),
+        _undebated_match(2, "The control is confounded."),
+    )
+
+    assert "[Rematch" not in block
+    assert "Hypothesis 1 isolates the mechanism." in block

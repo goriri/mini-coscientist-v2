@@ -699,8 +699,24 @@ class IdeaBrief:
 
     @property
     def governance_notice(self) -> str:
-        """The accepted-flaw warning, or empty when nobody overrode a block here."""
-        return self.accepted_flaw.notice if self.accepted_flaw else ""
+        """The accepted-flaw warning, or empty when nobody overrode a block here.
+
+        For the ranked listing, which the reader meets before the governance block.
+        """
+        return (
+            self.accepted_flaw.notice(adjudications_ahead=True)
+            if self.accepted_flaw
+            else ""
+        )
+
+    @property
+    def chapter_governance_notice(self) -> str:
+        """The same warning for the idea's own chapter, which follows the block."""
+        return (
+            self.accepted_flaw.notice(adjudications_ahead=False)
+            if self.accepted_flaw
+            else ""
+        )
 
     @property
     def support_notice(self) -> str:
@@ -1060,8 +1076,7 @@ class AdjudicationNote:
             "on the record is to proceed while carrying it."
         )
 
-    @property
-    def notice(self) -> str:
+    def notice(self, *, adjudications_ahead: bool) -> str:
         """The unmissable paragraph printed wherever this idea appears in the report.
 
         The flaw travels with the idea and the reason does not. An overridden idea
@@ -1070,6 +1085,12 @@ class AdjudicationNote:
         quotations three times and had to compare them to see they were the same
         decision. What a reader must not be able to miss is the flaw; the reasoning
         that answered it is one thing, set out once, where the decision is.
+
+        The governance block is appended to the research overview, about a sixth of
+        the way in. From the ranked listing it is ahead of the reader and from an
+        idea's own chapter it is nine hundred lines behind, and the paragraph said
+        "below" in both places -- so half the time it sent a reader forward past the
+        section it was pointing at. The caller knows which side it is printing on.
         """
         lead = (
             "Withdrawn after review."
@@ -1077,13 +1098,32 @@ class AdjudicationNote:
             else "Warning: this idea carries a fatal safety and governance flaw that "
             "was accepted rather than resolved."
         )
+        where = "below" if adjudications_ahead else "above"
         return (
             f"{lead} {self.resolution_sentence} The flaw, reprinted verbatim: "
             f"{_quoted(self.flaw_text)} The reason {self.adjudicator} gave for the "
-            # Not "at the end of this report": the block is appended to the research
-            # overview, about a sixth of the way in and ahead of the knowledge base
-            # and every per-idea section. A reader sent to the end went past it.
-            "decision is reprinted in full under Governance adjudications below."
+            f"decision is reprinted in full under Governance adjudications {where}."
+        )
+
+    @property
+    def reprise(self) -> str:
+        """The second meeting with the same flaw inside one idea's own chapter.
+
+        The chapter opens with the notice and the Critical Flaws subsection printed
+        it again verbatim about sixty lines later, quotation and all, so the reader
+        had to compare two long paragraphs to establish they were one decision. The
+        subsection is headed Critical Flaws and cannot stay silent about the flaw
+        that matters most; it says the flaw is there and where it was just read.
+        """
+        if self.withdrawn:
+            return (
+                f"This idea was withdrawn by {self.adjudicator} over the fatal safety "
+                "and governance flaw quoted at the head of this section."
+            )
+        return (
+            "The fatal safety and governance flaw quoted at the head of this section "
+            f"was accepted by {self.adjudicator} rather than resolved, and it still "
+            "stands against this idea."
         )
 
 
@@ -3079,7 +3119,9 @@ def _summary_sections(
         "Critical Flaws": " ".join(
             item
             for item in (
-                accepted_flaw.notice if accepted_flaw else "",
+                # The chapter head printed this idea's accepted flaw in full a page
+                # above, so here it is recalled rather than quoted a second time.
+                accepted_flaw.reprise if accepted_flaw else "",
                 _fatal_flaw_notice(faulted) if faulted else "",
                 _low_score_notice(scored_low_only) if scored_low_only else "",
             )
@@ -3446,6 +3488,12 @@ def _coherence(
     # the idea says it says. Which review sits at the bottom is on the record, so
     # the sentence is decided from that rather than asserted over it.
     lowest = min(reviews, key=lambda review: review.score)
+    # Whether there is a disagreement for a falsifier to settle. The sentence below
+    # asserted one unconditionally, so on an idea whose reviews had just been
+    # reported as agreeing it named "the disagreement between the reviews above"
+    # two lines under "They agree". Where they agree, what a falsifier is for is
+    # testing the reading they share.
+    disputed = spread > 1 or len(asked) > 1
     if spread > 1 and lowest.section == "Correctness":
         lines.append(
             "The lowest of them is the evidence and correctness review, at "
@@ -3457,13 +3505,21 @@ def _coherence(
         lines.append(
             "The falsifier stated under Description is what would settle the "
             "disagreement between the reviews above."
+            if disputed
+            else "The falsifier stated under Description is what would put the "
+            "reading they share to the test."
         )
         notes.append(COHERENCE_FALSIFIER_NOTE)
     else:
         lines.append(
             "No falsifier was recorded for this idea, so there is no stated result "
-            "that would settle the disagreement between the reviews above. Each of "
-            "them is a reading of a claim nothing can yet be held against."
+            + (
+                "that would settle the disagreement between the reviews above. Each "
+                "of them is a reading of a claim nothing can yet be held against."
+                if disputed
+                else "that would test the reading the reviews share. Their agreement "
+                "is about a claim nothing can yet be held against."
+            )
         )
     return lines, notes
 
@@ -5175,7 +5231,7 @@ def _section_four(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
     # Withdrawn ideas keep a slot at the end rather than a rank. A slot is what makes
     # the removal visible; a rank would claim it competed, which it never did.
     for offset, note in enumerate(withdrawals, start=len(briefs) + 1):
-        paragraphs = [note.notice]
+        paragraphs = [note.notice(adjudications_ahead=True)]
         # The notice directly above already says the idea never entered the tournament
         # and carries no rank and no Elo. Repeating that here put the same fact in two
         # consecutive paragraphs; what the notice does not say, and what a reader

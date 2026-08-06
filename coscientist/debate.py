@@ -406,7 +406,12 @@ def readable_turn(block: str) -> str:
     # Cutting the terminator takes the sentence's full stop with it, and every
     # turn in a rendered transcript then ended bare -- "... for their specific
     # claims" -- which reads as truncation rather than as the end of a turn.
-    if stripped and stripped[-1] not in ".!?\"')":
+    # Read behind whatever closes the sentence rather than treating the closer as
+    # the terminator. A turn ending "... (see the validation protocol)" has a
+    # bracket last, and the old test took that for punctuation and left the turn
+    # without a full stop -- the very truncation the stop was added to prevent.
+    tail = stripped.rstrip("\"')]}\u201d\u2019")
+    if stripped and (not tail or tail[-1] not in ".!?"):
         stripped += "."
     return _TURN_LABEL_RE.sub(lambda m: f"Turn {m.group(1)}:", stripped)
 
@@ -586,15 +591,60 @@ def _rationale_before(body: str, terminator_start: int) -> str:
         for block in _PARAGRAPH_RE.split(prefix)
         if (stripped := block.strip(" \t\n*#->_"))
     ]
-    for block in reversed(blocks):
-        if not block.lstrip().startswith(("{", "[", '"')) and not _looks_structured(
-            block
-        ):
-            # Judges label their conclusion, and bold the label: stripping the
-            # outer asterisks off "**Rationale:** ..." left "Rationale:** ..."
-            # in the report. The report writes the label itself.
-            return strip_rationale_label(block) or block
-    return ""
+    prose = [
+        block
+        for block in blocks
+        if not block.lstrip().startswith(("{", "[", '"'))
+        and not _looks_structured(block)
+    ]
+    if not prose:
+        return ""
+    # The last prose paragraph, and whatever it is the second half of. A judge that
+    # writes its conclusion over two paragraphs put the reasoning in the first and
+    # "Therefore, hypothesis 2 is the stronger choice." in the second, and the
+    # report printed the second alone -- a "therefore" with nothing before it.
+    chosen = [prose[-1]]
+    while len(chosen) < 3 and len(chosen) < len(prose) and _continues(chosen[0]):
+        chosen.insert(0, prose[-1 - len(chosen)])
+    # Judges label their conclusion, and bold the label: stripping the outer
+    # asterisks off "**Rationale:** ..." left "Rationale:** ..." in the report,
+    # and "**Conclusion:**" was not in the family of labels at all, so a live
+    # report carried the asterisks around it. The report writes the label itself.
+    joined = unemphasised(" ".join(chosen))
+    return strip_rationale_label(joined) or joined
+
+
+# A paragraph that reads as the second half of one. Only openers that cannot begin
+# a standalone conclusion are listed: "This" and "The" routinely do.
+_CONTINUATION_RE = re.compile(
+    r"^(?:and|but|or|so|therefore|thus|hence|however|moreover|furthermore|"
+    r"consequently|accordingly|in conclusion|for (?:these|those|this) reasons?|"
+    r"on balance|overall|given (?:this|that|these))\b[,\s]",
+    re.IGNORECASE,
+)
+
+
+def _continues(block: str) -> str | re.Match[str] | None:
+    """Whether a paragraph leans on one above it for its subject."""
+    opening = block.lstrip()
+    return (opening[:1].islower() and opening[:1].isalpha()) or _CONTINUATION_RE.match(
+        opening
+    )
+
+
+# Emphasis runs a judge wrote around its own words. Matched only where they hug a
+# non-space character on the inside, so the "*" in "2 * 3" survives untouched.
+_EMPHASIS_RE = re.compile(r"(?<![\w*])\*{1,3}(?=\S)|(?<=\S)\*{1,3}(?![\w*])")
+
+
+def unemphasised(text: str) -> str:
+    """A judge's prose without the bold and italic markers it wrote into it.
+
+    A rationale is reprinted inside a bullet whose own label is bold, so a stray
+    "**" out of the judge's text closes the report's emphasis rather than the
+    judge's and the rest of the line turns bold.
+    """
+    return _EMPHASIS_RE.sub("", text)
 
 
 def strip_turn_label(text: str) -> str:
@@ -616,9 +666,17 @@ def strip_rationale_label(text: str) -> str:
     return _RATIONALE_LABEL_RE.sub("", text.strip()).strip()
 
 
-# The label may trail a bracketed rematch note the report prepends.
+# The label may trail a bracketed rematch note the report prepends. Judges use the
+# whole family of them -- a live report printed "**Conclusion:** Hypothesis 2 ..."
+# with the asterisks intact, because only "Rationale" was listed here.
+# The colon is required of every label but "Rationale", which is the one the
+# prompt itself asks for: "Decision theory favours the coated cell" opens on a
+# label word and is a sentence, not a heading.
 _RATIONALE_LABEL_RE = re.compile(
-    r"(?:^|(?<=\]\s))\**\s*rationale\s*:?\**\s*", re.IGNORECASE
+    r"(?:^|(?<=\]\s))\**\s*(?:rationale\s*:?|"
+    r"(?:conclusion|verdict|judg(?:e)?ment|final (?:judg(?:e)?ment|assessment|"
+    r"verdict|answer)|decision|summary)\s*:)\**\s*",
+    re.IGNORECASE,
 )
 
 

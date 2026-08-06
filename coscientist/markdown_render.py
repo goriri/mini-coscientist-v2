@@ -422,20 +422,53 @@ def _caption_context(
         return "the report", ""
     _, text, anchor = stack[-1]
     if text not in repeated:
-        return text, anchor
+        return _unnumbered(text), anchor
     parent = next((item[1] for item in reversed(stack[:-1]) if item[0] <= 2), "")
+    text, parent = _unnumbered(text), _unnumbered(parent)
     return (f"{text} ({parent})" if parent else text), anchor
 
 
-def _caption(label: str, caption: str, under_heading: bool) -> str:
+# The section number a heading carries. A caption is not a heading and does not
+# take its number: "Table 1. 4.1 A 2.5 nm LiNbO3 Coating" and "Table 9. 5.
+# Comparison of Candidate Ideas" both reached a live report, each reading as two
+# numberings of the same thing.
+_SECTION_NUMBER = re.compile(r"^\d+(?:\.\d+)*\.?\s+")
+
+
+def _unnumbered(text: str) -> str:
+    """A heading's words without the section number in front of them."""
+    return _SECTION_NUMBER.sub("", text.strip())
+
+
+def _column_caption(header: str) -> str:
+    """What a table holds, read off the row that names its columns."""
+    cells = [
+        cell
+        for raw in header.strip().strip("|").split("|")
+        if (cell := raw.strip().strip("*").strip())
+    ]
+    if len(cells) < 2:
+        return ""
+    listed = ", ".join(cells[:-1])
+    return f"{listed} and {cells[-1]}"
+
+
+def _caption(label: str, caption: str, under_heading: bool, columns: str = "") -> str:
     """A numbered caption, minus the words the heading above it already set.
 
     An exhibit that opens its own section takes that section's title as its
     caption, and printing it there gives "### Executive Candidate Summary"
     followed immediately by "Table 10. Executive Candidate Summary." The number
     is what the caption is for; the sentence is already on the page.
+
+    What was on the page instead was "**Table 10.**" and nothing else, twice in
+    the live dossier: a caption that describes nothing. Where the exhibit is a
+    table, its own header row says what it holds without repeating a word of the
+    heading, so that is what the caption says.
     """
-    return f"**{label}.**" if under_heading else f"**{label}.** {caption}."
+    if not under_heading:
+        return f"**{label}.** {caption}."
+    return f"**{label}.** {columns}." if columns else f"**{label}.**"
 
 
 def number_figures_and_tables(content: str) -> str:
@@ -522,7 +555,9 @@ def number_figures_and_tables(content: str) -> str:
             caption, anchor = _caption_context(stack, repeated)
             tables.append((label, caption, anchor))
             # Above the table, which is where a table's caption goes.
-            out.extend([_caption(label, caption, under_heading), ""])
+            out.extend(
+                [_caption(label, caption, under_heading, _column_caption(line)), ""]
+            )
             while index < len(lines) and lines[index].lstrip().startswith("|"):
                 out.append(lines[index])
                 index += 1

@@ -11,6 +11,7 @@ from coscientist.markdown_render import (
     cjk_markup,
     has_cjk,
     inline_markup,
+    number_figures_and_tables,
     parse_blocks,
     parse_inline,
     plain_text,
@@ -136,3 +137,32 @@ def test_unfenced_json_becomes_a_code_block():
 
     assert isinstance(block, Code)
     assert block.text.startswith("{") and block.text.rstrip().endswith("}")
+
+
+def test_a_table_opening_a_section_is_captioned_by_its_own_columns():
+    """ "**Table 1.**" and nothing else reached the live dossier twice."""
+    numbered = number_figures_and_tables(
+        "## Ranked Research Ideas\n\n"
+        "| Rank | Candidate Title | Elo |\n| --- | --- | --- |\n| 1 | A | 1200 |\n"
+    )
+
+    assert "**Table 1.** Rank, Candidate Title and Elo." in numbered
+
+
+def test_a_caption_does_not_take_the_section_number_off_the_heading():
+    """ "Table 1. 4.1 A 2.5 nm LiNbO3 Coating" numbers the same thing twice."""
+    numbered = number_figures_and_tables(
+        "### 4.1 A 2.5 nm LiNbO3 Coating\n\nProse about the idea.\n\n"
+        "| Field | Value |\n| --- | --- |\n| Elo | 1200 |\n"
+    )
+
+    assert "**Table 1.** A 2.5 nm LiNbO3 Coating." in numbered
+    assert "4.1 A 2.5 nm" not in numbered.split("**Table 1.**")[1]
+
+
+def test_a_table_with_no_column_labels_falls_back_to_the_bare_number():
+    numbered = number_figures_and_tables(
+        "## Open Questions\n\n|  |  |\n| --- | --- |\n| Does it hold? | Unknown |\n"
+    )
+
+    assert "**Table 1.**\n" in numbered

@@ -36,6 +36,7 @@ from coscientist.debate import (
     run_debate_tournament,
     strip_rationale_label,
     strip_turn_label,
+    unemphasised,
 )
 from coscientist.models import ApprovalProfile, TournamentState
 from coscientist.orchestration import CoScientistWorkflow
@@ -603,6 +604,66 @@ def test_a_turn_ends_on_a_full_stop_once_the_terminator_is_gone():
 def test_a_turn_that_already_ends_on_punctuation_gains_nothing():
     assert readable_turn("Turn 1: Does the coating conduct? better idea: 1") == (
         "Turn 1: Does the coating conduct?"
+    )
+
+
+def test_a_turn_closing_on_a_bracket_is_still_given_its_full_stop():
+    """A closing bracket was read as punctuation, so the turn ended unstopped."""
+    assert readable_turn(
+        "Turn 2: The control is under-specified (see the validation protocol) "
+        "better idea: 1"
+    ) == ("Turn 2: The control is under-specified (see the validation protocol).")
+
+
+def test_a_turn_that_ends_inside_a_quotation_keeps_its_own_stop():
+    assert readable_turn(
+        'Turn 2: The review called it "wholly unsupported." better idea: 2'
+    ) == ('Turn 2: The review called it "wholly unsupported."')
+
+
+def test_a_conclusion_written_over_two_paragraphs_is_printed_whole():
+    """ "Therefore, hypothesis 2 ..." was printed alone, a therefore with no before."""
+    verdict = parse_verdict(
+        "Turn 1: Expert A: Both cite the same study.\n\n"
+        "Hypothesis 2 states the thickness it needs and hypothesis 1 does not.\n\n"
+        "Therefore, hypothesis 2 is the stronger choice.\n\n"
+        "better idea: 2"
+    )
+
+    assert verdict.rationale == (
+        "Hypothesis 2 states the thickness it needs and hypothesis 1 does not. "
+        "Therefore, hypothesis 2 is the stronger choice."
+    )
+
+
+def test_a_standalone_conclusion_does_not_drag_the_paragraph_above_it_in():
+    verdict = parse_verdict(
+        "Turn 1: Expert A: Both cite the same study.\n\n"
+        "The coating thickness is stated in hypothesis 2 alone.\n\n"
+        "Hypothesis 2 is the stronger choice.\n\n"
+        "better idea: 2"
+    )
+
+    assert verdict.rationale == "Hypothesis 2 is the stronger choice."
+
+
+def test_the_emphasis_a_judge_wrote_does_not_leak_into_the_report():
+    """A stray "**" closes the report's own bold and turns the rest of the line."""
+    verdict = parse_verdict(
+        "**Conclusion:** Hypothesis 1 isolates the **mechanism**.\n\nbetter idea: 1"
+    )
+
+    assert verdict.rationale == "Hypothesis 1 isolates the mechanism."
+
+
+def test_unemphasised_leaves_arithmetic_alone():
+    """The markers are cut where they hug a word, not wherever an asterisk falls."""
+    assert unemphasised("A dose of 2 * 3 units") == "A dose of 2 * 3 units"
+
+
+def test_a_bolded_conclusion_label_is_stripped_with_its_asterisks():
+    assert strip_rationale_label(unemphasised("**Final judgment:** H2 wins.")) == (
+        "H2 wins."
     )
 
 

@@ -18,8 +18,10 @@ from coscientist.models import (
     Session,
 )
 from coscientist.narrative import (
+    IdeaReview,
     ResearchRecord,
     _blocks_as_prose,
+    _coherence,
     _evidence_statements,
     _sentence,
     synthesize_overview,
@@ -171,3 +173,66 @@ def test_the_same_direction_returned_by_two_passes_is_listed_once():
     ]
 
     assert len(_directions(record)) == 1
+
+
+# --- coherence: the falsifier settles a dispute only where there is one -------
+
+
+def _review(section: str, score: int, recommendation: str = "revise") -> IdeaReview:
+    return IdeaReview(
+        section=section,
+        lead_in="",
+        question="",
+        findings=[],
+        objections=[],
+        rebuttals=[],
+        answer="",
+        score=score,
+        recommendation=recommendation,
+    )
+
+
+def test_a_falsifier_settles_a_disagreement_only_where_the_reviews_disagree():
+    lines, _ = _coherence(
+        [_review("Feasibility", 2), _review("Correctness", 5)],
+        {"Falsifier": "No capacity difference at 500 cycles."},
+    )
+
+    assert "settle the disagreement between the reviews above" in lines[-1]
+
+
+def test_a_falsifier_under_agreeing_reviews_tests_the_reading_they_share():
+    """ "the disagreement between the reviews above" printed two lines under "They
+    agree" -- the sentence named a dispute the paragraph above had just denied."""
+    lines, _ = _coherence(
+        [_review("Correctness", 4), _review("Feasibility", 4)],
+        {"Falsifier": "No capacity difference at 500 cycles."},
+    )
+
+    assert "put the reading they share to the test" in lines[-1]
+    assert "disagreement" not in lines[-1]
+
+
+def test_reviews_that_score_alike_but_ask_for_different_things_still_disagree():
+    lines, _ = _coherence(
+        [
+            _review("Correctness", 4, "revise"),
+            _review("Feasibility", 4, "advance"),
+        ],
+        {"Falsifier": "No capacity difference at 500 cycles."},
+    )
+
+    assert "settle the disagreement between the reviews above" in lines[-1]
+
+
+def test_agreeing_reviews_with_no_falsifier_are_not_told_they_disagree():
+    lines, _ = _coherence(
+        [_review("Correctness", 4), _review("Feasibility", 4)],
+        {"Falsifier": "Not stated by the specialist."},
+    )
+
+    assert "test the reading the reviews share" in lines[-1]
+    assert (
+        "Their agreement is about a claim nothing can yet be held against"
+        in (lines[-1])
+    )
