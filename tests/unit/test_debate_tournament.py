@@ -637,3 +637,51 @@ def test_a_turn_label_carried_into_a_rationale_is_dropped():
     assert strip_turn_label("Turn 4: Final evaluation. Hypothesis 2 is stronger.") == (
         "Final evaluation. Hypothesis 2 is stronger."
     )
+
+
+# --------------------------------------------------------------------------
+# The comparison budget
+# --------------------------------------------------------------------------
+
+
+def test_the_default_budget_buys_the_full_three_swiss_rounds():
+    """Eighteen comparisons over eight candidates is exactly the design.
+
+    So the guard below must be inert on a run that is inside its budget: if it
+    were to shorten this tournament, every ordinary run would be ranked on less
+    evidence than the design calls for.
+    """
+    session = _ranked_session()
+    assert session.budget.max_pairwise_comparisons == 18
+    state, _ = run_debate_tournament(session, _JudgeProvider(), max_workers=4)
+    assert state.swiss_rounds == 3
+    assert len(state.comparisons) == 18
+
+
+def test_a_smaller_budget_buys_fewer_swiss_rounds_and_says_so():
+    """The finals are held back from the reduction and the transcript discloses it.
+
+    A shortened tournament separates the field less confidently, so a reader
+    comparing Elo across runs has to be told which one they are reading.
+    """
+    session = _ranked_session()
+    session.budget.max_pairwise_comparisons = 12
+    state, transcript = run_debate_tournament(session, _JudgeProvider(), max_workers=4)
+    # (12 - 6 finals) // 4 matches a round.
+    assert state.swiss_rounds == 1
+    assert len(state.comparisons) == 10
+    assert sum(1 for item in state.comparisons if item.round_number == 4) == 6
+    assert "Structure: 1 Swiss rounds" in transcript
+    assert "to stay inside the session's 12-comparison budget" in transcript
+
+
+def test_a_budget_too_small_for_any_swiss_round_still_seeds_the_finals():
+    """One round survives whatever the budget says.
+
+    With none, the top four would be chosen off the default rating every
+    candidate starts on, which is to say alphabetically.
+    """
+    session = _ranked_session()
+    session.budget.max_pairwise_comparisons = 1
+    state, _ = run_debate_tournament(session, _JudgeProvider(), max_workers=4)
+    assert state.swiss_rounds == 1

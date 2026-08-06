@@ -2,7 +2,8 @@ import json
 
 import pytest
 
-from coscientist.agents import CRITIC_ROUNDS, Specialist
+from coscientist.agents import CRITIC_ROUNDS, SPECIALISTS, Specialist
+from coscientist.debate import JUDGE_ROLE
 from coscientist.methods import classify_research_mode, method_requirements
 from coscientist.models import RESEARCH_MODES, Session
 from coscientist.orchestration import CoScientistWorkflow
@@ -30,32 +31,46 @@ def test_every_declared_mode_has_a_method_adapter():
     assert all(method_requirements(mode) for mode in RESEARCH_MODES)
 
 
+CRITIC_MARKER = "You are the Lead Scientific Critic"
+
+
 class _MockActorCriticProvider:
     """An actor whose drafts satisfy the contract, so the critic is what is tested.
 
     A mock that returns prose is stopped by the contract halt long before the
     critic sees anything, which makes the round count a fact about the parser
     rather than about the loop.
+
+    Actor and critic turns are told apart by the prompt, not by the role. Every
+    call in a run addresses a published specialist -- a role naming no agent is
+    a 404 against the deployment -- so the role is the same on both.
     """
 
     def __init__(self, satisfy_on_round: int = 2):
         self.satisfy_on_round = satisfy_on_round
-        self.calls = []
+        self.calls: list[tuple[str, bool]] = []
         self.model_id = "mock-actor-critic"
 
+    @property
+    def critic_calls(self) -> list[str]:
+        return [role for role, is_critic in self.calls if is_critic]
+
+    @property
+    def actor_calls(self) -> list[str]:
+        return [role for role, is_critic in self.calls if not is_critic]
+
     def complete(self, *, role: str, prompt: str) -> str:
-        self.calls.append(role)
-        if role.endswith("_critic"):
-            critic_rounds = sum(1 for call in self.calls if call.endswith("_critic"))
-            if critic_rounds >= self.satisfy_on_round:
+        is_critic = CRITIC_MARKER in prompt
+        self.calls.append((role, is_critic))
+        if is_critic:
+            if len(self.critic_calls) >= self.satisfy_on_round:
                 return "SATISFIED"
             return "Please add more controls and domain falsifiers."
-        drafts = sum(1 for call in self.calls if not call.endswith("_critic"))
         return json.dumps(
             {
                 "research_mode": "experimental",
                 "question": "Test question",
-                "intended_claim": f"Research objective: revision {drafts}",
+                "intended_claim": f"Research objective: revision {len(self.actor_calls)}",
                 "success_criteria": ["A measurable effect against a baseline."],
             }
         )
@@ -68,13 +83,9 @@ def test_the_critic_loop_stops_the_round_it_is_satisfied():
 
     artifact = specialist.run(session, provider)
 
-    assert [call for call in provider.calls if call.endswith("_critic")] == [
-        "goal_manager_critic"
-    ] * 2
+    assert provider.critic_calls == ["goal_manager"] * 2
     # One opening draft and one revision: the satisfied round asks for nothing.
-    assert [call for call in provider.calls if not call.endswith("_critic")] == [
-        "goal_manager"
-    ] * 2
+    assert provider.actor_calls == ["goal_manager"] * 2
     assert artifact.payload["intended_claim"] == "Research objective: revision 2"
 
 
@@ -86,5 +97,20 @@ def test_a_critic_that_never_relents_is_stopped_by_the_round_bound():
 
     specialist.run(session, provider)
 
-    critics = [call for call in provider.calls if call.endswith("_critic")]
-    assert len(critics) == CRITIC_ROUNDS
+    assert len(provider.critic_calls) == CRITIC_ROUNDS
+
+
+def test_every_role_a_run_addresses_is_a_published_specialist():
+    """A role is an A2A address. One that names no agent is a 404 mid-run.
+
+    The critic turn used to address ``<role>_critic``, which is not published,
+    so against the deployment every session failed at the first stage.
+    """
+    session = Session(question="Test question")
+    specialist = Specialist("scope", "goal_manager", "Manage research goals")
+    provider = _MockActorCriticProvider(satisfy_on_round=99)
+
+    specialist.run(session, provider)
+
+    published = {item.role for item in SPECIALISTS} | {JUDGE_ROLE}
+    assert {role for role, _ in provider.calls} <= published

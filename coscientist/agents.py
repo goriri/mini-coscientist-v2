@@ -327,6 +327,17 @@ class A2AProvider:
         # allowed model at startup. Asking the wrong card would silently run the
         # stage on a model the session did not choose, so the model is in the
         # path rather than in the message.
+        # Checked here rather than left to the fetch. Only the roles in
+        # ``SPECIALISTS`` are published, and an unpublished one came back as a
+        # 404 on a card URL -- which reads like a broken deployment when what is
+        # broken is the caller's role string.
+        published = {specialist.role for specialist in SPECIALISTS}
+        if role not in published:
+            raise ValueError(
+                f"'{role}' is not a published specialist, so no A2A agent serves "
+                "it. A differently prompted turn -- a critique, a debate -- "
+                "still addresses the specialist whose work it is about."
+            )
         name = specialist_agent_name(role, self.model_id)
         card_path = f"/a2a/specialists/{name}/.well-known/agent-card.json"
         http_client = httpx.AsyncClient(timeout=httpx.Timeout(self.timeout))
@@ -511,7 +522,10 @@ class Specialist:
             f"Required Scientific-Method Checklist:\n{checklist}\n"
             f"{discipline_checklist_section}"
             f"Stage Requirements and Role Purpose: {self.instruction}\n\n"
-            f"--- CURRENT ACTOR DRAFT (Round {round_num}/10) ---\n{content}\n\n"
+            # The real bound, not a fixed ten. A critic told it has ten rounds
+            # left when it has two paces its objections for a conversation that
+            # ends after the next one.
+            f"--- CURRENT ACTOR DRAFT (Round {round_num}/{CRITIC_ROUNDS}) ---\n{content}\n\n"
             "Evaluate this draft with maximum scientific rigor against the following criteria:\n"
             "1. Completeness & Schema Compliance: Does it provide all required fields, tables, or JSON contracts without omissions or truncation?\n"
             "2. Scientific Rigor & Plausibility: Are mechanisms, controls, falsifiers, or citations domain-specific, plausible, and testable?\n"
@@ -553,8 +567,17 @@ class Specialist:
             return content, typed
         model = ROLE_CONTRACTS.get(self.role)
         for round_number in range(1, CRITIC_ROUNDS + 1):
+            # Addressed to the specialist's own role, not to a "<role>_critic".
+            # A role is the address of a published A2A agent, and only the
+            # seventeen specialists are published: a critic role resolved to no
+            # agent card, so against the deployment every run died at the first
+            # stage with a 404 for
+            # ``/a2a/specialists/goal_manager_critic/.well-known/agent-card.json``.
+            # The critique is a different prompt to the same specialist, the way
+            # the tournament judge is the ranking specialist under a debate
+            # prompt.
             critique = provider.complete(
-                role=f"{self.role}_critic",
+                role=self.role,
                 prompt=self._build_critic_prompt(
                     session, content, round_number, checklist
                 ),

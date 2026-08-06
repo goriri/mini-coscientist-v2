@@ -58,6 +58,7 @@ from .models import (
     Artifact,
     ArtifactStatus,
     AuditEvent,
+    Candidate,
     CandidatePopulation,
     DecisionAction,
     DeepResearchRun,
@@ -75,6 +76,10 @@ from .models import (
     Session,
     SourceLead,
     utc_now,
+)
+from .normalization import (
+    validate_candidate_comprehensiveness,
+    validate_candidate_distinctness,
 )
 from .parity import detect_input_requirements, unresolved_blockers
 
@@ -372,45 +377,10 @@ class CoScientistWorkflow:
             output_ids.append(result.artifact.id)
 
         if stage == "generate":
-            merged_candidates = []
-            seen_claims = set()
-            for res in results:
-                if (
-                    res.artifact.schema_name == "CandidatePopulation"
-                    and res.artifact.payload
-                ):
-                    pop = CandidatePopulation.model_validate(res.artifact.payload)
-                    for cand in pop.candidates:
-                        key = (
-                            cand.claim.strip().lower(),
-                            cand.rationale.strip().lower(),
-                        )
-                        if key not in seen_claims:
-                            seen_claims.add(key)
-                            merged_candidates.append(cand)
-            if merged_candidates:
-                merged_pop = CandidatePopulation(
-                    candidates=merged_candidates,
-                    target_size=max(8, len(merged_candidates)),
-                )
-                from .normalization import (
-                    validate_candidate_comprehensiveness,
-                    validate_candidate_distinctness,
-                )
-
-                validate_candidate_distinctness(merged_pop)
-                if self.session.workflow_version >= 2:
-                    validate_candidate_comprehensiveness(merged_pop)
-                agg_artifact = Artifact(
-                    stage="generate",
-                    agent="generation_aggregator",
-                    content=f"Merged {len(merged_candidates)} candidates across 4 parallel generation strategies.",
-                    artifact_type="specialist_output",
-                    schema_name="CandidatePopulation",
-                    payload=merged_pop.model_dump(mode="json"),
-                )
-                self.session.artifacts.append(agg_artifact)
-                output_ids.append(agg_artifact.id)
+            merged = self._merged_generation_population(results)
+            if merged is not None:
+                self.session.artifacts.append(merged)
+                output_ids.append(merged.id)
 
         sections = [
             f"### {result.artifact.agent.replace('_', ' ').title()}\n\n"
@@ -438,6 +408,76 @@ class CoScientistWorkflow:
         )
         self._persist(event)
         return draft
+
+    def _merged_generation_population(self, results) -> Artifact | None:
+        """Fold the strategy generators' populations into the one the run ranks.
+
+        Duplicates are dropped on claim and rationale, and the field is then held
+        to ``budget.max_candidates``. The ceiling is not decoration: the ranking
+        tournament plays three Swiss rounds over the whole field before the
+        top-four final, so four generators that each over-produce turn a budgeted
+        eighteen-comparison tournament into a fifty-match one, and the deep-dive
+        section into something nobody reads. Candidates are taken a rank at a
+        time across the strategies rather than a strategy at a time, so a
+        ceiling thins every strategy evenly instead of deleting the last
+        generator's entire contribution.
+        """
+        by_strategy: list[list[Candidate]] = []
+        seen: set[tuple[str, str]] = set()
+        for result in results:
+            artifact = result.artifact
+            if artifact.schema_name != "CandidatePopulation" or not artifact.payload:
+                continue
+            population = CandidatePopulation.model_validate(artifact.payload)
+            distinct = []
+            for candidate in population.candidates:
+                key = (
+                    candidate.claim.strip().lower(),
+                    candidate.rationale.strip().lower(),
+                )
+                if key not in seen:
+                    seen.add(key)
+                    distinct.append(candidate)
+            if distinct:
+                by_strategy.append(distinct)
+        if not by_strategy:
+            return None
+
+        offered = sum(len(group) for group in by_strategy)
+        ceiling = self.session.budget.max_candidates
+        merged = [
+            group[rank]
+            for rank in range(max(len(group) for group in by_strategy))
+            for group in by_strategy
+            if rank < len(group)
+        ][:ceiling]
+
+        population = CandidatePopulation(candidates=merged, target_size=len(merged))
+        validate_candidate_distinctness(population)
+        if self.session.workflow_version >= 2:
+            validate_candidate_comprehensiveness(population)
+
+        strategies = len(by_strategy)
+        content = (
+            f"Merged {len(merged)} distinct candidates from {strategies} "
+            f"generation {'strategy' if strategies == 1 else 'strategies'}"
+        )
+        if len(merged) < offered:
+            # Said out loud rather than trimmed in silence: a population that
+            # reads as the generators' whole output when it is not would make
+            # the ranking look exhaustive over a field it never saw.
+            content += (
+                f"; {offered - len(merged)} further candidates were set aside to "
+                f"hold the population at the budgeted ceiling of {ceiling}"
+            )
+        return Artifact(
+            stage="generate",
+            agent="generation_aggregator",
+            content=content + ".",
+            artifact_type="specialist_output",
+            schema_name="CandidatePopulation",
+            payload=population.model_dump(mode="json"),
+        )
 
     async def _preview_evidence(self, feedback: str = "") -> Artifact:
         """Run discovery first, then hand discovered leads to verification."""

@@ -38,3 +38,15 @@ def test_the_card_follows_the_port_the_container_was_given(monkeypatch, port):
     monkeypatch.delenv("APP_URL", raising=False)
     monkeypatch.setenv("PORT", port)
     assert default_app_url().endswith(f":{port}")
+
+
+def test_a_role_no_agent_serves_is_refused_before_the_card_is_fetched():
+    """It used to surface as a 404 on a card URL, which reads as a broken deploy.
+
+    The actor-critic loop addressed ``<role>_critic``; only the seventeen
+    specialists are published, so every session against the deployment died at
+    the first stage.
+    """
+    provider = A2AProvider(base_url="https://example.invalid")
+    with pytest.raises(ValueError, match="is not a published specialist"):
+        provider.complete(role="goal_manager_critic", prompt="anything")

@@ -947,6 +947,26 @@ def _standings(candidates: list[Candidate], ratings: dict[str, float]) -> list[s
     ]
 
 
+def _affordable_swiss_rounds(field: int, comparisons: int) -> int:
+    """How many Swiss rounds the comparison budget leaves room for.
+
+    The budget is one number over the whole tournament, and the finals are the
+    matches it should buy last: the top-four round robin is where the
+    multi-turn debate happens, so it is held back from the arithmetic and the
+    Swiss rounds take the reduction. One round always survives -- a tournament
+    that seeded the finals off nothing but the default rating would be picking
+    four candidates alphabetically.
+
+    Under the default budget of eighteen and a field of eight this returns the
+    full three, so a run inside its budget is unaffected.
+    """
+    per_round = field // 2
+    if per_round < 1:
+        return SWISS_ROUNDS
+    finals = len(list(combinations(range(min(TOP_ROUND_ROBIN_SIZE, field)), 2)))
+    return max(1, min(SWISS_ROUNDS, (comparisons - finals) // per_round))
+
+
 def run_debate_tournament(
     session: Session,
     provider: _Completer,
@@ -981,6 +1001,9 @@ def run_debate_tournament(
     order = 0
     standings_history: list[list[str]] = []
     rating_history: list[dict[str, float]] = [dict(ratings)]
+    swiss_rounds = _affordable_swiss_rounds(
+        len(candidates), session.budget.max_pairwise_comparisons
+    )
 
     def play(matches: list[Match]) -> None:
         if not matches:
@@ -1009,7 +1032,7 @@ def run_debate_tournament(
                 MatchRecord(match, verdict, _apply_verdict(match, verdict, ratings))
             )
 
-    for round_number in range(1, SWISS_ROUNDS + 1):
+    for round_number in range(1, swiss_rounds + 1):
         matches: list[Match] = []
         for left, right in _swiss_pairings(candidates, ratings, set(met_in_round)):
             matches.append(Match(round_number, order, left, right, debate=False))
@@ -1049,7 +1072,7 @@ def run_debate_tournament(
         ratings=ratings,
         comparisons=[record.comparison for record in records],
         shortlist_ids=shortlist,
-        swiss_rounds=SWISS_ROUNDS,
+        swiss_rounds=swiss_rounds,
         top_round_robin_size=TOP_ROUND_ROBIN_SIZE,
         ranking_stable_rounds=stable,
         score_movement=movement,
@@ -1087,10 +1110,20 @@ def render_transcript(
         "",
         f"Judge: `{model_id}`, prompted as the Co-Scientist Ranking agent "
         "(supplementary section 9.3).",
-        f"Structure: {SWISS_ROUNDS} Swiss rounds judged by the single-turn "
+        f"Structure: {state.swiss_rounds} Swiss rounds judged by the single-turn "
         "comparison prompt, then a top-"
         f"{TOP_ROUND_ROBIN_SIZE} round robin judged by the simulated "
-        "scientific debate prompt.",
+        "scientific debate prompt."
+        + (
+            ""
+            if state.swiss_rounds >= SWISS_ROUNDS
+            # A shortened tournament separates the field less confidently, and a
+            # reader comparing Elo ratings across runs needs to know it.
+            else f" The design calls for {SWISS_ROUNDS} Swiss rounds; this run "
+            f"played {state.swiss_rounds} to stay inside the session's "
+            f"{session.budget.max_pairwise_comparisons}-comparison budget over a "
+            f"field of {len(state.ratings)}."
+        ),
         f"Matches played: {len(records)} ({decided} decided, "
         f"{len(records) - decided} drawn for want of a verdict); one model call "
         "per match.",

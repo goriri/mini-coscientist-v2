@@ -279,3 +279,105 @@ def test_v3_hitl_refine_section():
     assert flow.session.decisions[-1].feedback.startswith(
         "Refined section 'validation_protocol'"
     )
+
+
+# ---------------------------------------------------------------------------
+# The candidate ceiling
+# ---------------------------------------------------------------------------
+
+
+class _Result:
+    """The one attribute the aggregator reads off a dispatched task."""
+
+    def __init__(self, artifact):
+        self.artifact = artifact
+
+
+def _population_artifact(strategy: str, count: int):
+    from coscientist.models import Artifact
+
+    candidates = [
+        Candidate(
+            title=f"{strategy} {index}",
+            claim=f"{strategy} claim {index}",
+            rationale=f"{strategy} rationale {index}",
+            falsifier=f"{strategy} falsifier {index}",
+            mechanism_model=f"{strategy} mechanism {index}",
+            validation_protocol=f"{strategy} protocol {index}",
+        )
+        for index in range(count)
+    ]
+    return Artifact(
+        stage="generate",
+        agent=f"generation_{strategy}",
+        content="",
+        schema_name="CandidatePopulation",
+        payload=CandidatePopulation(
+            candidates=candidates, target_size=count
+        ).model_dump(mode="json"),
+    )
+
+
+def _merged(flow, offered_per_strategy: int, strategies: int = 4):
+    results = [
+        _Result(_population_artifact(f"s{index}", offered_per_strategy))
+        for index in range(strategies)
+    ]
+    return flow._merged_generation_population(results)
+
+
+def _flow():
+    return CoScientistWorkflow(
+        "Can a coating improve cycle life?",
+        approval_profile=ApprovalProfile.AUTO,
+        # v1 skips the comprehensiveness check, which is about prose length and
+        # not about how many candidates survive the merge.
+        workflow_version=1,
+    )
+
+
+def test_the_generators_output_passes_through_when_it_is_inside_the_ceiling():
+    flow = _flow()
+    merged = _merged(flow, offered_per_strategy=2)
+    population = CandidatePopulation.model_validate(merged.payload)
+    assert len(population.candidates) == 8
+    assert "8 distinct candidates from 4 generation strategies" in merged.content
+    assert "set aside" not in merged.content
+
+
+def test_over_production_is_held_to_the_budgeted_ceiling():
+    """Otherwise four generators of eight give the tournament a field of 32.
+
+    Three Swiss rounds over 32 is 48 matches before the finals, against a
+    budget of 18, and a deep-dive section nobody reads.
+    """
+    flow = _flow()
+    assert flow.session.budget.max_candidates == 8
+    merged = _merged(flow, offered_per_strategy=8)
+    population = CandidatePopulation.model_validate(merged.payload)
+    assert len(population.candidates) == 8
+    assert population.target_size == 8
+    # Said out loud: a truncated field that reads as the whole one would make
+    # the ranking look exhaustive over candidates it never saw.
+    assert "24 further candidates were set aside" in merged.content
+    assert "ceiling of 8" in merged.content
+
+
+def test_the_ceiling_thins_every_strategy_rather_than_dropping_the_last():
+    """Taken a rank at a time, so each strategy keeps its two strongest."""
+    flow = _flow()
+    merged = _merged(flow, offered_per_strategy=8)
+    population = CandidatePopulation.model_validate(merged.payload)
+    kept = [candidate.title for candidate in population.candidates]
+    assert kept == [f"s{index} {rank}" for rank in (0, 1) for index in range(4)]
+
+
+def test_a_claim_two_strategies_both_reached_is_carried_once():
+    flow = _flow()
+    duplicate = _population_artifact("s0", 2)
+    merged = flow._merged_generation_population(
+        [_Result(duplicate), _Result(_population_artifact("s0", 2))]
+    )
+    population = CandidatePopulation.model_validate(merged.payload)
+    assert len(population.candidates) == 2
+    assert "from 1 generation strategy" in merged.content
