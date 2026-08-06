@@ -50,6 +50,36 @@ def test_a_table_answering_a_prose_field_is_read_out_as_clauses():
     assert "Evaluation of Idea." in said, "the heading was dropped rather than said"
 
 
+def test_a_heading_over_prose_introduces_it_rather_than_standing_alone():
+    """ "... isolate the true kinetic penalty of the coating. Critical Scientific
+    Judgment. TMA is highly pyrophoric" -- a title stranded mid-paragraph between two
+    sentences it belongs to neither of."""
+    said = _sentence(
+        "The binder masks the penalty.\n\n"
+        "## Critical Scientific Judgment\n\n"
+        "TMA is pyrophoric. Cutoffs must be set to 4.5 V."
+    )
+
+    assert "Critical Scientific Judgment: TMA is pyrophoric." in said
+    assert "Judgment. TMA" not in said
+
+
+def test_a_heading_over_a_table_keeps_its_own_full_stop():
+    """The rows below are sentences of their own, and a colon would read as though
+    only the first of them were what the heading introduced."""
+    said = _sentence(TABLE)
+
+    assert "Evaluation of Idea. Aggregation Control" in said
+
+
+def test_a_field_name_out_of_the_contract_is_printed_as_words():
+    """ "included a structured Evaluation Table in the mechanism_model" -- an
+    identifier out of a JSON schema, printed to a reader who has never seen it."""
+    said = _sentence("Added a table to mechanism_model and a test to go_no_go_tests.")
+
+    assert said == "Added a table to mechanism model and a test to go/no-go tests."
+
+
 def test_a_two_column_row_is_read_as_a_colon_rather_than_a_parenthesis():
     said = _blocks_as_prose(
         "| Criterion | Judgment |\n| --- | --- |\n| Purity | High |"

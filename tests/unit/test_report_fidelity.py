@@ -1335,6 +1335,30 @@ def test_a_rewrite_made_over_two_rounds_is_not_attributed_to_one():
     assert critiques.split(". ")[0].endswith("the inhalation risk")
 
 
+def test_a_critique_recorded_with_its_remedy_stays_inside_the_sentence():
+    """Evolution records what it addressed as "Missing Structured Evaluation Table:
+    Added to mechanism_model", and "to address" in front of four of those produced a
+    sentence that stopped at the first colon and three more starting at a remedy."""
+    from coscientist.narrative import _revised_form
+
+    record = _twice_revised()
+    record.evolution.records[0].critiques_addressed = [
+        "Missing Structured Evaluation Table: Added to mechanism_model",
+        "Incomplete Synthetic Routes: Specified ALD conditions",
+    ]
+    record.evolution.records[1].critiques_addressed = []
+
+    lead_in, _, _ = _revised_form(record, _candidate("cand_a"))
+
+    assert (
+        "The rounds addressed, between them, missing Structured Evaluation Table — "
+        "added to mechanism model; and incomplete Synthetic Routes — specified ALD "
+        "conditions." in lead_in
+    )
+    assert "mechanism_model" not in lead_in
+    assert ": Added to" not in lead_in
+
+
 def test_a_rewrite_nobody_recommends_is_not_headed_as_a_recommendation():
     """Evolution rewrites the whole shortlist; the meta-review recommends a subset.
 

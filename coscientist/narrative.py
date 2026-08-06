@@ -2406,9 +2406,35 @@ def _blocks_as_prose(text: str) -> str:
             and all(_RULE_CELL.fullmatch(cell) for cell in rule)
         ):
             heading = _MARKDOWN_HEADING_RE.match(lines[index].strip())
-            out.append(
-                f"{heading.group(2).strip().rstrip('.')}." if heading else lines[index]
+            if not heading:
+                out.append(lines[index])
+                index += 1
+                continue
+            # A heading over prose introduces it rather than standing alone. Printed as
+            # its own sentence it read "By strictly controlling these variables ... we
+            # can isolate the true kinetic penalty of the coating. Critical Scientific
+            # Judgment. TMA is highly pyrophoric" -- a title stranded mid-paragraph
+            # between two sentences it belongs to neither of. A heading over a table
+            # keeps its full stop: the rows below it are sentences of their own, and a
+            # colon would read as though only the first were what it introduced.
+            title = heading.group(2).strip().rstrip(".:")
+            follows = next(
+                (line for line in lines[index + 1 :] if line.strip()),
+                "",
             )
+            introduces = bool(
+                title
+                and follows
+                and not _MARKDOWN_HEADING_RE.match(follows.strip())
+                and not _table_cells(follows)
+            )
+            index += 1
+            if not introduces:
+                out.append(f"{title}." if title else "")
+                continue
+            while lines[index].strip() == "":
+                index += 1
+            out.append(f"{title}: {lines[index].lstrip()}")
             index += 1
             continue
         index += 2
@@ -2427,6 +2453,34 @@ def _blocks_as_prose(text: str) -> str:
 # spaces its punctuation that way.
 _SPACED_PUNCTUATION = re.compile(r"[ \t]+([,;:.!?])")
 
+# The names the contract gives a candidate's fields, and what a reader is to call
+# them. A specialist writing about the artifact it was handed names those fields as
+# the schema spells them, so "included a structured Evaluation Table in the
+# mechanism_model" and "Missing Critical Scientific Judgment Section: Added to
+# mechanism_model" both reached a live report -- an identifier out of a JSON schema
+# printed to someone who has never seen the schema. Only the ones a bare de-
+# underscoring would not already read as English are listed.
+_CONTRACT_FIELD_NAMES = {
+    "mechanism_model": "mechanism model",
+    "validation_protocol": "validation protocol",
+    "go_no_go_tests": "go/no-go tests",
+    "evidence_ids": "evidence ids",
+    "evidence_for": "supporting evidence",
+    "evidence_against": "contradicting evidence",
+    "evidence_gaps": "evidence gaps",
+    "generation_strategy": "generation strategy",
+    "workflow_diagram_mermaid": "workflow diagram",
+    "parent_ids": "parent ids",
+    "score_novelty": "novelty score",
+    "score_feasibility": "feasibility score",
+    "score_impact": "impact score",
+    "score_correctness": "correctness score",
+    "score_verification": "verification score",
+}
+_CONTRACT_FIELD_RE = re.compile(
+    r"\b(" + "|".join(sorted(_CONTRACT_FIELD_NAMES, key=len, reverse=True)) + r")\b"
+)
+
 
 def _sentence(text: str, *, fallback: str = "Not stated by the specialist.") -> str:
     """Normalise a payload string into one sentence, never an empty or 'N/A' stub.
@@ -2436,6 +2490,9 @@ def _sentence(text: str, *, fallback: str = "Not stated by the specialist.") -> 
     has stopped being a report. The fallback says so rather than hiding the gap.
     """
     cleaned = _SPACED_PUNCTUATION.sub(r"\1", " ".join(_blocks_as_prose(text).split()))
+    cleaned = _CONTRACT_FIELD_RE.sub(
+        lambda match: _CONTRACT_FIELD_NAMES[match.group(1)], cleaned
+    )
     if not cleaned or cleaned.lower() in _STUB_VALUES:
         return fallback
     if _looks_serialised(cleaned):
@@ -2457,6 +2514,26 @@ def _sentence(text: str, *, fallback: str = "Not stated by the specialist.") -> 
 def _looks_serialised(text: str) -> bool:
     """Whether a field holds a serialised structure instead of the prose it promised."""
     return "{" in text or "}" in text or '": ' in text
+
+
+_LABELLED_NOTE = re.compile(r"^([A-Z][^.:;]{2,60}): ([A-Z].*)$")
+
+
+def _labelled_note(text: str) -> str:
+    """A "Label: Remedy" note as one clause, so a sentence can be built out of it.
+
+    The evolution stage records what a rewrite addressed as "Missing Structured
+    Evaluation Table: Added to mechanism_model", and "to address" in front of four of
+    those produced a sentence that stopped at the first colon and three more starting
+    at a remedy: "to address missing Structured Evaluation Table: Added to
+    mechanism_model. Missing Critical Scientific Judgment Section: Added to
+    rationale." Both halves are kept and the colon becomes a dash, which a series can
+    be folded into.
+    """
+    match = _LABELLED_NOTE.match(" ".join(str(text or "").split()).rstrip("."))
+    if not match:
+        return text
+    return f"{match.group(1)} — {_spliced(match.group(2))}"
 
 
 def _spliced(text: str) -> str:
@@ -2617,8 +2694,14 @@ def _swallows_a_conjunction(text: str) -> bool:
     behind it and cannot be mistaken for it, and a comma inside "(e.g., via ALD)"
     or inside "1,000" is not a clause break to begin with -- promoting the series
     to semicolons over either put "; and" between two clean phrases.
+
+    A dash inside an item does the same work as a comma does here: "missing Structured
+    Evaluation Table — added to the mechanism model, missing Critical Scientific
+    Judgment Section — added to rationale" gives the reader two breaks of equal weight
+    and no way to tell which one ends an item.
     """
-    return "," in _DIGIT_COMMA.sub("", _ASIDE.sub("", text))
+    stripped = _DIGIT_COMMA.sub("", _ASIDE.sub("", text))
+    return "," in stripped or " — " in stripped
 
 
 def _series(items: Sequence[str]) -> str:
@@ -2897,13 +2980,14 @@ def _revised_form(
     rounds = sorted({item.round_number for item in revisions})
     addressed = _spliced(
         _join(
-            list(
-                dict.fromkeys(
+            [
+                _labelled_note(critique)
+                for critique in dict.fromkeys(
                     critique
                     for item in revisions
                     for critique in item.critiques_addressed
                 )
-            ),
+            ],
             fallback="the reviews",
         )
     )
