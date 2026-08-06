@@ -189,6 +189,31 @@ def test_a_finding_with_no_text_is_not_carried_as_an_empty_entry():
     assert not _evidence_statements(_record(_statement("   ")))
 
 
+def test_a_finding_arrives_without_the_tags_the_pass_wrote_for_the_pipeline():
+    """The reproduced pass reports have these stripped on the way in, and these are
+    the same sentences out of the same reports. A live run opened Main Research
+    Directions on "... is the sample size requirement. `[Facet: contradictory]`"."""
+    statements = _evidence_statements(
+        _record(_statement("Retention falls past forty nanometres. `[Facet: methods]`"))
+    )
+
+    assert [item.text for item in statements] == [
+        "Retention falls past forty nanometres."
+    ]
+
+
+def test_the_same_finding_tagged_in_one_copy_and_not_the_other_is_one_finding():
+    """The merge keys on the text, so a tag left on one copy made two findings."""
+    statements = _evidence_statements(
+        _record(
+            _statement(FINDING),
+            _statement(f"{FINDING.rstrip('.')} [cite: 2]."),
+        )
+    )
+
+    assert len(statements) == 1
+
+
 # --- the relation clause is a property of the group, not of each finding ------
 
 

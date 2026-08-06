@@ -5746,6 +5746,43 @@ def _shared_qualifications(record: ResearchRecord) -> list[str]:
     return [item for item in claims[0].limitations if item in common]
 
 
+# A Deep Research report tags most of its sentences with the facet the pass was
+# sent to cover, and cites by a marker numbered against a source list only that
+# pass held. Both are the provider talking to the pipeline. Printed to a reader
+# the tag is the same word ninety times over, and the marker sends them to an
+# entry of this report's reference list that is a different paper.
+#
+# The optional backticks are not decoration. A live pass wrote its tags as inline
+# code -- "`[Facet: contradictory]`" -- and the trailing lookahead then saw a
+# backtick rather than a space, so fourteen tags went to the reader in a report
+# whose whole point is that they do not.
+_FACET_TAG_RE = re.compile(
+    r"[ \t]*`?\[(?:facet:\s*)?(?:"
+    + "|".join(
+        sorted(
+            (facet.replace("_", "[ _-]") for facet in EVIDENCE_FACETS),
+            key=len,
+            reverse=True,
+        )
+    )
+    + r")\]`?(?=[\s.,;:)]|$)",
+    re.IGNORECASE,
+)
+_PASS_CITE_RE = re.compile(r"[ \t]*`?\[cite:[^\]\n]{0,80}\]`?")
+
+
+def _without_pipeline_markup(text: str) -> str:
+    """A sentence the provider addressed to the pipeline, addressed to a reader.
+
+    Stripping this on the way into the reproduced pass reports left the same tags
+    standing on the findings under Main Research Directions, which are the same
+    sentences taken out of the same reports: a live run printed "The most critical
+    failure point ... is the sample size requirement. `[Facet: contradictory]`
+    There are zero instances" at the head of the section a reader opens first.
+    """
+    return _PASS_CITE_RE.sub("", _FACET_TAG_RE.sub("", text))
+
+
 def _evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]:
     shared = _shared_qualifications(record)
     statements: list[_EvidenceStatement] = []
@@ -5756,7 +5793,9 @@ def _evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]:
                     # Empty rather than the placeholder: a finding with no text is
                     # not a finding, and six of the fifty-five Main Research
                     # Directions on a live run read "Not stated by the specialist."
-                    text=_sentence(statement.text, fallback=""),
+                    text=_sentence(
+                        _without_pipeline_markup(statement.text), fallback=""
+                    ),
                     urls=list(statement.source_urls),
                     facet=statement.facet,
                     relation=statement.relation,
@@ -5773,7 +5812,11 @@ def _evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]:
         )
         statements.append(
             _EvidenceStatement(
-                text=_sentence(claim.claim, fallback=""),
+                # The same statement reaches here twice, once as the pass wrote it
+                # and once as the evidence stage recorded it, and the merge below
+                # keys on the text: a tag left on one copy and not the other makes
+                # two findings of one.
+                text=_sentence(_without_pipeline_markup(claim.claim), fallback=""),
                 urls=[source.url] if source else [],
                 facet="verified"
                 if claim.verification_status == "verified"
@@ -9670,24 +9713,6 @@ def _unexpected_connections(
     )
 
 
-# A Deep Research report tags most of its sentences with the facet the pass was
-# sent to cover, and cites by a marker numbered against a source list only that
-# pass held. Both are the provider talking to the pipeline. Printed to a reader
-# the tag is the same word ninety times over, and the marker sends them to an
-# entry of this report's reference list that is a different paper.
-_FACET_TAG_RE = re.compile(
-    r"[ \t]*\[(?:facet:\s*)?(?:"
-    + "|".join(
-        sorted(
-            (facet.replace("_", "[ _-]") for facet in EVIDENCE_FACETS),
-            key=len,
-            reverse=True,
-        )
-    )
-    + r")\](?=[\s.,;:)]|$)",
-    re.IGNORECASE,
-)
-_PASS_CITE_RE = re.compile(r"[ \t]*\[cite:[^\]\n]{0,80}\]")
 _MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(\S.*)$")
 
 
@@ -9712,7 +9737,7 @@ def _deep_research_prose(text: str) -> str:
     text -- and, because that line began with a hash, put the whole of it into one
     entry of the table of contents.
     """
-    stripped = _PASS_CITE_RE.sub("", _FACET_TAG_RE.sub("", text))
+    stripped = _without_pipeline_markup(text)
     lines = []
     opened = False
     for line in stripped.splitlines():

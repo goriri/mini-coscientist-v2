@@ -105,6 +105,22 @@ def test_the_pipelines_own_markup_does_not_reach_the_reader():
     assert "achieved 5 nm coatings." in prose, "the sentence lost more than its tags"
 
 
+def test_a_tag_the_pass_wrote_as_inline_code_is_still_the_pipelines_markup():
+    """A live pass wrote every tag as ``[Facet: contradictory]`` in backticks. The
+    trailing lookahead then saw a backtick where it wanted a space, and fourteen of
+    them went to the reader."""
+    prose = _deep_research_prose(
+        "The sample size requirement is the failure point. `[Facet: contradictory]` "
+        "There are zero instances of it. `[cite: 3, 4]`\n"
+    )
+
+    assert "Facet:" not in prose
+    assert "[cite:" not in prose
+    assert "`" not in prose, "the backticks the tag was wrapped in stayed behind"
+    assert "The sample size requirement is the failure point." in prose
+    assert "There are zero instances of it." in prose
+
+
 def test_each_pass_is_labelled_with_the_evidence_it_was_sent_to_find():
     section = _knowledge_summary(
         _record(
