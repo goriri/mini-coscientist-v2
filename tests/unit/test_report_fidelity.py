@@ -1044,6 +1044,63 @@ def test_a_citation_that_argues_against_its_own_idea_is_declared():
     ]
 
 
+def test_a_reviewers_evaluation_table_is_printed_as_a_table():
+    """The discipline critics answer the findings field with a Markdown table under
+    "**Structured Evaluation Table:**". Fourteen findings on a live run carried one,
+    and the flattener read each row out as a run of clauses -- "Aggregation Control
+    (Description: ALD on pre-fabricated electrodes prevents agglomeration; Judgment:
+    High)" -- in the one section a reader consults to find what was wrong with an
+    idea."""
+    from coscientist.dossier import _review_finding_tables
+    from coscientist.narrative import IdeaReview, _review_findings
+
+    split = _review_findings(
+        [
+            "**Structured Evaluation Table:**\n"
+            "| Category | Description | Judgment |\n"
+            "|---|---|---|\n"
+            "| Aggregation Control | ALD prevents agglomeration. | High |\n"
+            "| Purity Potential | ALD provides exceptional purity. | High |",
+            "**Critical Scientific Judgment:** The coating may act as an insulator.",
+            "TOF-SIMS is appropriate for detecting AlO- fragments.",
+        ]
+    )
+
+    # The label over nothing but a table becomes that table's heading rather than a
+    # paragraph of its own, and a label over prose is set the way the report sets
+    # every other label a specialist wrote.
+    assert split["findings"] == [
+        "**Critical Scientific Judgment.** The coating may act as an insulator.",
+        "TOF-SIMS is appropriate for detecting AlO- fragments.",
+    ]
+    assert split["finding_tables"] == [
+        (
+            "Structured Evaluation Table",
+            [
+                ["Category", "Description", "Judgment"],
+                ["Aggregation Control", "ALD prevents agglomeration.", "High"],
+                ["Purity Potential", "ALD provides exceptional purity.", "High"],
+            ],
+        )
+    ]
+
+    lines = _review_finding_tables(
+        IdeaReview(
+            section="Correctness",
+            lead_in="Reviewer:",
+            question="Is it correct?",
+            objections=[],
+            rebuttals=[],
+            answer="Yes.",
+            score=4,
+            **split,
+        )
+    )
+    assert lines[0] == "**Structured Evaluation Table.**"
+    assert lines[2] == "| Category | Description | Judgment |"
+    assert lines[4] == "| Aggregation Control | ALD prevents agglomeration. | High |"
+
+
 def test_a_statement_is_badged_by_the_weakest_record_it_names():
     """The badge was the best standing among the records a statement names, so a live
     bullet read "**[Verified Source]** Al2O3 coatings improve capacity retention (the

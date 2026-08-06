@@ -559,6 +559,16 @@ class IdeaReview:
     the flaws out of the document: the review that recorded one arrived at the page
     as a score of two with a list of objections that did not include it.
     """
+    finding_tables: list[tuple[str, list[list[str]]]] = field(default_factory=list)
+    """Tables the reviewer wrote inside a finding, each with the heading it gave it.
+
+    ``findings`` is a list of prose strings and the discipline critics answer it with
+    a Markdown table under "**Structured Evaluation Table:**". Fourteen findings on a
+    live run carried one, and the flattener read each out as a run of clauses --
+    "Aggregation Control (Description: ALD on pre-fabricated electrodes prevents
+    agglomeration; Judgment: High)" -- five rows of a scored grid folded into one
+    unreadable sentence apiece.
+    """
 
 
 @dataclass(frozen=True)
@@ -4243,6 +4253,43 @@ def _reviewer_lead_in(reviewer: str) -> str:
     return f"{name.capitalize()} reviewer:"
 
 
+# The label a reviewer puts in front of a finding, with the colon inside the bold or
+# just after it. Requiring the colon is what keeps a sentence that merely opens on a
+# bold phrase out of this: "**Note** that the coating ..." is not a labelled section.
+_FINDING_LABEL = re.compile(
+    r"\A[ \t]*\*\*[ \t]*([^*\n]{3,80}?)[ \t]*(?::\*\*|\*\*[ \t]*:)[ \t]*"
+)
+
+
+def _review_findings(findings: Sequence[str]) -> dict[str, list]:
+    """A reviewer's findings as prose, with any table it wrote kept as a table.
+
+    ``findings`` is a list of prose strings, and the discipline critics answer it
+    with a Markdown table under "**Structured Evaluation Table:**". Fourteen findings
+    on a live run carried one and the flattener read each out as a run of clauses --
+    "Aggregation Control (Description: ALD on pre-fabricated electrodes prevents
+    agglomeration; Judgment: High)" -- so five rows of a scored grid arrived as one
+    sentence a reader cannot parse, five times per review.
+
+    The label in front of a finding is set the way the report sets every other label
+    a specialist wrote, and where it introduces nothing but a table it becomes that
+    table's heading rather than a paragraph of its own.
+    """
+    stated: list[str] = []
+    tables: list[tuple[str, list[list[str]]]] = []
+    for item in findings:
+        text = str(item or "")
+        label = ""
+        if mark := _FINDING_LABEL.match(text):
+            label, text = mark.group(1).strip().rstrip(":"), text[mark.end() :]
+        remainder, heading, table = _authors_own_table(text)
+        if table:
+            tables.append((heading or label, table))
+        if body := _sentence(remainder, fallback=""):
+            stated.append(f"**{label}.** {body}" if label else body)
+    return {"findings": stated, "finding_tables": tables}
+
+
 def _idea_reviews(record: ResearchRecord, candidate_id: str) -> list[IdeaReview]:
     """Every review of one idea, bucketed into the four scored section names.
 
@@ -4270,7 +4317,7 @@ def _idea_reviews(record: ResearchRecord, candidate_id: str) -> list[IdeaReview]
                     question=_REVIEWER_QUESTIONS.get(
                         review.reviewer, _SECTION_QUESTIONS[section]
                     ),
-                    findings=[_sentence(item) for item in review.findings],
+                    **_review_findings(review.findings),
                     objections=[_sentence(item) for item in review.objections],
                     rebuttals=[_sentence(item) for item in review.rebuttals],
                     fatal_flaws=[_sentence(item) for item in review.fatal_flaws],

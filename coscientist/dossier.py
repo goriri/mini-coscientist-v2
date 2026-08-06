@@ -886,6 +886,7 @@ def _review_block(
                 lines.extend([review.lead_in, "", review.question, ""])
             for finding in review.findings:
                 lines.extend([finding, ""])
+            lines.extend(_review_finding_tables(review))
             if review.objections or review.rebuttals:
                 lines.extend([_review_tally(review), ""])
             # The reference reports close every scored review with a matched pair, so
@@ -1365,6 +1366,37 @@ def _self_rating(brief: IdeaBrief) -> list[str]:
             ],
         ),
     ]
+
+
+def _review_finding_tables(review) -> list[str]:
+    """The tables a reviewer wrote inside its findings, kept as tables.
+
+    The discipline critics answer the findings field with a Markdown table under
+    "**Structured Evaluation Table:**", and the flattener read each row out as a run
+    of clauses -- "Aggregation Control (Description: ALD on pre-fabricated electrodes
+    prevents agglomeration; Judgment: High)". Fourteen findings on a live run arrived
+    that way, five rows apiece, in the one section of the report a reader consults to
+    find out what was wrong with an idea.
+    """
+    lines: list[str] = []
+    for title, table in review.finding_tables:
+        header, *rows = table
+        width = len(header)
+        if title:
+            lines.extend([f"**{title}.**", ""])
+        lines.extend(
+            _grid(
+                [_cell(name) for name in header],
+                [
+                    [
+                        _cell(row[index] if index < len(row) else "")
+                        for index in range(width)
+                    ]
+                    for row in rows
+                ],
+            )
+        )
+    return lines
 
 
 def _cell(text: str) -> str:
