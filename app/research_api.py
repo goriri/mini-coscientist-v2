@@ -832,6 +832,14 @@ def decide_research_session(
                     adjudicator=request.actor.strip(),
                     justification=justification,
                 )
+                # Answering the last finding puts the session back exactly where
+                # the block interrupted it: a reflect draft nobody has accepted,
+                # on a profile that was going to accept it automatically. Left
+                # alone it sits there, which is a quieter dead end than the one
+                # this action exists to clear. The other two waivers resume the
+                # same way.
+                if workflow.session.status == "active":
+                    _schedule_advance(session_id, background_tasks)
             elif request.action == "provide_input":
                 if not request.input_type or not request.input_reference:
                     raise ValueError("Input type and reference are required.")

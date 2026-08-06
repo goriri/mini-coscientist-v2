@@ -109,9 +109,9 @@ def blocked(tmp_path, monkeypatch) -> str:
     return session.id
 
 
-def _decide(session_id: str, **fields) -> dict:
+def _decide(session_id: str, tasks: BackgroundTasks | None = None, **fields) -> dict:
     return decide_research_session(
-        session_id, ResearchDecision(**fields), BackgroundTasks()
+        session_id, ResearchDecision(**fields), tasks or BackgroundTasks()
     )
 
 
@@ -190,6 +190,58 @@ def test_a_governance_decision_cannot_be_anonymous_or_unexplained(
         get_research_session(blocked, BackgroundTasks())["status"]
         == "governance_blocked"
     ), "a refused adjudication must leave the block standing"
+
+
+def test_answering_the_last_finding_starts_the_workflow_moving_again(blocked):
+    """Clearing the block leaves the draft the block interrupted.
+
+    A live run proved it: three findings answered, status back to active, and
+    the session then sat on an unaccepted reflect draft on a profile that was
+    going to accept it automatically. Nothing was blocked and nothing moved --
+    a quieter dead end than the one the action exists to clear.
+    """
+    tasks = BackgroundTasks()
+    _decide(
+        blocked,
+        tasks,
+        action="override_governance",
+        review_id="rev_1",
+        feedback="Accepted with a fume hood and a written control plan.",
+        actor=NAME,
+    )
+    assert tasks.tasks, "the cleared session was left with nothing scheduled"
+
+
+def test_a_finding_answered_while_others_remain_does_not_resume_the_run(blocked):
+    session = CoScientistWorkflow.load_from_ledger(
+        blocked, research_api._ledger()
+    ).session
+    reviews = ReviewSet.model_validate(session.artifacts[1].payload)
+    reviews.reviews.append(
+        CandidateReview(
+            id="rev_2",
+            candidate_id="cand_1",
+            criterion="safety_governance",
+            reviewer="ethics_safety_governance",
+            recommendation="reject",
+            fatal_flaws=["No thermal runaway screening is scheduled."],
+        )
+    )
+    session.artifacts[1].payload = reviews.model_dump(mode="json")
+    research_api._ledger().save(session, expected_version=session.version)
+
+    tasks = BackgroundTasks()
+    snapshot = _decide(
+        blocked,
+        tasks,
+        action="override_governance",
+        review_id="rev_1",
+        feedback="Accepted with a fume hood and a written control plan.",
+        actor=NAME,
+    )
+    assert snapshot["status"] == "governance_blocked"
+    assert [item["review_id"] for item in snapshot["governance_blockers"]] == ["rev_2"]
+    assert not tasks.tasks
 
 
 def test_a_stale_review_id_is_reported_rather_than_silently_ignored(blocked):
