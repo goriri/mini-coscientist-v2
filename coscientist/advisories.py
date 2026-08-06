@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .citations import GROUNDED_STATUSES
 from .narrative import (
     _AGENT_NAMES,
     IdeaBrief,
@@ -34,6 +35,9 @@ from .narrative import (
 
 ADVISORY_CHAPTER = "Warnings and Limitations"
 """The appendix heading, and the name the body points at."""
+
+AUTO_APPROVAL_WARNING = "Stage gates approved without a human"
+"""Named from the provenance bullet, which used to point at the wrong section."""
 
 
 def _capitalised(text: str) -> str:
@@ -192,6 +196,16 @@ def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
         ),
         None,
     )
+    # "Nothing among them should be cited as established" was written for a waiver
+    # granted over an unverified corpus, and it was printed over one where fifteen of
+    # fifty-nine sources had been retrieved and checked and were badged
+    # "[Verified Source]" throughout the body. The waiver means the corpus as a whole
+    # fell short of the declared standard, not that every source in it is a lead, and
+    # the sentence has to say which of the two the reader is holding.
+    sources = record.evidence.sources if record.evidence else []
+    grounded = [
+        source for source in sources if source.verification_status in GROUNDED_STATUSES
+    ]
     return [
         Advisory(
             title="A waived evidence gate",
@@ -207,10 +221,27 @@ def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
                 )
                 + "Waiving the gate is a distinct act from accepting the stage's "
                 "output, and whichever approval regime this run used applies to the "
-                "second of those, not the first. Those statements are exploratory "
-                "leads and are not verified findings; nothing among them should be "
-                "cited as established, and the gate should be re-run before any idea "
-                "grounded on it is acted upon."
+                "second of those, not the first. "
+                + (
+                    # Both counts are spelled, because "five sources of the 8
+                    # admitted" is one sentence written in two number styles.
+                    f"{_number_word(len(grounded))} of the "
+                    f"{_number_word(len(sources)).lower()} sources admitted "
+                    + ("was" if len(grounded) == 1 else "were")
+                    + " retrieved and checked against the claim drawn from "
+                    + ("it" if len(grounded) == 1 else "them")
+                    + ", and "
+                    + ("that one is" if len(grounded) == 1 else "those are")
+                    + " marked as verified where they are cited. The rest are "
+                    "exploratory leads rather than findings and should not be cited "
+                    "as established. "
+                    if grounded
+                    else "No source admitted here was retrieved and checked, so all "
+                    "of them are exploratory leads rather than findings and none "
+                    "should be cited as established. "
+                )
+                + "The gate should be re-run before any idea grounded on it is acted "
+                "upon."
             ),
         )
     ]
@@ -290,7 +321,7 @@ def _automatic_approval_advisory(record: ResearchRecord) -> list[Advisory]:
         return []
     return [
         Advisory(
-            title="Stage gates approved without a human",
+            title=AUTO_APPROVAL_WARNING,
             body=(
                 f"{_capitalised(_plural(len(automatic), 'stage gate'))} in this run "
                 f"{'was' if len(automatic) == 1 else 'were'} approved automatically "

@@ -2209,8 +2209,33 @@ def shared_coherence_notes(briefs: Sequence[IdeaBrief]) -> list[str]:
     ]
 
 
+INTEGRITY_CASES = {
+    "unresolved": "its evidence is absent from this session",
+    "discredited": "its evidence was retracted or could not be retrieved",
+    "unverified": "its evidence was never checked against its source",
+    "uncited": "it cites no evidence at all",
+}
+"""The four ways a grounding can fail, in the order the lines below print them.
+
+The appendix lead-in named all four every time and the list under it never held more
+than two, so a reader counting cases against lines came up short. It now names the
+ones this run produced, which is what this mapping is separated out for.
+"""
+
+
 def evidence_integrity_lines(record: ResearchRecord) -> list[str]:
-    """One line per idea whose stated grounding does not hold, named by its title.
+    """One line per idea whose stated grounding does not hold, named by its title."""
+    return [line for _case, line in _integrity_entries(record)]
+
+
+def evidence_integrity_cases(record: ResearchRecord) -> list[str]:
+    """Which of the four failures this run actually recorded, in printing order."""
+    ordered = dict.fromkeys(case for case, _line in _integrity_entries(record))
+    return [INTEGRITY_CASES[case] for case in ordered]
+
+
+def _integrity_entries(record: ResearchRecord) -> list[tuple[str, str]]:
+    """Each integrity line paired with the case it states, so both can be named.
 
     ``citations.integrity_warnings`` names candidates by id; this report has titles
     for them, and an id a reader cannot place is a warning they cannot act on.
@@ -2232,25 +2257,31 @@ def evidence_integrity_lines(record: ResearchRecord) -> list[str]:
     # claim_6_1, source_6_2" -- so the one section of the report about evidence that
     # cannot be trusted was the one place that never said what the evidence was.
     names = _record_names(record)
-    lines: list[str] = []
+    lines: list[tuple[str, str]] = []
     grouped: dict[str, list[str]] = {"unverified": [], "uncited": []}
     for candidate_id, citations in ordered:
         title = record.title_for(candidate_id)
         if citations.unresolved:
             lines.append(
-                f"{title} cites evidence that does not exist in this session — "
-                # Nothing to name these after, so they are set as the literal
-                # identifiers they are rather than dressed up as prose.
-                + _names([f"`{item}`" for item in citations.unresolved])
-                + ". Its claim is unsupported."
+                (
+                    "unresolved",
+                    f"{title} cites evidence that does not exist in this session — "
+                    # Nothing to name these after, so they are set as the literal
+                    # identifiers they are rather than dressed up as prose.
+                    + _names([f"`{item}`" for item in citations.unresolved])
+                    + ". Its claim is unsupported.",
+                )
             )
         elif citations.discredited:
             lines.append(
-                f"{title} cites evidence this session could not stand behind: "
-                + _names(
-                    [names.get(item, f"`{item}`") for item in citations.discredited]
+                (
+                    "discredited",
+                    f"{title} cites evidence this session could not stand behind: "
+                    + _names(
+                        [names.get(item, f"`{item}`") for item in citations.discredited]
+                    )
+                    + ". Its claim is discredited.",
                 )
-                + ". Its claim is discredited."
             )
         # Citing nothing was treated as nothing to report, so the one idea in the run
         # with no grounding whatsoever was the one idea missing from the list of ideas
@@ -2264,28 +2295,38 @@ def evidence_integrity_lines(record: ResearchRecord) -> list[str]:
     hypothesis = grouped["unverified"]
     if hypothesis:
         lines.append(
-            f"{_opening(len(hypothesis), 'idea')} "
-            + ("rests" if len(hypothesis) == 1 else "rest")
-            + " on evidence that was discovered but never verified, so "
-            + ("its claim is" if len(hypothesis) == 1 else "each of their claims is")
-            + f" a hypothesis: {_joined_titles(hypothesis)}."
+            (
+                "unverified",
+                f"{_opening(len(hypothesis), 'idea')} "
+                + ("rests" if len(hypothesis) == 1 else "rest")
+                + " on evidence that was discovered but never verified, so "
+                + (
+                    "its claim is"
+                    if len(hypothesis) == 1
+                    else "each of their claims is"
+                )
+                + f" a hypothesis: {_joined_titles(hypothesis)}.",
+            )
         )
     conjecture = grouped["uncited"]
     if conjecture:
         lines.append(
-            f"{_opening(len(conjecture), 'idea')} cite"
-            + ("s" if len(conjecture) == 1 else "")
-            + " no evidence at all. The "
-            + (
-                "specialist that proposed it"
-                if len(conjecture) == 1
-                else "specialists that proposed them"
+            (
+                "uncited",
+                f"{_opening(len(conjecture), 'idea')} cite"
+                + ("s" if len(conjecture) == 1 else "")
+                + " no evidence at all. The "
+                + (
+                    "specialist that proposed it"
+                    if len(conjecture) == 1
+                    else "specialists that proposed them"
+                )
+                + " recorded no source, so nothing in this session grounds "
+                + ("it" if len(conjecture) == 1 else "them")
+                + " either way and "
+                + ("its claim is" if len(conjecture) == 1 else "each claim is")
+                + f" a conjecture: {_joined_titles(conjecture)}.",
             )
-            + " recorded no source, so nothing in this session grounds "
-            + ("it" if len(conjecture) == 1 else "them")
-            + " either way and "
-            + ("its claim is" if len(conjecture) == 1 else "each claim is")
-            + f" a conjecture: {_joined_titles(conjecture)}."
         )
     return lines
 
@@ -7921,14 +7962,33 @@ def _knowledge_summary(record: ResearchRecord) -> str:
                 "about the field, and the confidence in its wording is the search's "
                 "own."
             )
+        # A pass that came back with no report text is dropped from this list, and
+        # the sentence counted what was left: a live run printed "the search ran as
+        # six separate passes" under an appendix saying Deep Research ran seven. The
+        # count of passes and the count of reports are two numbers, and where they
+        # differ both are stated.
+        ran = len(record.discovery.runs) if record.discovery else 0
+        silent = max(ran - len(narratives), 0)
         if len(narratives) > 1:
             parts.append(
-                f"The search ran as {_number_word(len(narratives)).lower()} separate "
-                "passes, each asked for a different kind of evidence, and each "
-                "wrote its own report. They are reproduced below one per pass and "
-                "in the order they ran, because a pass that found nothing is a "
-                "finding about the literature and disappears when the reports are "
-                "merged."
+                f"The search ran as {_number_word(max(ran, len(narratives))).lower()} "
+                "separate passes, each asked for a different kind of evidence, and "
+                + (
+                    "each wrote its own report."
+                    if not silent
+                    else f"{_number_word(len(narratives)).lower()} of them wrote a "
+                    "report. "
+                    + (
+                        "The other recorded none"
+                        if silent == 1
+                        else f"The other {_number_word(silent).lower()} recorded none"
+                    )
+                    + ", and what those passes were asked is under Literature "
+                    "discovery in the appendix."
+                )
+                + " The reports are reproduced below one per pass and in the order "
+                "they ran, because a pass that found nothing is a finding about the "
+                "literature and disappears when the reports are merged."
             )
         if any(_PASS_CITE_RE.search(item.summary) for item in narratives):
             parts.append(
@@ -7944,10 +8004,11 @@ def _knowledge_summary(record: ResearchRecord) -> str:
             # reports the absence of a fan-out.
             if len(narratives) > 1:
                 phrase = FACET_PHRASES.get(_narrative_facet(narrative), "")
+                number = narrative.pass_number or index
                 parts.append(
-                    f"### Pass {index}: {phrase[0].upper() + phrase[1:]}"
+                    f"### Pass {number}: {phrase[0].upper() + phrase[1:]}"
                     if phrase
-                    else f"### Pass {index}"
+                    else f"### Pass {number}"
                 )
             parts.append(_deep_research_prose(narrative.summary))
             if narrative.truncated:

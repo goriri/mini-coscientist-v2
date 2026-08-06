@@ -18,7 +18,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from coscientist.evidence import SUMMARY_CHARACTER_LIMIT, _report_summary
-from coscientist.models import DiscoveryNarrative, DiscoveryStatement
+from coscientist.models import (
+    DeepResearchRun,
+    DiscoveryNarrative,
+    DiscoveryStatement,
+)
 from coscientist.narrative import _deep_research_prose, _knowledge_summary
 
 REPORT = """# Protective Coatings and Cycle Life
@@ -50,9 +54,20 @@ def _narrative(**fields) -> DiscoveryNarrative:
     return DiscoveryNarrative(**{**defaults, **fields})
 
 
-def _record(*narratives: DiscoveryNarrative, checked: bool = True) -> SimpleNamespace:
+def _record(
+    *narratives: DiscoveryNarrative, checked: bool = True, ran: int | None = None
+) -> SimpleNamespace:
+    """``ran`` is how many passes the manifest recorded, which need not be how many
+    of them came back with a report to print."""
+    passes = len(narratives) if ran is None else ran
     return SimpleNamespace(
-        discovery=SimpleNamespace(narratives=list(narratives)),
+        discovery=SimpleNamespace(
+            narratives=list(narratives),
+            runs=[
+                DeepResearchRun(pass_number=number, status="completed")
+                for number in range(1, passes + 1)
+            ],
+        ),
         evidence=SimpleNamespace(
             claims=[
                 SimpleNamespace(
@@ -101,6 +116,41 @@ def test_each_pass_is_labelled_with_the_evidence_it_was_sent_to_find():
     assert (
         "### Pass 2: Corrections or retractions affecting the sources used" in section
     )
+
+
+def test_a_pass_that_wrote_no_report_is_still_counted_among_the_passes_that_ran():
+    """ "The search ran as six separate passes" stood in the body of a live report
+    whose appendix said Deep Research ran seven. Both counts were right about
+    different things, and only one of them was printed."""
+    section = _knowledge_summary(_record(_narrative(), _narrative(), ran=3))
+
+    assert "The search ran as three separate passes" in section
+    assert "two of them wrote a report" in section
+    assert "The other recorded none" in section
+
+
+def test_a_run_where_every_pass_reported_does_not_count_them_twice():
+    section = _knowledge_summary(_record(_narrative(), _narrative()))
+
+    assert "The search ran as two separate passes" in section
+    assert "each wrote its own report" in section
+    assert "wrote a report" not in section.split("each wrote its own report")[0]
+
+
+def test_a_report_is_headed_with_the_pass_that_wrote_it_not_its_place_in_the_list():
+    """The discovery appendix numbers the passes as they ran, and the body tells the
+    reader to compare the two. Renumbering from one skips whatever came back empty."""
+    section = _knowledge_summary(
+        _record(
+            _narrative(facet="supporting", pass_number=2),
+            _narrative(facet="methods", pass_number=5),
+            ran=5,
+        )
+    )
+
+    assert "### Pass 2: Supporting evidence" in section
+    assert "### Pass 5: " in section
+    assert "### Pass 1" not in section
 
 
 def test_the_facet_is_recovered_from_the_statements_when_the_pass_did_not_record_it():

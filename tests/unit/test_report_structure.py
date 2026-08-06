@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from coscientist.advisories import AUTO_APPROVAL_WARNING
 from coscientist.dossier import (
     CHAPTER_SECTIONS,
     _match_summary,
@@ -1118,6 +1119,77 @@ def test_the_discovery_sentence_counts_its_passes_in_one_notation(
     assert line.startswith("Deep Research ran two passes, of which one completed, ")
 
 
+def test_a_stage_repeated_with_the_same_answer_is_one_row_and_a_count(
+    rich_session: Session,
+):
+    """Six verification batches recorded six notes, and every column of all six held
+    the same value. The live table printed the identical row six times over, which a
+    reader can only read as a repeat until they have counted them."""
+    packet = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "EvidencePacket"
+    )
+    for _ in range(3):
+        rich_session.artifacts.insert(
+            rich_session.artifacts.index(packet) + 1, packet.model_copy(deep=True)
+        )
+
+    rows = [
+        row
+        for row in _stage_table(compile_dossier(rich_session))
+        if "evidence packet" in row
+    ]
+
+    assert len(rows) == 1, "the same row must not be printed once per repeat"
+    assert "evidence packet, four of them" in rows[0]
+
+
+def test_a_merge_of_other_agents_answers_is_not_labelled_a_failed_stage(
+    rich_session: Session,
+):
+    """The generation aggregator folds four generators' answers together and calls no
+    model. Left at the artifact default it reached this column as "a fixed template
+    (not a model)" -- the phrase reserved for a specialist that failed -- one line
+    above a sentence saying no stage fell back to a template."""
+    population = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "CandidatePopulation"
+    )
+    population.agent = "generation_aggregator"
+    population.producer_model = "deterministic-offline"
+    population.payload_source = "specialist"
+
+    row = next(
+        line
+        for line in _stage_table(compile_dossier(rich_session))
+        if "hypothesis population" in line
+    )
+
+    assert "a merge of the specialists' answers (no model call)" in row
+    assert "a fixed template" not in row
+
+
+def test_the_integrity_lead_in_names_only_the_cases_the_run_recorded(
+    rich_session: Session,
+):
+    """It promised four kinds of qualification over a list that held two of them, and
+    told the reader each line stated one of the four."""
+    for artifact in rich_session.artifacts:
+        if artifact.schema_name == "CandidatePopulation":
+            for candidate in artifact.payload["candidates"]:
+                candidate["evidence_ids"] = ["claim_missing"]
+
+    report = compile_dossier(rich_session)
+    block = report[report.index("\n## Evidence integrity\n") :]
+    lead = next(line for line in block.splitlines()[2:] if line.strip())
+
+    assert "its evidence is absent from this session." in lead
+    assert "was retracted" not in lead
+    assert "one of the four" not in lead
+
+
 def test_a_series_in_the_run_facts_is_written_as_a_series(rich_session: Session):
     """Both joins read wrong. "Produced by" separated whole phrases with semicolons and
     sorted them by capitalisation, and "Judged by" ran two noun phrases together on a
@@ -1168,8 +1240,11 @@ def test_the_run_facts_say_what_approval_meant_on_this_run(rich_session: Session
 
     assert "accepted automatically under the auto approval profile" in approvals
     assert "rather than a person's agreement" in approvals
-    # Stated once and pointed at: the appendix must not restate the section 1 warning.
-    assert "under Research Goal above" in approvals
+    # Stated once and pointed at: the appendix must not restate the warning. It points
+    # by heading, because the warnings were collected into an appendix of their own and
+    # this line went on sending the reader to Research Goal, where they no longer are.
+    assert AUTO_APPROVAL_WARNING in approvals
+    assert f"## {AUTO_APPROVAL_WARNING}" in compile_dossier(rich_session)
     assert "Nobody read what those stages produced" not in approvals
 
 
@@ -1571,7 +1646,7 @@ def test_a_waived_evidence_gate_is_a_blocking_warning_the_body_counts(
     report = compile_dossier(rich_session)
     body, appendix = report.split(_APPENDIX)[0], report[report.index(_APPENDIX) :]
     assert "The evidence gate for this run was waived" in appendix
-    assert "not verified findings" in appendix
+    assert "exploratory leads rather than findings" in appendix
     assert "the evidence gate for this run was waived" not in body.lower()
     assert "a waived evidence gate" in body
     assert "should not proceed on the material" in body

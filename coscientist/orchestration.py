@@ -51,6 +51,7 @@ from .model_catalog import DEFAULT_LANGUAGE, DEFAULT_MODEL
 from .models import (
     EVIDENCE_FACETS,
     MAX_VERIFICATION_BATCHES,
+    MERGE_PRODUCER,
     STAGES,
     VERIFICATION_BATCH_SIZE,
     ApprovalMode,
@@ -477,6 +478,12 @@ class CoScientistWorkflow:
             artifact_type="specialist_output",
             schema_name="CandidatePopulation",
             payload=population.model_dump(mode="json"),
+            # This step folds the four generators' answers together and calls no
+            # model. Left at the field default it reported "deterministic-offline",
+            # which the dossier prints as "a fixed template (not a model)" -- the
+            # phrase reserved for a stage whose specialist failed -- one line above a
+            # sentence saying no stage fell back to a template.
+            producer_model=MERGE_PRODUCER,
         )
 
     async def _preview_evidence(self, feedback: str = "") -> Artifact:

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .advisories import (
     ADVISORY_CHAPTER,
+    AUTO_APPROVAL_WARNING,
     Advisory,
     advisory_pointer,
     run_advisories,
@@ -51,7 +52,7 @@ from .markdown_render import (
     strip_table_of_contents,
     table_of_contents,
 )
-from .models import Session
+from .models import MERGE_PRODUCER, Session
 from .narrative import (
     _AGENT_NAMES,
     DEEP_DIVE_PREAMBLE,
@@ -59,6 +60,7 @@ from .narrative import (
     REVIEW_SECTIONS,
     Citation,
     IdeaBrief,
+    ProvenanceNote,
     ResearchOverview,
     ResearchRecord,
     _counted,
@@ -71,6 +73,7 @@ from .narrative import (
     _plural,
     _reference_standing,
     build_idea_briefs,
+    evidence_integrity_cases,
     evidence_integrity_lines,
     load_record,
     shared_coherence_notes,
@@ -1148,6 +1151,7 @@ _PRODUCER_LABELS = {
     "google_search_grounding": "Google Search grounding (model not recorded)",
     "unavailable": "nothing (the stage produced no output)",
     "deterministic-offline": "a fixed template (not a model)",
+    MERGE_PRODUCER: "a merge of the specialists' answers (no model call)",
 }
 # What a stage handed back, named for what it is rather than for the class it
 # validates against. "DossierManifest" and "EvolutionCycle" are this codebase's words
@@ -1210,6 +1214,33 @@ def _producer_label(model: str) -> str:
     return _PRODUCER_LABELS.get(model, model)
 
 
+def _produced_by(note: ProvenanceNote) -> str:
+    """What wrote one stage's payload, distinguishing a merge from a substitution.
+
+    The generation stage runs four specialists and then folds their answers into one
+    population, and that fold calls no model. Labelled like any other template it
+    reached the table as "a fixed template (not a model)" -- the phrase this report
+    uses for a stage whose specialist failed -- directly above a sentence saying no
+    stage fell back to a template. One of the two had to be wrong, and it was the
+    label: nothing failed, and no answer in that row is a template's.
+
+    Runs from here on record ``MERGE_PRODUCER`` on that artifact and need none of
+    this. Sessions saved before then are still re-rendered on every download, so the
+    one agent that wrote the misleading default is corrected by name -- and only when
+    the note is not a fallback, since a wholly offline run's aggregate really is a
+    template like everything else in it.
+    """
+    if not note.model:
+        return "not recorded"
+    if (
+        note.agent == "generation_aggregator"
+        and note.model == "deterministic-offline"
+        and note.source != "deterministic_fallback"
+    ):
+        return _PRODUCER_LABELS[MERGE_PRODUCER]
+    return _producer_label(note.model)
+
+
 def _record_type(schema_name: str) -> str:
     return _RECORD_TYPES.get(schema_name, schema_name)
 
@@ -1253,7 +1284,7 @@ def _run_facts(record: ResearchRecord) -> list[str]:
     # a reader: it put "Google Search grounding" ahead of "a fixed template" and
     # "deep-research-preview" for no reason the page could show.
     producers = sorted(
-        {_producer_label(note.model) for note in record.provenance if note.model},
+        {_produced_by(note) for note in record.provenance if note.model},
         key=str.lower,
     )
     facts.append(f"Produced by: {_listed(producers, fallback='not recorded')}")
@@ -1299,16 +1330,21 @@ def _approval_fact(session: Session) -> str:
         return (
             f"Approvals: every stage gate in this run was accepted automatically "
             f"under {profile}, so acceptance here records a well-formed payload "
-            "rather than a person's agreement — the warning under Research Goal "
-            "above says what it does not amount to"
+            f"rather than a person's agreement — the warning headed {AUTO_APPROVAL_WARNING} "
+            "says what it does not amount to"
         )
     if not automatic:
         return f"Approvals: every stage gate in this run was accepted by a person under {profile}"
+    # "3 of this run's nine stage gates" set one count as a digit and the other as a
+    # word, and a run with nine of them stood two lines under "Stages completed: 8 of
+    # 8". They are gate decisions rather than stages: a stage re-run after a
+    # withdrawal is gated again, so the two counts can differ and the line has to say
+    # which of the two it is counting.
     return (
-        f"Approvals: {len(automatic)} of this run's "
-        f"{_plural(len(decisions), 'stage gate')} were accepted automatically under "
-        f"{profile} and the rest by a person — the warning under Research Goal above "
-        "names the automatic ones"
+        f"Approvals: {_number_word(len(automatic)).lower()} of this run's "
+        f"{_plural(len(decisions), 'gate decision')} were recorded automatically "
+        f"under {profile} and the rest by a person — the warning headed "
+        f"{AUTO_APPROVAL_WARNING} above names the automatic ones"
     )
 
 
@@ -1570,6 +1606,17 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
         # that nothing here has verified grounding only by tallying the titles against
         # the population themselves.
         every = all(item.qualified for item in record.evidence_support.values())
+        # "Each line states one of the four and names the ideas it applies to" stood
+        # over two lines, and the four cases it listed included two this run never
+        # recorded. Only the cases that produced a line are named.
+        cases = evidence_integrity_cases(record)
+        stated = (
+            cases[0]
+            if len(cases) == 1
+            else ", ".join(cases[:-1]) + f", or {cases[-1]}"
+            if len(cases) > 2
+            else " or ".join(cases)
+        )
         lines.extend(
             [
                 # This used to say the listed ideas "do not rest on the evidence they
@@ -1583,10 +1630,16 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
                     if every
                     else "The grounding of the following ideas carries a qualification"
                 )
-                + ": no evidence was cited for the idea at all, or the evidence it "
-                "cites is absent from this session, or it was retracted, or it was "
-                "retrieved but never checked against its source. Each line states one "
-                "of the four and names the ideas it applies to.",
+                + f": {stated}."
+                + (
+                    " The line below names the ideas it applies to."
+                    if len(integrity) == 1
+                    else " Each line below states one of the "
+                    f"{_number_word(len(cases)).lower()} and names the ideas it "
+                    "applies to."
+                    if len(cases) > 1
+                    else " Each line below names the ideas it applies to."
+                ),
                 "",
                 *_bullets(integrity),
                 "",
@@ -1626,6 +1679,12 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
     lines.extend(
         [f"| {' | '.join(header)} |", f"| {' | '.join(['---'] * len(header))} |"]
     )
+    # A run whose evidence stage verifies six times records six notes, and every
+    # column of those notes holds the same value: the live table printed the row
+    # "| evidence | source verification | evidence packet | gemini-3.1-pro-preview |"
+    # six times over, which a reader can only read as a repeat until they count them.
+    # The repeats are real work and are not dropped -- the count says how many.
+    rows: list[tuple[list[str], int]] = []
     for note in record.provenance:
         row = [
             # Every other line of this report writes "meta-review", and the one stage
@@ -1635,10 +1694,18 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
             note.stage.replace("_", "-"),
             _specialist_label(record, note),
             _record_type(note.schema_name),
-            _producer_label(note.model) if note.model else "not recorded",
+            _produced_by(note),
         ]
         if varied:
             row.append(note.source.replace("_", " "))
+        if rows and rows[-1][0] == row:
+            rows[-1] = (row, rows[-1][1] + 1)
+            continue
+        rows.append((row, 1))
+    for row, count in rows:
+        if count > 1:
+            row = [*row]
+            row[2] = f"{row[2]}, {_number_word(count).lower()} of them"
         lines.append(f"| {' | '.join(row)} |")
     lines.append("")
     if record.superseded_populations:

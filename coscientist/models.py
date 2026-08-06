@@ -397,6 +397,16 @@ class DiscoveryNarrative(Contract):
     report, which prints the reports themselves, had nothing to label them with
     and ran all seven together as one block of prose.
     """
+    pass_number: int = 0
+    """Which search pass wrote this report, or 0 on a session saved before this field.
+
+    The Knowledge Base numbered the reports as it printed them, so a run whose third
+    pass came back empty had its fourth report headed "Pass 3" -- against a discovery
+    appendix that numbers the passes as they ran. The two sections disagreed about
+    which pass found what, in the one place the report tells the reader to compare
+    them.
+    """
+
     truncated: bool = False
     """Whether ``summary`` is a prefix of the report rather than the whole of it.
 
@@ -755,6 +765,14 @@ class TaskRecord(Contract):
     attempt: int = Field(default=1, ge=1)
     submitted_at: str = Field(default_factory=utc_now)
     updated_at: str = Field(default_factory=utc_now)
+
+
+MERGE_PRODUCER = "in-process-merge"
+"""``producer_model`` for a step that folds other agents' answers and calls no model.
+
+Such a step is neither a model's work nor a substitute for one that failed, and the
+field's default said the second of those.
+"""
 
 
 class Artifact(Contract):

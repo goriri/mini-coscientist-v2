@@ -1335,6 +1335,9 @@ def normalize_report(
             accepted_statements.append(statement)
     narrative.statements = accepted_statements
     narrative.question = question
+    # Recorded rather than inferred from the order the reports are printed in, which
+    # skips any pass that came back with nothing to print.
+    narrative.pass_number = pass_number
     # Applied to whichever summary survived -- the normalizer's or the fallback's
     # -- so the dossier is handed one kind of text however this pass was parsed.
     narrative.summary, narrative.truncated = _report_summary(
