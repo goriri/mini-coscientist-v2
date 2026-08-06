@@ -552,6 +552,87 @@ def test_a_run_that_recorded_no_verdict_at_all_still_says_nothing_was_checked():
     assert markers[-1] == "[4] (leaning accurate)"
 
 
+def test_one_document_returned_under_two_links_is_one_reference():
+    """A live list ran "5. Limitations of Ultrathin Al2O3 Coatings on LNMO Cathodes -
+    Diva Portal. The literature search recorded only its own redirect link for this
+    source, which no longer resolves" directly above "6. Limitations of Ultrathin
+    Al2O3 Coatings on LNMO Cathodes (2021)" with a link that does."""
+    title = "Limitations of Ultrathin Al2O3 Coatings on LNMO Cathodes"
+    redirect = "https://vertexaisearch.grounding-api-redirect/abc"
+    resolved = "https://pmc.ncbi.nlm.nih.gov/articles/PMC8603187/"
+    registry = CitationRegistry(
+        [
+            SourceLead(canonical_url=redirect, title=title),
+            SourceLead(canonical_url=resolved, title=title),
+        ]
+    )
+
+    assert registry.marker([redirect]) == "[1]"
+    assert registry.marker([resolved]) == "[1]", "the same paper, so the same number"
+    assert [citation.url for citation in registry.references()] == [resolved]
+
+
+def test_two_sources_the_search_left_untitled_are_not_folded_into_one():
+    """ "Untitled source on mdpi.com" names a publisher, not a document."""
+    registry = CitationRegistry(
+        [
+            SourceLead(canonical_url="https://www.mdpi.com/a", title=""),
+            SourceLead(canonical_url="https://www.mdpi.com/b", title=""),
+        ]
+    )
+
+    assert registry.marker(["https://www.mdpi.com/a"]) == "[1]"
+    assert registry.marker(["https://www.mdpi.com/b"]) == "[2]"
+
+
+def test_the_head_of_the_reference_list_counts_the_list_below_it():
+    """ "Fifteen of the fifty-nine were retrieved and checked" stood at the head of a
+    list holding six entries, the corpus figure printed over the cited entries."""
+    from coscientist.narrative import ResearchRecord, _cited_reference_standing
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.citations = CitationRegistry(
+        [
+            SourceLead(
+                canonical_url=f"https://x/{n}",
+                title=f"Lead {n}",
+                verification_status="verified" if n < 3 else "discovered_unverified",
+            )
+            for n in range(9)
+        ]
+    )
+    for n in (0, 4, 5):
+        record.citations.number(f"https://x/{n}")
+
+    said = _cited_reference_standing(record)
+
+    assert said.startswith("One of the three entries below was retrieved and checked")
+    assert "the other two entries record where a statement came from" in said
+
+
+def test_a_reference_list_whose_entries_were_all_checked_says_so():
+    from coscientist.narrative import ResearchRecord, _cited_reference_standing
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.citations = CitationRegistry(
+        [
+            SourceLead(
+                canonical_url=f"https://x/{n}",
+                title=f"Lead {n}",
+                verification_status="verified",
+            )
+            for n in range(2)
+        ]
+    )
+    for n in range(2):
+        record.citations.number(f"https://x/{n}")
+
+    assert _cited_reference_standing(record) == (
+        "All two entries below were retrieved and checked against the document they "
+        "name."
+    )
+
+
 # -------------------------------------------------------------------- idea titles
 
 

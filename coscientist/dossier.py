@@ -64,6 +64,7 @@ from .narrative import (
     ProvenanceNote,
     ResearchOverview,
     ResearchRecord,
+    _cited_reference_standing,
     _counted,
     _joined_titles,
     _judge_column,
@@ -73,7 +74,6 @@ from .narrative import (
     _number_word,
     _opening,
     _plural,
-    _reference_standing,
     build_idea_briefs,
     evidence_integrity_cases,
     evidence_integrity_lines,
@@ -690,7 +690,7 @@ def _knowledge_base(record: ResearchRecord, overview: ResearchOverview) -> list[
         # the findings section two chapters above stated a figure.
         lead_in = _REFERENCE_QUALIFIERS.get(
             record.citations.universal_qualifier
-        ) or _reference_standing(record)
+        ) or _cited_reference_standing(record)
         if lead_in:
             lines.extend([lead_in, ""])
         if any(_redirect_only(citation) for citation in references):

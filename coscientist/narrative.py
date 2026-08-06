@@ -223,12 +223,63 @@ class CitationRegistry:
         annotations: dict[str, str] | None = None,
     ) -> None:
         self._leads = {lead.canonical_url: lead for lead in leads if lead.canonical_url}
+        self._canonical = self._folded_by_title()
         self._annotations = annotations or {}
         self._numbers: dict[str, int] = {}
         self._ordered: list[str] = []
         self._groups = 0
         self._annotated = 0
         self._universal = self._uniform_qualifiers()
+
+    def _folded_by_title(self) -> dict[str, str]:
+        """One entry per document, mapping every lead onto the one that gets printed.
+
+        Discovery returns the same paper under a grounding redirect and under the
+        publisher's own link, and both were numbered: a live reference list ran
+        "5. Limitations of Ultrathin Al2O3 Coatings on LNMO Cathodes - Diva Portal.
+        The literature search recorded only its own redirect link for this source,
+        which no longer resolves" directly above "6. Limitations of Ultrathin Al2O3
+        Coatings on LNMO Cathodes (2021)" with a link that does -- the same document,
+        numbered twice and given opposite retrieval status.
+
+        The surviving lead is the one a reader can act on: checked before unchecked,
+        then a link that reaches the document before a redirect that does not. Leads
+        the search captured no title for are left alone, since "Untitled source on
+        mdpi.com" is a publisher and not a document, and two of them are not one
+        source.
+        """
+        by_title: dict[str, list[str]] = {}
+        for url, lead in self._leads.items():
+            title = " ".join(_reference_title(lead).split()).casefold()
+            if title.startswith("untitled source"):
+                continue
+            by_title.setdefault(title, []).append(url)
+        canonical: dict[str, str] = {}
+        for urls in by_title.values():
+            if len(urls) == 1:
+                continue
+            kept = urls[0]
+            for url in urls[1:]:
+                if self._stands_better(self._leads[url], self._leads[kept]):
+                    kept = url
+            for url in urls:
+                if url != kept:
+                    canonical[url] = kept
+                    del self._leads[url]
+        return canonical
+
+    @staticmethod
+    def _stands_better(lead: SourceLead, against: SourceLead) -> bool:
+        """Whether this lead is the one of the pair worth printing."""
+        standing = (
+            lead.verification_status in GROUNDED_STATUSES,
+            GROUNDING_REDIRECT_MARKER not in lead.canonical_url,
+        )
+        other = (
+            against.verification_status in GROUNDED_STATUSES,
+            GROUNDING_REDIRECT_MARKER not in against.canonical_url,
+        )
+        return standing > other
 
     def _uniform_qualifiers(self) -> set[str]:
         """Qualifiers true of every source, which are therefore not qualifiers.
@@ -268,6 +319,21 @@ class CitationRegistry:
         return checked, len(self._leads)
 
     @property
+    def cited_standing(self) -> tuple[int, int]:
+        """The same count over the entries that were actually numbered and printed.
+
+        The corpus figure stood at the head of a reference list holding six entries:
+        "Fifteen of the fifty-nine were retrieved and checked" over a list of six
+        told the reader the list below it was ten times the length it is.
+        """
+        checked = sum(
+            1
+            for url in self._ordered
+            if self._leads[url].verification_status in GROUNDED_STATUSES
+        )
+        return checked, len(self._ordered)
+
+    @property
     def universal_qualifier(self) -> str:
         """The qualifier that holds of every cited source, if one does.
 
@@ -288,6 +354,7 @@ class CitationRegistry:
 
     def number(self, url: str) -> int | None:
         """Resolve a URL to its reference number, assigning one on first sight."""
+        url = self._canonical.get(url, url)
         if url not in self._leads:
             return None
         if url not in self._numbers:
@@ -6459,8 +6526,43 @@ def _open_flaw_consequence(record: ResearchRecord, ids: Sequence[str]) -> str:
     )
 
 
+def _cited_reference_standing(record: ResearchRecord) -> str:
+    """The same statement about the entries printed under References, and no others.
+
+    The corpus figure was printed here as well, word for word, so the head of a list
+    of six entries read "Fifteen of the fifty-nine were retrieved and checked against
+    the document they name" -- a sentence a reader can only take as being about the
+    list under it. This one counts what it stands over.
+    """
+    checked, total = record.citations.cited_standing
+    if not total:
+        return ""
+    if not checked:
+        return (
+            f"{_opening(total, 'entry', 'entries')} below records where a statement "
+            "came from and no more: none was retrieved and checked against the "
+            "document it names."
+        )
+    if checked == total:
+        return (
+            f"{_opening(total, 'entry', 'entries')} below was retrieved and checked "
+            "against the document it names."
+            if total == 1
+            else f"All {_number_word(total).lower()} entries below were retrieved and "
+            "checked against the document they name."
+        )
+    return (
+        f"{_number_word(checked)} of the {_number_word(total).lower()} entries below "
+        f"{'was' if checked == 1 else 'were'} retrieved and checked against the "
+        f"document {'it names' if checked == 1 else 'they name'}; the other "
+        f"{_plural(total - checked, 'entry')} record where a statement came from and "
+        "no more. Which is which is recorded against each entry in the evidence "
+        "appendix."
+    )
+
+
 def _reference_standing(record: ResearchRecord) -> str:
-    """Whether the sources this report cites were read, said in one sentence.
+    """Whether the sources this run gathered were read, said in one sentence.
 
     This used to be the flat assertion that every one of them was a lead nobody had
     checked, printed on every run whatever verification had established. On the run
@@ -6514,8 +6616,15 @@ def _section_eight(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draf
             # reaches for it and the paragraph holding it can still be cut afterwards,
             # so the figure ran ahead of the reference list more often than not. What
             # survives into References is settled after this sentence is written.
-            "The sources this report draws on are listed under References. "
-            + _reference_standing(record)
+            # The figure is over the corpus discovery gathered, not over the reference
+            # list: a lead is numbered only where the text that cites it survives, and
+            # what survives is settled after this sentence is written. Opening on
+            # "the sources this report draws on are listed under References" put the
+            # corpus figure over the list anyway, so "fifteen of the fifty-nine" stood
+            # as a claim about a list holding six entries.
+            "The literature this run gathered stands behind the sections below, and "
+            "those of its sources the report goes on to cite are listed under "
+            "References. " + _reference_standing(record)
         )
     else:
         core.append(
