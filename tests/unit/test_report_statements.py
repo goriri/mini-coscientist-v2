@@ -384,6 +384,24 @@ def test_agreeing_reviews_with_no_falsifier_are_not_told_they_disagree():
     )
 
 
+def test_what_a_bottom_evidence_review_means_is_left_to_the_standing_note():
+    """ "The lowest of them is the evidence and correctness review, at 2 of five: what
+    it faults is the grounding, not the experiment" stood under six of eight ideas, and
+    the clause after the colon is the opening of the standing note hoisted above them
+    all. What is this idea's own is which review is at the bottom and how far down."""
+    from coscientist.narrative import COHERENCE_EVIDENCE_NOTE
+
+    lines, notes = _coherence(
+        [_review("Correctness", 2), _review("Feasibility", 5)], {}
+    )
+
+    assert lines[-1] == (
+        "The lowest of them is the evidence and correctness review, at 2 of five."
+    )
+    assert COHERENCE_EVIDENCE_NOTE in notes
+    assert "the disagreement is about the grounding" in COHERENCE_EVIDENCE_NOTE
+
+
 # --- a table the specialist appended is its table, not the mechanism ----------
 
 
@@ -515,6 +533,61 @@ def test_the_protocol_is_printed_as_the_steps_the_specialist_numbered():
     )
     assert lines[0] == "### Validation Protocol"
     assert lines[2:5] == [f"{index}. {step}" for index, step in enumerate(steps, 1)]
+
+
+def _brief_with_own_sections(title: str) -> object:
+    from coscientist.narrative import IdeaBrief
+
+    return IdeaBrief(
+        title=title,
+        candidate_id="candidate_0001",
+        rank=1,
+        elo=1200,
+        category="",
+        proposal="",
+        description=[],
+        facts={},
+        summary={},
+        table_rows=[],
+        reviews=[],
+        coherence=[],
+        deep_verification=[],
+        matches=[],
+        wins=0,
+        losses=0,
+        ties=0,
+        shortlisted=False,
+        authors_own_sections=[
+            ("Critical Scientific Judgment", "TMA is pyrophoric and needs a hood.")
+        ],
+    )
+
+
+def test_what_the_specialists_own_sections_are_is_explained_once_above_the_ideas():
+    """The note under the heading describes the generation contract -- one prose field
+    for a mechanism the prompt asks four things of -- rather than the idea it stands
+    under, and it stood in the same words under four of eight ideas."""
+    from coscientist.dossier import _authors_own_sections, shared_authors_own_note
+
+    briefs = [_brief_with_own_sections("One"), _brief_with_own_sections("Two")]
+    hoisted = "\n".join(shared_authors_own_note(briefs))
+
+    assert "not a finding of the run" in hoisted
+    under = "\n".join(_authors_own_sections(briefs[0], hoisted=True))
+    assert under.startswith("### The Specialist's Own Sections")
+    assert "headed a section of its own" not in under
+    assert "**Critical Scientific Judgment.** TMA is pyrophoric" in under
+
+
+def test_one_idea_carrying_its_own_sections_keeps_the_note_under_it():
+    """Hoisting a note over a single idea puts it two pages away from the only thing
+    it describes, and saves nothing."""
+    from coscientist.dossier import _authors_own_sections, shared_authors_own_note
+
+    brief = _brief_with_own_sections("One")
+
+    assert not shared_authors_own_note([brief])
+    assert "headed a section of its own" in "\n".join(_authors_own_sections(brief))
 
 
 def test_the_self_rating_is_printed_as_the_specialists_own_table():

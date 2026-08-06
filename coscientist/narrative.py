@@ -380,6 +380,21 @@ class CitationRegistry:
         return checked, len(self._ordered)
 
     @property
+    def cited_discredited(self) -> tuple[int, int]:
+        """Cited entries that came back retracted, and ones that came back not at all.
+
+        These used to be counted in with the merely unchecked, under "the other five
+        entries record where a statement came from and no more" -- which says nobody
+        looked. Two of those five had been looked at: one link reached no document
+        and one document had been withdrawn, and both are worse standing than a lead
+        nobody has got to yet, not the same standing.
+        """
+        statuses = Counter(
+            self._leads[url].verification_status for url in self._ordered
+        )
+        return statuses["retracted"], statuses["inaccessible"]
+
+    @property
     def universal_qualifier(self) -> str:
         """The qualifier that holds of every cited source, if one does.
 
@@ -407,6 +422,16 @@ class CitationRegistry:
             self._ordered.append(url)
             self._numbers[url] = len(self._ordered)
         return self._numbers[url]
+
+    def numbered(self, url: str) -> int | None:
+        """The number this URL already carries, without giving it one.
+
+        ``number`` assigns on first sight, which is right for the running text and
+        wrong for an appendix that only wants to report what the text cited: asking
+        it would add an entry to the reference list for every lead the appendix
+        mentioned, and the list would then hold sources nothing cites.
+        """
+        return self._numbers.get(self._canonical.get(url, url))
 
     def marker(self, urls: Iterable[str], *, annotate: bool = True) -> str:
         """Render ``[1, 2]`` plus at most one evidence qualifier for those sources."""
@@ -3114,9 +3139,26 @@ def _spliced(text: str) -> str:
         head[:1].isupper()
         and (head[1:].islower() or not head[1:])
         and head.strip(",;:").lower() not in _EPONYMS
+        and head.partition("-")[0] not in _SYMBOL_PREFIXES
     ):
         head = head.lower()
     return head + separator + tail
+
+
+# A hyphenated compound can open on a chemical symbol, and the test above reads the
+# symbol as a word the sentence happened to capitalise: "Ar-glovebox with <0.1 ppm
+# H2O/O2" was folded into a list of prerequisites as "ar-glovebox", which a reader
+# takes for the same transcription error lipf6 was. Only symbols that are not also
+# English words are listed -- "In-situ XRD" and "As-received powder" open on symbols
+# too, and folding those two is right.
+_SYMBOL_PREFIXES = frozenset(
+    {
+        "Ag", "Al", "Ar", "Au", "Ba", "Bi", "Br", "Ca", "Cd", "Ce", "Cl", "Co", "Cr",
+        "Cs", "Cu", "Fe", "Ga", "Ge", "Hf", "Hg", "Ir", "Kr", "La", "Li", "Mg", "Mn",
+        "Mo", "Na", "Nb", "Nd", "Ne", "Ni", "Pb", "Pd", "Pt", "Rb", "Rh", "Ru", "Sb",
+        "Se", "Si", "Sn", "Sr", "Ta", "Te", "Ti", "Tl", "Xe", "Zn", "Zr",
+    }
+)  # fmt: skip
 
 
 # A surname a method is named after is a merely-capitalised word by the test above, so
@@ -4691,10 +4733,13 @@ def _coherence(
     # testing the reading they share.
     disputed = spread > 1 or len(asked) > 1
     if spread > 1 and lowest.section == "Correctness":
+        # The clause that used to close this sentence -- "what it faults is the
+        # grounding, not the experiment" -- is the first clause of the standing note
+        # hoisted above the ideas, restated under six of the eight. What is this
+        # idea's own is which review sits at the bottom and how far down it is.
         lines.append(
             "The lowest of them is the evidence and correctness review, at "
-            f"{lowest.score} of five: what it faults is the grounding, not the "
-            "experiment."
+            f"{lowest.score} of five."
         )
         notes.append(COHERENCE_EVIDENCE_NOTE)
     elif _stated(facts, "Falsifier"):
@@ -7626,6 +7671,57 @@ def _open_flaw_consequence(record: ResearchRecord, ids: Sequence[str]) -> str:
     )
 
 
+def _cited_entry_standings(
+    checked: int, unchecked: int, inaccessible: int, retracted: int
+) -> list[str]:
+    """One clause per kind of standing the entries below carry, in falling order.
+
+    Four kinds, not two. Merely-unchecked is the mildest of the three that are not
+    verified, and it was the only one the sentence had a clause for.
+    """
+    clauses = []
+    if checked:
+        clauses.append(
+            f"{_number_word(checked).lower()} "
+            + ("was" if checked == 1 else "were")
+            + " retrieved and checked against the document "
+            + ("it names" if checked == 1 else "they name")
+        )
+    if unchecked:
+        clauses.append(
+            f"{_number_word(unchecked).lower()} "
+            + ("records" if unchecked == 1 else "record")
+            + " where a statement came from and no more"
+        )
+    if inaccessible:
+        clauses.append(
+            f"{_number_word(inaccessible).lower()} "
+            + ("was" if inaccessible == 1 else "were")
+            + " looked for and could not be retrieved at all"
+        )
+    if retracted:
+        clauses.append(
+            f"{_number_word(retracted).lower()} "
+            + (
+                "names a document that has"
+                if retracted == 1
+                else "name documents that have"
+            )
+            + " since been retracted"
+        )
+    return clauses
+
+
+# This sent the reader to the evidence appendix, which lists the ideas whose grounding
+# is in doubt and names no entry of this list at all. The mark is on the entries below,
+# where a reader looking one up will already be.
+_STANDING_IS_MARKED = (
+    " Which is which is marked on the entries themselves. A qualifier beside a marker "
+    "in the running text is printed only while the page is not already dense with "
+    "them, so the entry is the record and the marker is not."
+)
+
+
 def _cited_reference_standing(record: ResearchRecord) -> str:
     """The same statement about the entries printed under References, and no others.
 
@@ -7637,31 +7733,32 @@ def _cited_reference_standing(record: ResearchRecord) -> str:
     checked, total = record.citations.cited_standing
     if not total:
         return ""
-    if not checked:
-        return (
-            f"{_opening(total, 'entry', 'entries')} below records where a statement "
-            "came from and no more: none was retrieved and checked against the "
-            "document it names."
-        )
+    retracted, inaccessible = record.citations.cited_discredited
+    unchecked = total - checked - retracted - inaccessible
     if checked == total:
         return (
-            f"{_opening(total, 'entry', 'entries')} below was retrieved and checked "
-            "against the document it names."
+            "The one entry below was retrieved and checked against the document it "
+            "names."
             if total == 1
-            else f"All {_number_word(total).lower()} entries below were retrieved and "
-            "checked against the document they name."
+            else ("Both" if total == 2 else f"All {_number_word(total).lower()}")
+            + " entries below were retrieved and checked against the document they "
+            "name."
         )
+    if unchecked == total:
+        return (
+            f"{_opening(total, 'entry', 'entries')} below "
+            + ("records" if total == 1 else "record")
+            + " where a statement came from and no more: none was retrieved and "
+            "checked against the document it names."
+        )
+    # "The other five entries record where a statement came from and no more" stood
+    # over five entries of which one could not be retrieved and one had been retracted
+    # -- two failures of verification reported as verification not yet attempted.
     return (
-        f"{_number_word(checked)} of the {_number_word(total).lower()} entries below "
-        f"{'was' if checked == 1 else 'were'} retrieved and checked against the "
-        f"document {'it names' if checked == 1 else 'they name'}; the other "
-        f"{_plural(total - checked, 'entry')} record where a statement came from and "
-        # This sent the reader to the evidence appendix, which lists the ideas whose
-        # grounding is in doubt and names no entry of this list at all. The mark is
-        # on the entries below, where a reader looking one up will already be.
-        "no more. Which is which is marked on the entries themselves. A qualifier "
-        "beside a marker in the running text is printed only while the page is not "
-        "already dense with them, so the entry is the record and the marker is not."
+        f"Of {_plural(total, 'entry')} below, "
+        + _series(_cited_entry_standings(checked, unchecked, inaccessible, retracted))
+        + "."
+        + _STANDING_IS_MARKED
     )
 
 
@@ -9747,6 +9844,23 @@ def _knowledge_summary(record: ResearchRecord) -> str:
             for run in (record.discovery.runs if record.discovery else [])
             if run.pass_number not in written
         }
+        # The same 45-word note stood under five of seven passes, once per pass, in a
+        # section a reader goes through in one pass of their own. What it says is about
+        # how this run matched statements to sources and not about any one pass, so it
+        # is said once, above them, with the passes it holds for named.
+        unsourced = sorted(
+            number for number, narrative in written.items() if not narrative.statements
+        )
+        hoisted = len(unsourced) > 1
+        if hoisted:
+            parts.append(
+                "*No statement in passes "
+                + _names([str(number) for number in unsourced])
+                + " could be tied to a source the provider also returned, so nothing "
+                "from those passes was carried into the evidence base or cited "
+                "elsewhere in this report. Their reports stand below as what each "
+                "pass reported and nothing more.*"
+            )
         for number in sorted(written | empty):
             narrative = written.get(number)
             # A single pass needs no heading over it: there is nothing to tell it
@@ -9779,7 +9893,7 @@ def _knowledge_summary(record: ResearchRecord) -> str:
                     "fitted. The whole of it is in the stored artifact this pass "
                     "recorded.*"
                 )
-            if not narrative.statements:
+            if not narrative.statements and not hoisted:
                 parts.append(
                     "*No statement in this pass could be tied to a source the "
                     "provider also returned, so nothing from it was carried into "

@@ -184,6 +184,24 @@ def test_a_pass_that_grounded_nothing_says_so_under_its_own_report():
     assert "nothing from it was carried into the evidence base" in section
 
 
+def test_the_note_about_ungrounded_passes_is_made_once_over_the_passes_it_holds_for():
+    """The same 45-word note stood under five of seven passes, in a section a reader
+    goes through in one pass of their own. What it says is about how this run matched
+    statements to sources, not about any one pass."""
+    section = _knowledge_summary(
+        _record(
+            _narrative(statements=[], pass_number=1),
+            _narrative(pass_number=2),
+            _narrative(statements=[], pass_number=3),
+        )
+    )
+
+    assert section.count("could be tied to a source the provider also returned") == 1
+    assert "*No statement in passes 1 and 3 could be tied to a source" in section
+    # Said above the reports rather than after the last of them.
+    assert section.index("No statement in passes") < section.index("### Pass 1")
+
+
 def test_an_unchecked_search_still_opens_with_whose_claim_this_is():
     section = _knowledge_summary(_record(_narrative(), checked=False))
     assert section.startswith("What follows is the literature search's own report")

@@ -3073,6 +3073,19 @@ def test_a_name_folded_into_a_sentence_keeps_the_capital_it_carries():
     assert _spliced("Synthesis of battery-grade PEDOT:PSS.").startswith("synthesis of")
 
 
+def test_a_hyphenated_compound_opening_on_an_element_keeps_the_symbol():
+    """ "Ar-glovebox with <0.1 ppm H2O/O2" reached a list of prerequisites as
+    "ar-glovebox". A leading capital over an otherwise lower-case word is the test for
+    a word the sentence capitalised, and a two-letter chemical symbol passes it."""
+    from coscientist.narrative import _spliced
+
+    assert _spliced("Ar-glovebox with <0.1 ppm H2O/O2.").startswith("Ar-glovebox")
+    assert _spliced("Li-metal anodes were assembled.").startswith("Li-metal")
+    # Symbols that are also English words are words here, and fold like words.
+    assert _spliced("In-situ XRD during the first cycle.").startswith("in-situ")
+    assert _spliced("As-received powder was used.").startswith("as-received")
+
+
 def test_a_colon_inside_a_name_does_not_take_an_item_out_of_its_series():
     """PEDOT:PSS is a polymer, not a sentence opening a list. Read as punctuation, it
     set its own item apart and the required inputs printed as "It cannot start until

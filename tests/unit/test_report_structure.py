@@ -723,8 +723,10 @@ def test_the_head_of_the_reference_list_counts_the_list_below_it():
 
     said = _cited_reference_standing(record)
 
-    assert said.startswith("One of the three entries below was retrieved and checked")
-    assert "the other two entries record where a statement came from" in said
+    assert said.startswith(
+        "Of three entries below, one was retrieved and checked against the document "
+        "it names, and two record where a statement came from and no more."
+    )
 
 
 def test_a_reference_list_whose_entries_were_all_checked_says_so():
@@ -744,10 +746,51 @@ def test_a_reference_list_whose_entries_were_all_checked_says_so():
     for n in range(2):
         record.citations.number(f"https://x/{n}")
 
+    # "All two entries below" counts a pair the way nothing else in the report does.
     assert _cited_reference_standing(record) == (
-        "All two entries below were retrieved and checked against the document they "
-        "name."
+        "Both entries below were retrieved and checked against the document they name."
     )
+
+
+def test_an_entry_that_failed_verification_is_not_counted_as_one_nobody_checked():
+    """ "The other five entries record where a statement came from and no more" stood
+    over five entries of which one link reached no document and one document had been
+    retracted. Both had been looked at, and both are worse standing than a lead nobody
+    has got to yet -- reported as verification not yet attempted."""
+    from coscientist.narrative import ResearchRecord, _cited_reference_standing
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    statuses = [
+        "verified",
+        "verified",
+        "discovered_unverified",
+        "metadata_verified",
+        "corrected",
+        "inaccessible",
+        "retracted",
+    ]
+    record.citations = CitationRegistry(
+        [
+            SourceLead(
+                canonical_url=f"https://x/{n}",
+                title=f"Lead {n}",
+                verification_status=status,
+            )
+            for n, status in enumerate(statuses)
+        ]
+    )
+    for n in range(len(statuses)):
+        record.citations.number(f"https://x/{n}")
+
+    said = _cited_reference_standing(record)
+
+    assert said.startswith(
+        "Of seven entries below, three were retrieved and checked against the "
+        "document they name, two record where a statement came from and no more, "
+        "one was looked for and could not be retrieved at all, and one names a "
+        "document that has since been retracted."
+    )
+    assert "the other four entries record" not in said
 
 
 # -------------------------------------------------------------------- idea titles
@@ -4523,6 +4566,61 @@ def test_the_integrity_lead_in_agrees_with_the_number_of_ideas_it_covers(
     every = "\n".join(_provenance_appendix(record))
 
     assert "The one idea in this run carries a qualification on its grounding" in every
+
+
+def test_the_appendix_records_which_pass_found_which_source():
+    """The Knowledge Summary tells the reader that "which sources a pass found is
+    recorded per pass in the discovery appendix", and the appendix gave one total for
+    the whole search and no way to reach a pass from it. Every lead in the manifest
+    carries the passes that returned it, so the breakdown was always on the record."""
+    from coscientist.dossier import _sources_per_pass
+    from coscientist.models import DiscoveryManifest
+    from coscientist.narrative import ResearchRecord
+
+    leads = [
+        SourceLead(canonical_url="https://x/1", title="One", originating_passes=[1]),
+        SourceLead(canonical_url="https://x/2", title="Two", originating_passes=[1, 2]),
+        SourceLead(canonical_url="https://x/3", title="Three", originating_passes=[2]),
+        SourceLead(canonical_url="https://x/4", title="Four"),
+    ]
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.discovery = DiscoveryManifest(
+        question="Can a coating help?", source_leads=leads
+    )
+    record.citations = CitationRegistry(leads)
+    record.citations.number("https://x/2")
+
+    said = "\n".join(_sources_per_pass(record))
+
+    assert "- Pass 1 returned two source leads, cited in this report as [1]." in said
+    assert "- Pass 2 returned two source leads, cited in this report as [1]." in said
+    # No silent caps: the rows overlap and one lead is in none of them.
+    assert "One lead came back from more than one pass and is counted under each" in (
+        said
+    )
+    assert "One lead records no pass and is in no row at all." in said
+    # The appendix reports the numbering rather than adding to it: asking for a
+    # number would put every lead it mentions into the reference list.
+    assert record.citations.numbered("https://x/1") is None
+    assert len(record.citations) == 1
+
+
+def test_a_run_of_one_pass_gets_no_per_pass_breakdown_of_its_own_sources():
+    """One row restating the total above it is a section that says nothing."""
+    from coscientist.dossier import _sources_per_pass
+    from coscientist.models import DiscoveryManifest
+    from coscientist.narrative import ResearchRecord
+
+    leads = [
+        SourceLead(canonical_url="https://x/1", title="One", originating_passes=[1])
+    ]
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.discovery = DiscoveryManifest(
+        question="Can a coating help?", source_leads=leads
+    )
+    record.citations = CitationRegistry(leads)
+
+    assert not _sources_per_pass(record)
 
 
 def test_an_integrity_line_does_not_close_an_ellipsis_with_a_full_stop(

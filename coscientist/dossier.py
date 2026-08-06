@@ -74,6 +74,7 @@ from .narrative import (
     _judge_label,
     _labelled_bullets,
     _listed,
+    _names,
     _number_word,
     _opening,
     _plural,
@@ -1230,6 +1231,7 @@ def _idea_deep_dive(
     brief: IdeaBrief,
     *,
     grounding_hoisted: bool = False,
+    authors_own_hoisted: bool = False,
     hoisted_questions: frozenset[tuple[str, str, str]] = frozenset(),
     hoisted_matches: frozenset[str] = frozenset(),
     transcribed: set[tuple[int, frozenset[str]]] | None = None,
@@ -1266,7 +1268,7 @@ def _idea_deep_dive(
     # the idea, so they are set together and ahead of the specialist arguing for it.
     lines.extend(_validation_protocol(brief))
     lines.extend(_workflow_diagram(brief))
-    lines.extend(_authors_own_sections(brief))
+    lines.extend(_authors_own_sections(brief, hoisted=authors_own_hoisted))
     lines.extend(_self_rating(brief))
     lines.extend(_evidence_assessment(brief))
     lines.extend(_revised_form_block(brief))
@@ -1299,7 +1301,27 @@ def _validation_protocol(brief: IdeaBrief) -> list[str]:
     return lines
 
 
-def _authors_own_sections(brief: IdeaBrief) -> list[str]:
+def shared_authors_own_note(briefs: Sequence[IdeaBrief]) -> list[str]:
+    """What The Specialist's Own Sections is, said once above the ideas that have one.
+
+    The note under the heading describes the generation contract -- one prose field
+    for a mechanism the prompt asks four things of -- rather than the idea it stands
+    under, and it stood in the same words under four of eight ideas.
+    """
+    if sum(1 for brief in briefs if brief.authors_own_sections) < 2:
+        return []
+    return [
+        "Some ideas below carry a section headed The Specialist's Own Sections. The "
+        "contract gives a specialist one prose field for the mechanism, and where a "
+        "specialist headed parts of its answer inside that field, those parts are "
+        "reproduced there under its own labels rather than read out as the mechanism. "
+        "That section is the proposer arguing for its own idea, not a finding of the "
+        "run.",
+        "",
+    ]
+
+
+def _authors_own_sections(brief: IdeaBrief, *, hoisted: bool = False) -> list[str]:
     """The sections the proposing specialist headed inside its own mechanism field.
 
     The generation prompt asks for four parts and the schema gives them one prose
@@ -1310,26 +1332,28 @@ def _authors_own_sections(brief: IdeaBrief) -> list[str]:
     """
     if not brief.authors_own_sections:
         return []
-    lines = [
-        "### The Specialist's Own Sections",
-        "",
-        "The specialist that proposed this idea headed "
-        + (
-            "a section of its own"
-            if len(brief.authors_own_sections) == 1
-            else f"{_number_word(len(brief.authors_own_sections)).lower()} sections of "
-            "its own"
+    lines = ["### The Specialist's Own Sections", ""]
+    if not hoisted:
+        lines.extend(
+            [
+                "The specialist that proposed this idea headed "
+                + (
+                    "a section of its own"
+                    if len(brief.authors_own_sections) == 1
+                    else f"{_number_word(len(brief.authors_own_sections)).lower()} "
+                    "sections of its own"
+                )
+                + " inside the mechanism above. "
+                + (
+                    "It is reproduced"
+                    if len(brief.authors_own_sections) == 1
+                    else "They are reproduced"
+                )
+                + " here under the specialist's own label: this is the proposer "
+                "arguing for its own idea, not a finding of the run.",
+                "",
+            ]
         )
-        + " inside the mechanism above. "
-        + (
-            "It is reproduced"
-            if len(brief.authors_own_sections) == 1
-            else "They are reproduced"
-        )
-        + " here under the specialist's own label: this is the proposer arguing for "
-        "its own idea, not a finding of the run.",
-        "",
-    ]
     for label, body in brief.authors_own_sections:
         lines.extend([f"**{label}.** {_sentence(body)}", ""])
     return lines
@@ -1880,8 +1904,78 @@ def _discovery_provenance(record: ResearchRecord) -> list[str]:
                 ),
             ]
         )
+    lines.extend(_sources_per_pass(record))
     lines.append("")
     return lines
+
+
+def _sources_per_pass(record: ResearchRecord) -> list[str]:
+    """Which sources each pass found, which the knowledge summary promises is here.
+
+    "Which sources a pass found is recorded per pass in the discovery appendix" stood
+    at the head of the reproduced pass reports, and the appendix gave one total for
+    the whole search and no way to reach a pass from it. Every lead in the manifest
+    carries ``originating_passes``, so the breakdown was always on the record.
+    """
+    discovery = record.discovery
+    leads = discovery.source_leads if discovery else []
+    by_pass: dict[int, list[str]] = {}
+    for lead in leads:
+        for number in dict.fromkeys(lead.originating_passes):
+            by_pass.setdefault(number, []).append(lead.canonical_url)
+    if len(by_pass) < 2:
+        return []
+    rows = []
+    for number in sorted(by_pass):
+        found = by_pass[number]
+        cited = sorted(
+            {
+                marked
+                for url in found
+                if (marked := record.citations.numbered(url)) is not None
+            }
+        )
+        rows.append(
+            f"Pass {number} returned {_plural(len(found), 'source lead')}"
+            + (
+                ", none of them cited in this report."
+                if not cited
+                else ", cited in this report as "
+                + _names([f"[{marked}]" for marked in cited])
+                + "."
+            )
+        )
+    # No silent caps: a lead two passes returned is counted under both, so the rows
+    # total more than the search returned, and a lead the manifest recorded no pass
+    # for appears in no row at all.
+    shared = sum(1 for lead in leads if len(set(lead.originating_passes)) > 1)
+    unattributed = sum(1 for lead in leads if not lead.originating_passes)
+    caveats = ""
+    if shared:
+        caveats += (
+            f" {_opening(shared, 'lead')} came back from more than one pass and "
+            + ("is" if shared == 1 else "are")
+            + " counted under each of them, so the rows total more than the search "
+            "returned."
+        )
+    if unattributed:
+        caveats += (
+            f" {_opening(unattributed, 'lead')} "
+            + ("records" if unattributed == 1 else "record")
+            + " no pass and "
+            + ("is" if unattributed == 1 else "are")
+            + " in no row at all."
+        )
+    return [
+        "",
+        "### Sources per pass",
+        "",
+        "The pass reports under Knowledge Summary point here for which sources a pass "
+        "found. The numbers are the entries under References; a lead nothing in this "
+        "report cites has no number to give." + caveats,
+        "",
+        *_bullets(rows),
+    ]
 
 
 def _advisory_appendix(advisories: Sequence[Advisory]) -> list[str]:
@@ -2154,6 +2248,7 @@ def compile_dossier(session: Session) -> str:
     # Collected before anything is laid out, because the overview carries the count
     # and the count cannot be taken from a chapter that has not been built yet.
     advisories = run_advisories(record, overview=overview, briefs=tuple(briefs))
+    authors_own: list[str] = []
     lines = _front_matter(record, overview)
     lines += _overview_body(record, overview, advisory_pointer(advisories))
     lines += _knowledge_base(record, overview)
@@ -2186,6 +2281,10 @@ def compile_dossier(session: Session) -> str:
         lines += questions
         lines += shared_coherence_notes(briefs)
         lines += match_notes
+        # And what the specialist's own sections are, which is a fact about the
+        # generation contract rather than about any of the ideas that carry one.
+        authors_own += shared_authors_own_note(briefs)
+        lines += authors_own
     # Shared across the chapters, so the second idea of a pair points at the first
     # rather than reprinting the exchange they both played in.
     transcribed: set[tuple[int, frozenset[str]]] = set()
@@ -2194,6 +2293,7 @@ def compile_dossier(session: Session) -> str:
             record,
             brief,
             grounding_hoisted=brief.support in hoisted,
+            authors_own_hoisted=bool(authors_own),
             hoisted_questions=frozenset(hoisted_questions),
             hoisted_matches=hoisted_matches,
             transcribed=transcribed,
