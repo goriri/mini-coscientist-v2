@@ -1987,14 +1987,23 @@ _SUPPORT_NOTICES = {
 def _support_parts(support: str, unresolved: Sequence[str]) -> tuple[str, str]:
     """The grounding verdict as a label and a body, worst cases stated first."""
     if support == "unsupported":
+        # The one place in the body an internal id is printed, because a warning that
+        # will not say which citation broke cannot be acted on. The ids are bare noun
+        # phrases and _join punctuates a series of stated clauses, so a pair of them
+        # came out as "claim_1_2, and stmt_3_pass2" -- pointed like a list with an
+        # item missing between them. Set in code font besides, so a reader can see
+        # that what they are being shown is a literal identifier and not a mangled
+        # word.
+        named = (
+            _names([f"`{item}`" for item in unresolved if str(item).strip()]).strip()
+            or "an id it did not record"
+        )
         return (
             "",
             "Warning: this idea cites evidence that does not exist anywhere in this "
-            "report — "
-            + _join(list(unresolved), fallback="an unnamed id").rstrip(".")
-            + ". Nothing grounds the claim below. The citation was written by the "
-            "generator and never resolved to a record, so the idea must be read as "
-            "unsupported rather than as evidence-backed.",
+            f"report — {named}. Nothing grounds the claim below. The citation was "
+            "written by the generator and never resolved to a record, so the idea "
+            "must be read as unsupported rather than as evidence-backed.",
         )
     if support == "discredited":
         return (

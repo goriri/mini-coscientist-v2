@@ -30,6 +30,7 @@ from .debate import (
     unemphasised,
 )
 from .evidence import GROUNDING_REDIRECT_MARKER, names_a_document
+from .flowchart import flowchart_drawing, flowchart_steps
 from .markdown_render import (
     Code,
     Details,
@@ -2523,6 +2524,24 @@ def _code_flowable(text: str, styles: dict, available: float, appendix: bool = F
     return _para(_literal(body), style, klass=XPreformatted)
 
 
+def _code_or_diagram(block: Code, styles: dict, available: float) -> list:
+    """A fenced diagram is drawn; anything else fenced is set as the code it is.
+
+    The caption ``number_figures_and_tables`` writes under the fence already calls
+    this a figure, and for four exports it was a figure of eleven lines of Mermaid.
+    A source the parser does not recognise still prints verbatim, which is the only
+    honest fallback: a diagram half-drawn is worse than one not drawn.
+    """
+    from reportlab.platypus import Spacer
+
+    if block.language.strip().lower() == "mermaid":
+        drawing = flowchart_drawing(block.text, available)
+        if drawing is not None:
+            drawing.hAlign = "CENTER"
+            return [Spacer(1, 6), drawing, Spacer(1, 4)]
+    return [_code_flowable(block.text, styles, available)]
+
+
 def _quote_flowable(block: Quote, styles: dict, available: float):
     from reportlab.lib import colors
     from reportlab.platypus import Table as PlatypusTable
@@ -2661,7 +2680,7 @@ def _story_from_blocks(
                 [_table_flowable(block, styles, available, shared), Spacer(1, 9)]
             )
         elif isinstance(block, Code):
-            story.append(_code_flowable(block.text, styles, available))
+            story.extend(_code_or_diagram(block, styles, available))
         elif isinstance(block, Quote):
             story.append(_quote_flowable(block, styles, available))
         elif isinstance(block, Rule):
@@ -3417,7 +3436,20 @@ def _docx_blocks(
             _docx_add_table(document, block, available, shared)
             document.add_paragraph()
         elif isinstance(block, Code):
-            _docx_add_code(document, block.text, code_size)
+            steps = (
+                flowchart_steps(block.text)
+                if block.language.strip().lower() == "mermaid"
+                else None
+            )
+            if steps:
+                # Word holds an image or nothing, and nothing here can rasterise the
+                # drawing the PDF gets, so the arrows are read out in order. The
+                # caption below still calls it a figure, which it is -- the same
+                # graph, in the one form this format can carry.
+                for step in steps:
+                    _docx_add_runs(document.add_paragraph(style="List Bullet"), step)
+            else:
+                _docx_add_code(document, block.text, code_size)
         elif isinstance(block, Quote):
             paragraph = document.add_paragraph(style=_docx_quote_style(document))
             _docx_add_runs(paragraph, block.text)

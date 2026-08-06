@@ -1255,6 +1255,28 @@ def test_a_broken_grounding_verdict_is_unmissable(support: str):
     assert notice.startswith("Warning:")
 
 
+def test_two_broken_citations_are_named_as_a_pair_and_not_as_a_short_list():
+    """ "claim_1_2, and stmt_3_pass2" -- ids are noun phrases, and the clause joiner
+    put a comma before the conjunction, which reads as a list with an item lost
+    between the two that survived."""
+    notice = support_notice("unsupported", ["claim_1_2", "stmt_3_pass2"])
+
+    assert "— `claim_1_2` and `stmt_3_pass2`." in notice
+    assert ", and" not in notice
+
+
+def test_three_broken_citations_keep_the_series_comma():
+    notice = support_notice("unsupported", ["claim_1_2", "claim_1_3", "stmt_3_pass2"])
+
+    assert "— `claim_1_2`, `claim_1_3`, and `stmt_3_pass2`." in notice
+
+
+def test_a_broken_grounding_with_no_id_recorded_still_reads_as_a_sentence():
+    notice = support_notice("unsupported", [])
+
+    assert "— an id it did not record. Nothing grounds" in notice
+
+
 def test_a_grounding_verdict_several_ideas_share_is_explained_once():
     """Five ideas marked unverified printed the same three-line notice five times.
 
