@@ -29,6 +29,7 @@ from coscientist.dossier import (
 from coscientist.models import (
     ApprovalProfile,
     DecisionAction,
+    DiscoveryStatement,
     DossierManifest,
     HumanDecision,
     Session,
@@ -3054,6 +3055,67 @@ def test_open_questions_does_not_reprint_the_recommendation_it_follows():
         "No cell-level cost estimate was retrieved for any coating route."
     ]
     assert "Recommendations and Next Steps above" in lead_in
+    assert "One further item was recorded here and is not listed" in lead_in
+
+
+def test_a_finding_already_printed_is_not_reprinted_as_something_unknown(
+    rich_session: Session,
+):
+    """A discovery pass writes its uncertainties off the findings it reports, so two
+    of a live report's seven open questions were its own Main Research Directions
+    reworded -- a finding restated under a heading saying the run does not know it."""
+    from coscientist.models import Artifact, DiscoveryManifest, DiscoveryNarrative
+    from coscientist.narrative import ResearchRecord, _open_questions
+
+    finding = (
+        "Independent replication has produced contradictory evidence regarding "
+        "complete coverage of ALD, with clear signals of exposed surface Lithium "
+        "even after 10 full ALD deposition cycles."
+    )
+    reworded = (
+        "While ALD is praised for its self-limiting conformity, independent "
+        "replication has produced contradictory evidence regarding complete "
+        "coverage, discovering clear signals of exposed surface Lithium even after "
+        "10 full ALD deposition cycles."
+    )
+    session = Session(question="Does a coating help?")
+    session.artifacts = [
+        Artifact(
+            stage="evidence",
+            agent="discovery_agent",
+            artifact_type="specialist_output",
+            content="",
+            schema_name="DiscoveryManifest",
+            payload=DiscoveryManifest(
+                question="Does a coating help?",
+                narratives=[
+                    DiscoveryNarrative(
+                        question="Does a coating help?",
+                        statements=[
+                            DiscoveryStatement(
+                                text=reworded,
+                                facet="contradictory",
+                                originating_pass=1,
+                            )
+                        ],
+                        uncertainties=[
+                            finding,
+                            "No cell-level cost estimate was retrieved.",
+                        ],
+                    )
+                ],
+            ).model_dump(),
+        )
+    ]
+    record = ResearchRecord(session=session)
+    record.discovery = DiscoveryManifest.model_validate(session.artifacts[0].payload)
+
+    questions, lead_in = _open_questions(record)
+
+    assert questions == ["No cell-level cost estimate was retrieved."]
+    assert "restates a finding already printed under Main Research Directions" in (
+        lead_in
+    )
 
 
 def test_open_questions_says_so_rather_than_inventing_one_when_nothing_is_left():

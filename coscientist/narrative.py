@@ -7769,7 +7769,9 @@ def _review_summary(briefs: Sequence[IdeaBrief]) -> list[str]:
     return summary
 
 
-def _without_restatements(questions: Sequence[str]) -> list[str]:
+def _without_restatements(
+    questions: Sequence[str], *, already_printed: Sequence[str] = ()
+) -> list[str]:
     """The questions, with later rewordings of an earlier one dropped.
 
     Four specialists write into this list from their own payloads, and they reach
@@ -7779,9 +7781,17 @@ def _without_restatements(questions: Sequence[str]) -> list[str]:
     stability of self-healing polymers at high cathode voltages (>4.0V)". Exact-
     string dedup cannot see that; overlap of content words can, and the first
     phrasing is kept because it is the one the reader has already read.
+
+    ``already_printed`` extends that to what stands in an earlier chapter. The
+    uncertainties a discovery pass records are written off the same findings it
+    reports, so two of a live report's seven open questions were its own Main
+    Research Directions reworded -- a finding restated under a heading that says
+    the run does not know it.
     """
     kept: list[str] = []
-    seen: list[set[str]] = []
+    seen: list[set[str]] = [
+        words for item in already_printed if (words := _content_words(item))
+    ]
     for question in questions:
         words = _content_words(question)
         if not words:
@@ -8073,13 +8083,13 @@ def _open_questions(record: ResearchRecord) -> tuple[list[str], str]:
             )
         else:
             questions.extend(_sentence(item) for item in record.landscape.coverage_gaps)
-    # Ordering the decisive items first makes them win every overlap comparison, so a
-    # question that restates one is dropped rather than the other way round.
-    deduped = [
-        item
-        for item in _without_restatements(decisive + questions)
-        if item not in decisive
-    ]
+    # Seeding the comparison with what is already on the page makes those items win
+    # every overlap, so a question restating one is dropped rather than the other way
+    # round. The findings go in beside the decisive evidence because a discovery pass
+    # writes its uncertainties off the findings it reports, and two of a live report's
+    # seven open questions were its own Main Research Directions reworded.
+    printed = [statement.text for statement in _evidence_statements(record)]
+    deduped = _without_restatements(questions, already_printed=[*decisive, *printed])
     lead_in = (
         "The evidence that would change the recommendation is a list of its own, "
         "stated in full under Recommendations and Next Steps above; what follows is "
@@ -8087,6 +8097,20 @@ def _open_questions(record: ResearchRecord) -> tuple[list[str], str]:
         if decisive
         else ""
     )
+    restated = sum(
+        1 for item in questions if _content_words(item) and item not in deduped
+    )
+    if deduped and restated:
+        said = (
+            "One further item was recorded here and is not listed: it restates"
+            if restated == 1
+            else f"{_number_word(restated)} further items were recorded here and are "
+            "not listed: each restates"
+        )
+        lead_in = (f"{lead_in} " if lead_in else "") + (
+            f"{said} a finding already printed under Main Research Directions, or "
+            "another item in this list."
+        )
     if deduped:
         return deduped, lead_in
     if decisive:
