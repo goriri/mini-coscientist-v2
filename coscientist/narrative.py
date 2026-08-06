@@ -38,6 +38,7 @@ from .models import (
     CandidatePopulation,
     CandidateReview,
     Contract,
+    DeepResearchRun,
     DiscoveryManifest,
     DiscoveryNarrative,
     DossierManifest,
@@ -8719,6 +8720,26 @@ def _narrative_facet(narrative: DiscoveryNarrative) -> str:
     return counted.most_common(1)[0][0] if counted else ""
 
 
+# Why a pass wrote no report, in the words of the record it left. "Completed" is
+# the one that needs saying out loud: the search ran, cost what it cost, and came
+# back with nothing, which is not the same as a pass that broke.
+_SILENT_PASS = {
+    "failed": "failed",
+    "timed_out": "timed out",
+    "budget_exceeded": "stopped on this run's cost ceiling",
+    "cancelled": "was cancelled",
+    "incomplete": "returned before it had finished",
+    "requires_action": "stopped waiting on an action nothing in this run supplied",
+    "queued": "never started",
+    "in_progress": "had not returned when this report was compiled",
+}
+
+
+def _silent_pass(run: DeepResearchRun) -> str:
+    """What became of a pass that ran and left no report to print."""
+    return _SILENT_PASS.get(run.status, "ran and recorded no report")
+
+
 def _knowledge_summary(record: ResearchRecord) -> str:
     narratives = [
         narrative
@@ -8780,18 +8801,44 @@ def _knowledge_summary(record: ResearchRecord) -> str:
                 "wrong paper. Which sources a pass found is recorded per pass in "
                 "the discovery appendix."
             )
-        for index, narrative in enumerate(narratives, start=1):
+        # The paragraph above says a pass that found nothing is a finding about the
+        # literature and disappears when the reports are merged -- and the loop below
+        # then printed only the reports, so the pass it was written for was the one
+        # thing missing from the list. It gets a heading of its own and says what it
+        # did instead of writing.
+        written = {
+            narrative.pass_number or index: narrative
+            for index, narrative in enumerate(narratives, start=1)
+        }
+        empty = {
+            run.pass_number: run
+            for run in (record.discovery.runs if record.discovery else [])
+            if run.pass_number not in written
+        }
+        for number in sorted(written | empty):
+            narrative = written.get(number)
             # A single pass needs no heading over it: there is nothing to tell it
             # apart from, and "Pass 1" over the only report is a heading that
             # reports the absence of a fan-out.
-            if len(narratives) > 1:
-                phrase = FACET_PHRASES.get(_narrative_facet(narrative), "")
-                number = narrative.pass_number or index
+            if len(written) + len(empty) > 1:
+                phrase = FACET_PHRASES.get(
+                    _narrative_facet(narrative) if narrative else empty[number].facet,
+                    "",
+                )
                 parts.append(
                     f"### Pass {number}: {phrase[0].upper() + phrase[1:]}"
                     if phrase
                     else f"### Pass {number}"
                 )
+            if narrative is None:
+                parts.append(
+                    f"*This pass {_silent_pass(empty[number])}, so there is no report "
+                    "to reproduce under this heading. It stands here because a pass "
+                    "that returned nothing is a fact about the literature, and one "
+                    "that vanishes if only the passes that wrote something are "
+                    "listed.*"
+                )
+                continue
             parts.append(_deep_research_prose(narrative.summary))
             if narrative.truncated:
                 parts.append(

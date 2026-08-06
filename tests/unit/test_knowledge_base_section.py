@@ -127,6 +127,11 @@ def test_a_pass_that_wrote_no_report_is_still_counted_among_the_passes_that_ran(
     assert "The search ran as three separate passes" in section
     assert "two of them wrote a report" in section
     assert "The other recorded none" in section
+    # And the pass that recorded none is headed with the rest. The sentence above
+    # says a pass that found nothing is a finding that disappears when the reports
+    # are merged, and printing only the reports is one way of merging them.
+    assert "### Pass 3" in section
+    assert "This pass ran and recorded no report" in section
 
 
 def test_a_run_where_every_pass_reported_does_not_count_them_twice():
@@ -150,7 +155,13 @@ def test_a_report_is_headed_with_the_pass_that_wrote_it_not_its_place_in_the_lis
 
     assert "### Pass 2: Supporting evidence" in section
     assert "### Pass 5: " in section
-    assert "### Pass 1" not in section
+    # Pass 1 ran and wrote nothing. It is headed, but no report is printed under it
+    # and nothing else in the section is numbered as though it were pass 1.
+    assert "### Pass 1" in section
+    assert (
+        "no report to reproduce under this heading" in (section.split("### Pass 2")[0])
+    )
+    assert "Protective Coatings" not in section.split("### Pass 2")[0]
 
 
 def test_the_facet_is_recovered_from_the_statements_when_the_pass_did_not_record_it():
