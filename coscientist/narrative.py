@@ -3242,10 +3242,37 @@ def _novelty_standing(review: IdeaReview | None, field: Sequence[int]) -> str:
     )
 
 
+def _feasibility_inputs(facts: dict[str, str], revised: dict[str, str] | None) -> str:
+    """What has to exist before the work starts, on the form that was reviewed.
+
+    The reviews are written against the ranked form, so this section reads its
+    fields. Where evolution added the dependencies the ranked form left out, the
+    flat "No input or dependency was recorded for it" stood some thirty lines under
+    a Revised Form block listing two of them -- true of the form under review, and
+    read by anyone scrolling past as a claim about the idea.
+    """
+    field_name = "Required inputs and dependencies"
+    if _stated(facts, field_name):
+        return (
+            f"It cannot start until its inputs exist: {_spliced(facts[field_name])}. "
+        )
+    if revised and _stated(revised, field_name):
+        return (
+            "No input or dependency was recorded for the form these reviews were "
+            "written against, though the rewrite under Revised Form above does list "
+            "what it would need. "
+        )
+    return (
+        "No input or dependency was recorded for it, so nothing here states what has "
+        "to be in place before the work can start. "
+    )
+
+
 def _summary_sections(
     facts: dict[str, str],
     reviews: Sequence[IdeaReview],
     *,
+    revised: dict[str, str] | None = None,
     rank: int,
     elo: int,
     shortlisted: bool,
@@ -3409,13 +3436,7 @@ def _summary_sections(
                 if feasibility
                 else "No feasibility review was recorded for this idea. "
             )
-            + (
-                "It cannot start until its inputs exist: "
-                f"{_spliced(facts['Required inputs and dependencies'])}. "
-                if _stated(facts, "Required inputs and dependencies")
-                else "No input or dependency was recorded for it, so nothing here "
-                "states what has to be in place before the work can start. "
-            )
+            + _feasibility_inputs(facts, revised)
             + (
                 # This used to promise "a stated threshold" and then print however
                 # many the specialist wrote, which was routinely three or four. The
@@ -4168,6 +4189,8 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
         revised_lead_in, revised_form, revised_unchanged = _revised_form(
             record, candidate, recommended=recommended
         )
+        revision = record.revision_of(candidate.id)
+        revised_facts = _idea_facts(revision.candidate) if revision else None
         briefs.append(
             IdeaBrief(
                 title=record.title_for(candidate.id),
@@ -4181,6 +4204,7 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
                 summary=_summary_sections(
                     facts,
                     reviews,
+                    revised=revised_facts,
                     rank=rank,
                     elo=elo,
                     shortlisted=shortlisted,

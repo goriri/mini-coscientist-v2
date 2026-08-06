@@ -1202,6 +1202,54 @@ def test_no_flaw_and_no_low_score_still_says_what_that_is_worth():
     assert critical.startswith("No reviewer recorded a fatal flaw")
 
 
+def test_inputs_the_rewrite_added_are_not_denied_by_the_reviewed_form():
+    """ "No input or dependency was recorded for it" stood some thirty lines under a
+    Revised Form block listing two of them. True of the reviewed form, and read as a
+    claim about the idea by anyone who had just scrolled past the list."""
+    from coscientist.narrative import _summary_sections
+
+    bare = dict(_facts())
+    bare["Required inputs and dependencies"] = _UNSTATED[
+        "Required inputs and dependencies"
+    ]
+
+    feasibility = _summary_sections(
+        bare,
+        [_idea_review(section="Feasibility", score=4)],
+        revised=_facts(),
+        rank=1,
+        elo=1200,
+        shortlisted=True,
+    )["Feasibility Assessment (Go/No-Go Decision)"]
+
+    assert "No input or dependency was recorded for the form these reviews" in (
+        feasibility
+    )
+    assert "Revised Form above does list what it would need" in feasibility
+
+
+def test_an_idea_with_no_inputs_on_either_form_still_says_none_were_recorded():
+    from coscientist.narrative import _summary_sections
+
+    bare = dict(_facts())
+    bare["Required inputs and dependencies"] = _UNSTATED[
+        "Required inputs and dependencies"
+    ]
+
+    feasibility = _summary_sections(
+        bare,
+        [_idea_review(section="Feasibility", score=4)],
+        revised=bare,
+        rank=1,
+        elo=1200,
+        shortlisted=True,
+    )["Feasibility Assessment (Go/No-Go Decision)"]
+
+    assert "No input or dependency was recorded for it, so nothing here states" in (
+        feasibility
+    )
+
+
 def _nine(record: ResearchRecord, briefs: list[IdeaBrief]) -> str:
     from coscientist.narrative import _section_nine
 
