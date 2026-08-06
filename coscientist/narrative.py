@@ -4489,6 +4489,54 @@ _SENTENCE_OPENER = re.compile(
     r"(?:(?<=^)|(?<=[.!?]\s)|(?<=[.!?][”\"')]\s)|(?<=\*\*\s))t(?=h(?:is|e) )"
 )
 
+# A judge writes its rationale as the second half of a comparison and only that half
+# is kept, so the connective reaches back to a paragraph the report does not hold.
+# ``standalone_opening`` drops one that leads; these sit after the subject, where a
+# leading-connective rule cannot see them: a live bullet read "This idea, on the other
+# hand, offers a paradigm-shifting mechanistic reinterpretation" with no first hand.
+_INTERPOSED_CONTRAST = re.compile(
+    r"^((?:This|The opposing) idea),\s+"
+    r"(?:on the other hand|by contrast|in contrast|conversely),\s+",
+    re.IGNORECASE,
+)
+
+# The other half of the same fault, in a demonstrative rather than a connective. "This
+# idea avoids this fatal flaw" opened a live match bullet in which no flaw is named:
+# the flaw is the other side's and was stated in the dropped half. Which side that is
+# follows from which side the sentence is about, and both sides are already resolved
+# here, so the demonstrative is replaced by the one thing that makes it checkable --
+# whose flaw it was.
+_ORPHAN_FLAW = re.compile(
+    r"\b(This idea|The opposing idea)\s+"
+    r"(avoids|escapes|lacks|is free of|does not (?:suffer|share|carry|repeat))\s+"
+    r"th(?:is|ese)\s+(fatal flaws?|flaws?|weakness(?:es)?|issues?|problems?)\b",
+    re.IGNORECASE,
+)
+
+
+def _self_contained(rationale: str) -> str:
+    """A judge's recorded reason with the pointers to prose nobody kept resolved."""
+    # A rematch note is prepended in brackets, and the reason the reader trips over
+    # opens after it rather than at the "[".
+    note, _, tail = rationale.strip().partition("]")
+    if note.startswith("[") and tail.strip():
+        return f"{note}] {_self_contained(tail)}"
+    text = _INTERPOSED_CONTRAST.sub(r"\1 ", rationale.strip())
+
+    def _whose(match: re.Match[str]) -> str:
+        side, verb, flaw = match.group(1), match.group(2), match.group(3)
+        other = (
+            "this idea" if side.lower() == "the opposing idea" else "the opposing idea"
+        )
+        return f"{side} {verb} the {flaw} the judge found in {other}"
+
+    # Only where the reason has not already said what the flaw was: a rationale that
+    # names it and then refers back to it is pointing at its own sentence.
+    head = text[: match.start()] if (match := _ORPHAN_FLAW.search(text)) else text
+    if match and not re.search(r"\bflaw|weakness|issue|problem", head, re.IGNORECASE):
+        text = _ORPHAN_FLAW.sub(_whose, text, count=1)
+    return f"{text[:1].upper()}{text[1:]}" if text else rationale.strip()
+
 
 def _idea_matches(
     record: ResearchRecord, candidate_id: str
@@ -4520,14 +4568,17 @@ def _idea_matches(
                 elo_before=comparison.elo_before.get(candidate_id, 0.0),
                 elo_after=comparison.elo_after.get(candidate_id, 0.0),
                 confidence=comparison.confidence,
-                rationale=_sided(
-                    _sentence(
-                        comparison.rationale,
-                        fallback=(
-                            "The judge recorded no readable rationale for this match."
+                rationale=_self_contained(
+                    _sided(
+                        _sentence(
+                            comparison.rationale,
+                            fallback=(
+                                "The judge recorded no readable rationale for this "
+                                "match."
+                            ),
                         ),
-                    ),
-                    first=comparison.presented_first_id == candidate_id,
+                        first=comparison.presented_first_id == candidate_id,
+                    )
                 ),
                 judge=comparison.judge,
                 # A turn that arrived as a serialised payload is dropped rather than

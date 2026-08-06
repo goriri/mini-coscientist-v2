@@ -2937,6 +2937,56 @@ def test_a_reason_that_is_nothing_but_a_connective_is_left_as_recorded():
     assert standalone_opening("However,") == "However,"
 
 
+def test_a_contrast_the_judge_buried_after_the_subject_is_dropped_too():
+    """ "This idea, on the other hand, offers a paradigm-shifting reinterpretation"
+    opened a live match bullet with no first hand anywhere on the page. The leading-
+    connective rule cannot see this one: it sits after the subject."""
+    from coscientist.narrative import _self_contained
+
+    assert (
+        _self_contained(
+            "The opposing idea, on the other hand, offers a reinterpretation."
+        )
+        == "The opposing idea offers a reinterpretation."
+    )
+    assert (
+        _self_contained(
+            "[Rematch: this pair also met in Swiss round 1.] This idea, by contrast, wins."
+        )
+        == "[Rematch: this pair also met in Swiss round 1.] This idea wins."
+    )
+
+
+def test_a_flaw_the_reason_points_at_without_naming_is_given_a_side():
+    """ "This idea avoids this fatal flaw and provides an equally provocative claim"
+    was the whole of what a live bullet said about the deciding flaw. Which side the
+    flaw is on follows from which side the sentence is about, and both are resolved
+    by the time the bullet is written."""
+    from coscientist.narrative import _self_contained
+
+    assert (
+        _self_contained("This idea avoids this fatal flaw and is provocative.")
+        == "This idea avoids the fatal flaw the judge found in the opposing idea and "
+        "is provocative."
+    )
+    assert (
+        _self_contained("The opposing idea lacks these weaknesses.")
+        == "The opposing idea lacks the weaknesses the judge found in this idea."
+    )
+
+
+def test_a_reason_that_says_what_the_flaw_was_is_not_told_again():
+    """Pointing back at its own sentence is not a dangling pointer."""
+    from coscientist.narrative import _self_contained
+
+    said = _self_contained(
+        "The opposing idea cites fabricated evidence, a fatal flaw. This idea avoids "
+        "this fatal flaw."
+    )
+
+    assert said.endswith("This idea avoids this fatal flaw.")
+
+
 # --- a rewrite's claim about an accepted flaw is the rewrite's claim ----------
 
 
