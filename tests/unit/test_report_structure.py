@@ -2059,7 +2059,10 @@ def test_a_finding_too_long_to_splice_is_named_rather_than_read_out(
 
     _assert_no_record_ids(body)
     named = "the finding that atomic layer deposition of alumina on silicon anodes …"
-    assert f"This is answered by {named}." in body
+    # The ellipsis closes the sentence. This asserted a full stop after it, which is
+    # how "conventional carbonate …." reached a live report.
+    assert f"This is answered by {named}" in body
+    assert f"{named}." not in body
     # The finding itself is printed in full in the Knowledge Base, which is where a
     # reader who wants the whole of it goes; what the review carries is a name.
     assert statement.text in body
@@ -4227,3 +4230,50 @@ def test_two_sums_of_money_on_one_line_are_not_read_as_a_formula():
     assert _without_math_markup("between $3.00 and $21.00 a pass") == (
         "between $3.00 and $21.00 a pass"
     )
+
+
+def test_the_integrity_lead_in_agrees_with_the_number_of_ideas_it_covers(
+    rich_session: Session,
+):
+    """Two of the four cases name every idea they cover on one line.
+
+    So the line count says nothing about the idea count, and a run whose one
+    qualified idea produced one line was given "The grounding of the following ideas
+    carries a qualification" over it.
+    """
+    from coscientist.dossier import _provenance_appendix
+
+    record = load_record(rich_session)
+    qualified = [key for key, item in record.evidence_support.items() if item.qualified]
+    assert len(qualified) > 1, "the fixture must qualify more than one idea"
+
+    grounded = next(
+        key for key, item in record.evidence_support.items() if not item.qualified
+    )
+    record.evidence_support = {
+        key: record.evidence_support[key] for key in (qualified[0], grounded)
+    }
+    one = "\n".join(_provenance_appendix(record))
+
+    assert "The grounding of the following idea carries a qualification" in one
+    assert "following ideas" not in one
+    assert "names the idea it applies to" in one
+
+    # And the same count decides the all-of-them wording.
+    record.evidence_support = {qualified[0]: record.evidence_support[qualified[0]]}
+    every = "\n".join(_provenance_appendix(record))
+
+    assert "The one idea in this run carries a qualification on its grounding" in every
+
+
+def test_an_integrity_line_does_not_close_an_ellipsis_with_a_full_stop(
+    rich_session: Session,
+):
+    """ "...conventional carbonate …." reached a live report, in the one section it
+    carries about evidence that cannot be trusted."""
+    from coscientist.narrative import _stopped
+
+    assert _stopped("conventional carbonate …") == "conventional carbonate …"
+    assert _stopped("a coating helps") == "a coating helps."
+    assert _stopped("a coating helps.") == "a coating helps."
+    assert _stopped("does it? ") == "does it?"

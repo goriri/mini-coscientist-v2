@@ -2583,6 +2583,18 @@ def evidence_integrity_cases(record: ResearchRecord) -> list[str]:
     return [INTEGRITY_CASES[case] for case in ordered]
 
 
+def evidence_integrity_ideas(record: ResearchRecord) -> int:
+    """How many ideas the lines below cover, which is not how many lines there are.
+
+    Two of the four cases name every idea they cover on one line, so a run with a
+    single line can be reporting one idea or six. The lead-in was written off the
+    line count and said "the following ideas" over a list holding one.
+    """
+    return sum(
+        1 for citations in record.evidence_support.values() if citations.qualified
+    )
+
+
 def _integrity_entries(record: ResearchRecord) -> list[tuple[str, str]]:
     """Each integrity line paired with the case it states, so both can be named.
 
@@ -2623,22 +2635,29 @@ def _integrity_entries(record: ResearchRecord) -> list[tuple[str, str]]:
             lines.append(
                 (
                     "unresolved",
-                    f"{title} cites evidence that does not exist in this session — "
-                    # Nothing to name these after, so they are set as the literal
-                    # identifiers they are rather than dressed up as prose.
-                    + _names([f"`{item}`" for item in invented])
-                    + ". Its claim is unsupported.",
+                    _stopped(
+                        f"{title} cites evidence that does not exist in this session — "
+                        # Nothing to name these after, so they are set as the literal
+                        # identifiers they are rather than dressed up as prose.
+                        + _names([f"`{item}`" for item in invented])
+                    )
+                    + " Its claim is unsupported.",
                 )
             )
         elif citations.discredited:
             lines.append(
                 (
                     "discredited",
-                    f"{title} cites evidence this session could not stand behind: "
-                    + _names(
-                        [names.get(item, f"`{item}`") for item in citations.discredited]
+                    _stopped(
+                        f"{title} cites evidence this session could not stand behind: "
+                        + _names(
+                            [
+                                names.get(item, f"`{item}`")
+                                for item in citations.discredited
+                            ]
+                        )
                     )
-                    + ". Its claim is discredited.",
+                    + " Its claim is discredited.",
                 )
             )
         # Citing nothing was treated as nothing to report, so the one idea in the run
@@ -2873,6 +2892,23 @@ _CONTRACT_FIELD_RE = re.compile(
 )
 
 
+_TERMINAL = (".", "!", "?", "…")
+"""What already closes a sentence, so nothing closes it a second time."""
+
+
+def _stopped(text: str) -> str:
+    """Close a clause without doubling the punctuation already on the end of it.
+
+    A record too long to name in full is named after its own first words and an
+    ellipsis, and every sentence built around one appended a full stop to that: "the
+    finding that safety testing demonstrates that conventional carbonate …." reached
+    a live report, in the one section it carries about evidence that cannot be
+    trusted.
+    """
+    stripped = text.rstrip()
+    return stripped if stripped.endswith(_TERMINAL) else f"{stripped}."
+
+
 def _sentence(text: str, *, fallback: str = "Not stated by the specialist.") -> str:
     """Normalise a payload string into one sentence, never an empty or 'N/A' stub.
 
@@ -2888,8 +2924,7 @@ def _sentence(text: str, *, fallback: str = "Not stated by the specialist.") -> 
         return fallback
     if _looks_serialised(cleaned):
         return fallback
-    if cleaned[-1] not in ".!?":
-        cleaned += "."
+    cleaned = _stopped(cleaned)
     # Counts are spelled out in prose, and a spelled count is lower case wherever it is
     # not opening a sentence -- which is decided here, not where the count was built.
     # "one hypothesis was withdrawn from the population and did not compete." reached a

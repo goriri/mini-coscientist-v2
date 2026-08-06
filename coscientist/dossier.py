@@ -78,6 +78,7 @@ from .narrative import (
     _sentence,
     build_idea_briefs,
     evidence_integrity_cases,
+    evidence_integrity_ideas,
     evidence_integrity_lines,
     load_record,
     shared_coherence_notes,
@@ -1910,6 +1911,11 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
         # that nothing here has verified grounding only by tallying the titles against
         # the population themselves.
         every = all(item.qualified for item in record.evidence_support.values())
+        # The lead-in used to agree with the line count, and two of the four cases
+        # name every idea they cover on one line. So "The grounding of the following
+        # ideas carries a qualification" stood over a single line naming a single
+        # idea on the run that finished today.
+        covered = evidence_integrity_ideas(record)
         # "Each line states one of the four and names the ideas it applies to" stood
         # over two lines, and the four cases it listed included two this run never
         # recorded. Only the cases that produced a line are named.
@@ -1930,13 +1936,23 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
                 # source. On a live run that third case was most of the list, so the
                 # sentence contradicted the bullets directly beneath it.
                 (
-                    "Every idea in this run carries a qualification on its grounding"
+                    (
+                        "The one idea in this run carries a qualification on its "
+                        "grounding"
+                        if covered == 1
+                        else "Every idea in this run carries a qualification on its "
+                        "grounding"
+                    )
                     if every
-                    else "The grounding of the following ideas carries a qualification"
+                    else "The grounding of the following "
+                    + ("idea carries" if covered == 1 else "ideas carries")
+                    + " a qualification"
                 )
                 + f": {stated}."
                 + (
-                    " The line below names the ideas it applies to."
+                    " The line below names the "
+                    + ("idea" if covered == 1 else "ideas")
+                    + " it applies to."
                     if len(integrity) == 1
                     else " Each line below states one of the "
                     f"{_number_word(len(cases)).lower()} and names the ideas it "
