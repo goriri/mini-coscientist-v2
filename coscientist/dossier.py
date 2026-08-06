@@ -281,7 +281,16 @@ def _governance_block(record: ResearchRecord) -> list[str]:
                     + ("is" if open_blocks == 1 else "are")
                     + " not covered by any decision on this page."
                     if open_blocks
-                    else "No other fatal finding was left unanswered in this run."
+                    # Scoped to this page's subject. Written of fatal findings in
+                    # general it contradicted the governance paragraph in the body,
+                    # which on the same run reported fatal flaws against a further
+                    # three ideas that nobody adjudicated: those come from the other
+                    # reviews and are not governance blocks, and the two sentences
+                    # were describing different sets in the same words.
+                    else "No further safety and governance block was left "
+                    "unanswered in this run. A fatal flaw recorded by one of the "
+                    "other reviews is not a governance block and is not covered "
+                    "here; those are printed under the ideas that carry them."
                 ),
                 "",
                 # The name is a free-text argument to the adjudication command. The
@@ -296,6 +305,33 @@ def _governance_block(record: ResearchRecord) -> list[str]:
                 "",
             ]
         )
+        # One justification answering several flaws. Reprinted under each of them it
+        # reads as several considered answers, and on a live run the same forty words
+        # stood under three different flaws and named containment controls that bore
+        # on only one of them. The wording is still printed in full under each, which
+        # is what lets a reader see the mismatch; what is added is that it is one
+        # wording, said before the reader meets the first copy of it.
+        repeated = [
+            count
+            for _, count in Counter(
+                " ".join(note.justification.split())
+                for note in record.adjudications
+                if note.justification.strip()
+            ).items()
+            if count > 1
+        ]
+        if repeated:
+            lines.extend(
+                [
+                    "One justification below is given word for word against "
+                    + _plural(max(repeated), "flaw")
+                    + ". It was written once and applied to all of them, so it should "
+                    "be read as a single decision covering "
+                    + ("both" if max(repeated) == 2 else "all of them")
+                    + " rather than as a separate answer to each.",
+                    "",
+                ]
+            )
     for index, note in enumerate(record.adjudications, start=1):
         lines.extend(
             [
@@ -582,11 +618,20 @@ def _grid(columns: Sequence[str], rows: Iterable[Sequence[str]]) -> list[str]:
 
 
 def _idea_table(rows: Iterable[tuple[str, str]]) -> list[str]:
-    """The per-idea comparison grid: two columns, one bolded label set, five rows."""
+    """The per-idea comparison grid: two columns, one bolded label set, five rows.
+
+    The values are the specialist's own prose, and a pipe or a newline inside one
+    ends the cell it is in. Narrative rewrites an embedded Markdown table as prose
+    before it reaches here; this is the backstop for a stray pipe in a sentence,
+    which would otherwise split the row into columns the header cannot name.
+    """
     return [
         "| Category | Description |",
         "| --- | --- |",
-        *[f"| **{label}** | {value} |" for label, value in rows],
+        *[
+            f"| **{label}** | {' '.join(value.split()).replace('|', '—')} |"
+            for label, value in rows
+        ],
         "",
     ]
 

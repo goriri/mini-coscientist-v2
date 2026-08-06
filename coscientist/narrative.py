@@ -2081,6 +2081,79 @@ def evidence_integrity_lines(record: ResearchRecord) -> list[str]:
 _STUB_VALUES = frozenset({"n/a", "na", "none", "unknown", "-"})
 
 
+def _comparable(text: str) -> str:
+    """One statement reduced to what makes two of them the same statement."""
+    return " ".join(str(text or "").split()).casefold().rstrip(".?!")
+
+
+def _table_cells(line: str) -> list[str]:
+    """The cells of a Markdown table row, or nothing if the line is not one."""
+    stripped = line.strip()
+    if not stripped.startswith("|") or stripped.count("|") < 2:
+        return []
+    return [cell.strip() for cell in stripped.strip("|").split("|")]
+
+
+_RULE_CELL = re.compile(r":?-{2,}:?")
+
+
+def _row_as_prose(header: Sequence[str], row: Sequence[str]) -> str:
+    """One table row as a clause: the first column names it, the rest describe it."""
+    pairs = [
+        (header[index] if index < len(header) else "", row[index])
+        for index in range(1, len(row))
+        if row[index]
+    ]
+    if not pairs:
+        return row[0]
+    if len(pairs) == 1:
+        return f"{row[0]}: {pairs[0][1].rstrip('.')}"
+    body = "; ".join(
+        f"{name}: {value.rstrip('.')}" if name else value for name, value in pairs
+    )
+    return f"{row[0]} ({body})"
+
+
+def _blocks_as_prose(text: str) -> str:
+    """A specialist's own Markdown, written as the prose the field is declared to hold.
+
+    ``rationale`` is a prose field, and evolution's rewrite instruction asks for "a
+    structured Evaluation Table in the mechanism_model". Four of today's eight ideas
+    came back with a Markdown table inside a prose field, and the report printed it
+    into a cell of its own Markdown table -- where every pipe the specialist wrote
+    ended the cell, so a two-column grid grew to eleven columns the header has no
+    names for and the row below it stopped lining up. The same string was printed
+    into a paragraph as one line of ``| Category | Description | Judgment |``.
+
+    Nothing is dropped: each row becomes a clause naming what the row was about.
+    """
+    lines = str(text or "").splitlines()
+    out: list[str] = []
+    index = 0
+    while index < len(lines):
+        header = _table_cells(lines[index])
+        rule = _table_cells(lines[index + 1]) if index + 1 < len(lines) else []
+        if not (
+            header
+            and rule
+            and len(rule) == len(header)
+            and all(_RULE_CELL.fullmatch(cell) for cell in rule)
+        ):
+            heading = _MARKDOWN_HEADING_RE.match(lines[index].strip())
+            out.append(
+                f"{heading.group(2).strip().rstrip('.')}." if heading else lines[index]
+            )
+            index += 1
+            continue
+        index += 2
+        rows = []
+        while index < len(lines) and (row := _table_cells(lines[index])):
+            rows.append(row)
+            index += 1
+        out.append(" ".join(f"{_row_as_prose(header, row)}." for row in rows))
+    return "\n".join(out)
+
+
 def _sentence(text: str, *, fallback: str = "Not stated by the specialist.") -> str:
     """Normalise a payload string into one sentence, never an empty or 'N/A' stub.
 
@@ -2088,7 +2161,7 @@ def _sentence(text: str, *, fallback: str = "Not stated by the specialist.") -> 
     instead of printed: a reader cannot audit a JSON blob, and a report that shows one
     has stopped being a report. The fallback says so rather than hiding the gap.
     """
-    cleaned = " ".join(str(text or "").split())
+    cleaned = " ".join(_blocks_as_prose(text).split())
     if not cleaned or cleaned.lower() in _STUB_VALUES:
         return fallback
     if _looks_serialised(cleaned):
@@ -4091,7 +4164,10 @@ def _evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]:
         for statement in narrative.statements:
             statements.append(
                 _EvidenceStatement(
-                    text=_sentence(statement.text),
+                    # Empty rather than the placeholder: a finding with no text is
+                    # not a finding, and six of the fifty-five Main Research
+                    # Directions on a live run read "Not stated by the specialist."
+                    text=_sentence(statement.text, fallback=""),
                     urls=list(statement.source_urls),
                     facet=statement.facet,
                     relation=statement.relation,
@@ -4108,7 +4184,7 @@ def _evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]:
         )
         statements.append(
             _EvidenceStatement(
-                text=_sentence(claim.claim),
+                text=_sentence(claim.claim, fallback=""),
                 urls=[source.url] if source else [],
                 facet="verified"
                 if claim.verification_status == "verified"
@@ -4117,17 +4193,61 @@ def _evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]:
                 scope=[item for item in claim.limitations if item not in shared],
             )
         )
-    return statements
+    return _merged_statements(statements)
+
+
+def _merged_statements(
+    statements: Sequence[_EvidenceStatement],
+) -> list[_EvidenceStatement]:
+    """One entry per finding, however many passes and claims recorded it.
+
+    Seven Deep Research passes cover overlapping ground and the evidence stage then
+    records the verified ones again as claims, so the same sentence arrives many
+    times. Nothing deduplicated them: Main Research Directions printed 55 findings on
+    a run that held 23, several of them three and four times over -- and because the
+    relation is recorded per copy, two adjacent paragraphs stated the same finding
+    and said that discovery had read it as supporting the hypothesis and as arguing
+    against it. Six more were the empty-field placeholder, printed as findings.
+
+    Merging keeps every locator and every recorded scope, prefers the verified copy,
+    and where the copies disagree about which way the finding cuts, says that instead
+    of picking one.
+    """
+    merged: dict[str, _EvidenceStatement] = {}
+    relations: dict[str, list[str]] = {}
+    for statement in statements:
+        if not statement.text:
+            continue
+        key = _comparable(statement.text)
+        relations.setdefault(key, []).append(statement.relation)
+        held = merged.get(key)
+        if held is None:
+            merged[key] = replace(statement, urls=list(statement.urls))
+            continue
+        held.urls.extend(url for url in statement.urls if url not in held.urls)
+        held.scope.extend(item for item in statement.scope if item not in held.scope)
+        if statement.facet == "verified":
+            held.facet = "verified"
+    for key, statement in merged.items():
+        recorded = set(relations[key])
+        if len(recorded) > 1:
+            statement.relation = _DISPUTED_RELATION
+    return list(merged.values())
 
 
 # How discovery recorded each finding as bearing on the question. "supports" carries
 # no clause because it is the reading a cited finding gets by default; the other two
 # have to displace that reading, so they say so.
+_DISPUTED_RELATION = "recorded_both_ways"
+"""Set on a finding whose copies did not agree about which way it cuts."""
+
 _RELATION_CLAUSES = {
     "contradicts": "Discovery recorded this finding as arguing against the hypothesis "
     "the question puts, not for it.",
     "neutral": "Discovery recorded this finding as bearing on the question without "
     "arguing either way, so it is context rather than support.",
+    _DISPUTED_RELATION: "Discovery returned this finding more than once and read it "
+    "differently each time, so nothing on the record says which way it cuts.",
 }
 
 
@@ -4422,7 +4542,29 @@ def _section_one(record: ResearchRecord) -> _Draft:
             f"{_plural(len(record.adjudications), 'hypothesis', 'hypotheses')} in this "
             "run, and "
             + ("it was" if len(record.adjudications) == 1 else "each of them was")
-            + " answered by a named human rather than by the workflow. "
+            # "Answered by a named human rather than by the workflow" was asserted of
+            # whatever string the adjudication carried. On the run that finished today
+            # all three were answered under the name "Automated verification run
+            # (Claude Code)", and the report told its reader a human had decided them.
+            # The name is free text on the command and nothing authenticates it, so
+            # what the record establishes is that a decision was taken outside the
+            # review -- and the reader is given the name to judge for themselves.
+            + " answered outside the review, under "
+            + (
+                "the name "
+                if len({item.adjudicator for item in record.adjudications}) == 1
+                else "the names "
+            )
+            + _joined_titles(
+                sorted({item.adjudicator for item in record.adjudications})
+            ).rstrip(".")
+            + ". Nothing in this system authenticates "
+            + (
+                "that name, so it records"
+                if len({item.adjudicator for item in record.adjudications}) == 1
+                else "those names, so they record"
+            )
+            + " what was claimed at the time and not who is accountable. "
             f"{_join(parts, fallback='No resolution was recorded.')} Every "
             "decision is reprinted in full, with its flaw and its written "
             "justification, under Governance adjudications below; a safety decision "
@@ -4619,13 +4761,32 @@ def _named_mechanisms(clusters: Sequence[ResearchCluster]) -> bool:
     return len(mechanisms) == len(clusters)
 
 
+def _research_directions(record: ResearchRecord) -> list[str]:
+    """The directions discovery drew from the literature, each said once.
+
+    Deduplicated, and with the goal itself struck out. Each pass reports its own
+    directions and the passes overlap, so the list ran to one entry per pass with
+    repeats -- and a pass that fell back to its raw report records the goal question
+    as its direction, which put "Does a protective coating improve rechargeable
+    battery cycle life?" at the top of Research Directions twice, above the
+    directions actually drawn from the literature.
+    """
+    goal = _comparable(record.session.question)
+    return list(
+        dict.fromkeys(
+            said
+            for narrative in (record.discovery.narratives if record.discovery else [])
+            for direction in narrative.research_directions
+            if (said := _sentence(direction)) and _comparable(said) != goal
+        )
+    )
+
+
 def _section_three(record: ResearchRecord) -> _Draft:
     statements = _evidence_statements(record)
-    directions = [
-        direction
-        for narrative in (record.discovery.narratives if record.discovery else [])
-        for direction in narrative.research_directions
-    ]
+    # Counted off the same list the reader is pointed at. Counted off the raw field,
+    # this paragraph promised more directions than Research directions printed.
+    directions = _research_directions(record)
     core = []
     if directions:
         core.append(
@@ -7553,11 +7714,7 @@ def synthesize_overview(record: ResearchRecord) -> ResearchOverview:
         _section_eight(record, briefs),
         _section_nine(record, briefs),
     ]
-    directions = [
-        _sentence(direction)
-        for narrative in (record.discovery.narratives if record.discovery else [])
-        for direction in narrative.research_directions
-    ] or (
+    directions = _research_directions(record) or (
         # The fallback used to be the cluster table reprinted as bullets, name and
         # mechanism apiece, a few hundred words under the paragraph that had just
         # stated all of them. A reader who has met a mechanism does not need it again

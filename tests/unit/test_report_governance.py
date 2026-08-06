@@ -530,8 +530,82 @@ def test_the_adjudication_lead_says_so_when_nothing_was_left_unanswered(rich_ses
     )
 
     assert "One governance adjudication is recorded for this run" in block
-    assert "No other fatal finding was left unanswered in this run." in block
+    assert "No further safety and governance block was left unanswered" in block
+    # Scoped to governance blocks. Said of fatal findings in general it contradicted
+    # the body, which reported unadjudicated fatal flaws from the other reviews.
+    assert "is not a governance block and is not covered here" in block
     assert "Unanswered governance blocks" not in block
+
+
+def test_the_summary_names_the_adjudicator_instead_of_calling_them_a_human(
+    rich_session,
+):
+    """The adjudicator is a free-text argument to the command and nothing checks it.
+    The paragraph asserted the decision had been "answered by a named human rather
+    than by the workflow"; on the live run all three names read "Automated
+    verification run (Claude Code)", and the report told its reader otherwise."""
+    _override(rich_session, _population_ids(rich_session)[0])
+
+    summary = _flat(compile_dossier(rich_session))
+
+    assert (
+        f"answered outside the review, under the name {SECOND_ADJUDICATOR}" in summary
+    )
+    assert "Nothing in this system authenticates that name" in summary
+    assert "named human" not in summary
+
+
+def test_two_adjudicators_are_both_named_and_the_disclaimer_is_pluralised(
+    rich_session,
+):
+    ids = _population_ids(rich_session)
+    _withdraw(rich_session, ids[-1])
+    _override(rich_session, ids[0])
+
+    summary = _flat(compile_dossier(rich_session))
+
+    assert "under the names" in summary
+    assert ADJUDICATOR in summary and SECOND_ADJUDICATOR in summary
+    assert "Nothing in this system authenticates those names" in summary
+
+
+def test_one_justification_answering_two_flaws_is_declared_as_one_decision(
+    rich_session,
+):
+    """Reprinted under each flaw, the same forty words read as two considered
+    answers. On the live run one justification stood under three flaws and named
+    containment controls that bore on only one of them."""
+    ids = _population_ids(rich_session)
+    for flaw in (FLAW, SECOND_FLAW):
+        record_adjudication(
+            rich_session,
+            _block(rich_session, ids[0], flaw),
+            resolution="override",
+            adjudicator=SECOND_ADJUDICATOR,
+            justification=SECOND_JUSTIFICATION,
+        )
+
+    block = _flat(
+        _section(compile_dossier(rich_session), "## Governance adjudications")
+    )
+
+    assert "One justification below is given word for word against two flaws" in block
+    assert "read as a single decision covering both" in block
+    # The wording still stands in full under each flaw: that is what lets a reader
+    # see for themselves that it does not fit both.
+    assert block.count(_flat(SECOND_JUSTIFICATION)) == 2
+
+
+def test_distinct_justifications_are_not_declared_repeated(rich_session):
+    ids = _population_ids(rich_session)
+    _withdraw(rich_session, ids[-1])
+    _override(rich_session, ids[0])
+
+    block = _flat(
+        _section(compile_dossier(rich_session), "## Governance adjudications")
+    )
+
+    assert "given word for word against" not in block
 
 
 def test_an_unanswered_governance_block_is_reported_as_blocking(rich_session):
