@@ -20,6 +20,7 @@ import pytest
 from coscientist.advisories import AUTO_APPROVAL_WARNING
 from coscientist.dossier import (
     CHAPTER_SECTIONS,
+    _cell,
     _match_summary,
     _verdict_line,
     compile_dossier,
@@ -3591,3 +3592,24 @@ def test_a_rematch_note_is_not_printed_inside_the_reason_it_precedes():
 
     assert "[Rematch" not in block
     assert "Hypothesis 1 isolates the mechanism." in block
+
+
+def test_a_summary_cell_is_cut_where_a_clause_ends_not_inside_one():
+    """Every Falsifier Summary cell of a live summary table ended mid-condition --
+    "or if the capacity retention after…" -- which states half a test and leaves the
+    reader nothing to hold the idea to."""
+    cell = _cell(
+        "If DEMS analysis shows no significant reduction in O2 evolution during the "
+        "first ten cycles, or if the capacity retention after five hundred cycles "
+        "falls below eighty per cent, the oxygen-buffer mechanism is falsified."
+    )
+
+    assert cell.endswith("during the first ten cycles…")
+    assert "or if" not in cell
+
+
+def test_a_cell_with_no_clause_boundary_still_falls_back_to_a_word():
+    cell = _cell("Retention " + "held " * 40)
+
+    assert cell.endswith("held…")
+    assert len(cell) <= 140

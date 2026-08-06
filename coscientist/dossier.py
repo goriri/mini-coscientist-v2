@@ -1977,9 +1977,17 @@ def _cell(text: str, ceiling: int = _SUMMARY_CELL_CEILING) -> str:
     # summary table, which reads as a rendering fault rather than as an
     # abbreviation. An unclosed bracket goes with the word that opened it.
     head = flat[: ceiling - 1]
+    # And on a clause boundary where there is one to cut on. Cut inside a clause, the
+    # cell states half a condition: every Falsifier Summary cell of a live summary
+    # table ended on "or if the capacity retention after…" or "compared to…", which
+    # is a cell a reader cannot hold the idea to. Ending the cell where the writer
+    # ended a clause leaves a statement that is short rather than unfinished.
+    clause = max(head.rfind(", "), head.rfind("; "), head.rfind(" — "))
     space = head.rfind(" ")
-    if space > ceiling // 2:
-        head = head[:space]
+    for cut in (clause, space):
+        if cut > ceiling // 2:
+            head = head[:cut]
+            break
     if head.count("(") > head.count(")"):
         head = head[: head.rfind("(")]
     return head.rstrip(" ,;.:—-([") + "…"

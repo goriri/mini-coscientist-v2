@@ -139,14 +139,20 @@ def test_unfenced_json_becomes_a_code_block():
     assert block.text.startswith("{") and block.text.rstrip().endswith("}")
 
 
-def test_a_table_opening_a_section_is_captioned_by_its_own_columns():
-    """ "**Table 1.**" and nothing else reached the live dossier twice."""
+def test_a_table_opening_a_section_is_named_then_described_by_its_columns():
+    """ "**Table 1.**" and nothing else reached the live dossier twice, and naming
+    only the columns gave a caption the index of tables did not agree with."""
     numbered = number_figures_and_tables(
         "## Ranked Research Ideas\n\n"
         "| Rank | Candidate Title | Elo |\n| --- | --- | --- |\n| 1 | A | 1200 |\n"
     )
 
-    assert "**Table 1.** Rank, Candidate Title and Elo." in numbered
+    assert (
+        "**Table 1.** Ranked Research Ideas: Rank, Candidate Title and Elo." in numbered
+    )
+    # The back-matter entry and the caption name the exhibit the same way, which is
+    # the only handle a reader has for following one to the other.
+    assert "[Table 1](#ranked-research-ideas) — Ranked Research Ideas" in numbered
 
 
 def test_a_caption_does_not_take_the_section_number_off_the_heading():
@@ -160,9 +166,9 @@ def test_a_caption_does_not_take_the_section_number_off_the_heading():
     assert "4.1 A 2.5 nm" not in numbered.split("**Table 1.**")[1]
 
 
-def test_a_table_with_no_column_labels_falls_back_to_the_bare_number():
+def test_a_table_with_no_column_labels_is_still_named():
     numbered = number_figures_and_tables(
         "## Open Questions\n\n|  |  |\n| --- | --- |\n| Does it hold? | Unknown |\n"
     )
 
-    assert "**Table 1.**\n" in numbered
+    assert "**Table 1.** Open Questions." in numbered

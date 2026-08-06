@@ -454,21 +454,22 @@ def _column_caption(header: str) -> str:
 
 
 def _caption(label: str, caption: str, under_heading: bool, columns: str = "") -> str:
-    """A numbered caption, minus the words the heading above it already set.
+    """A numbered caption: what the exhibit is, and for a table what it holds.
 
-    An exhibit that opens its own section takes that section's title as its
-    caption, and printing it there gives "### Executive Candidate Summary"
-    followed immediately by "Table 10. Executive Candidate Summary." The number
-    is what the caption is for; the sentence is already on the page.
+    "**Table 10.**" and nothing else reached the live dossier twice -- a caption
+    that describes nothing -- and naming only the columns to avoid repeating the
+    heading above replaced it with a caption that disagreed with the index. The
+    index lists the exhibit by the section it sits in, so "Table 10 -- Executive
+    Candidate Summary" in the back matter pointed at "**Table 10.** Rank,
+    Candidate Title, Strategy ..." on the page, and a reader following one to the
+    other had nothing but the number to match them on.
 
-    What was on the page instead was "**Table 10.**" and nothing else, twice in
-    the live dossier: a caption that describes nothing. Where the exhibit is a
-    table, its own header row says what it holds without repeating a word of the
-    heading, so that is what the caption says.
+    The name comes first, which is what the index lists, and the columns follow it
+    where the exhibit is a table that opens its own section.
     """
-    if not under_heading:
-        return f"**{label}.** {caption}."
-    return f"**{label}.** {columns}." if columns else f"**{label}.**"
+    if under_heading and columns:
+        return f"**{label}.** {caption}: {columns}."
+    return f"**{label}.** {caption}."
 
 
 def number_figures_and_tables(content: str) -> str:
