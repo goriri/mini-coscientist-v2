@@ -628,6 +628,13 @@ def table_of_contents(content: str) -> str:
         return content
 
     head = 1 if lines and _HEADING.match(lines[0]) else 0
+    # Whatever is set between the title and the first section is cover matter --
+    # the notice saying what the document is and is not -- and the contents list
+    # belongs under it, not on top of it. Dropping the contents in straight after
+    # the title put forty links between a reader and the one sentence telling them
+    # nothing in the document is a finding.
+    while head < len(lines) and not _HEADING.match(lines[head]):
+        head += 1
     return "\n".join(
         [*lines[:head], "", CONTENTS_HEADING, "", *entries, "", *lines[head:]]
     )

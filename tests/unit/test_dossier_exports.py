@@ -676,3 +676,33 @@ graph TD
     assert "Figure 1." in rendered
     assert "Table 1." in rendered
     assert "Page" in rendered
+
+
+def test_every_export_tells_the_reader_what_the_document_is(rich_session):
+    """The notice was cover matter in the PDF and the DOCX and nowhere at all in
+    the Markdown -- the copy most likely to be pasted into a message. A reader
+    holding the .md had to reach an appendix two thousand seven hundred lines down
+    to learn that nothing in it is a finding."""
+    from pypdf import PdfReader
+
+    from coscientist.dossier import _DEFAULT_NOTICE, compile_dossier
+    from coscientist.markdown_render import CONTENTS_HEADING
+
+    markdown = compile_dossier(rich_session)
+
+    assert markdown.count(_DEFAULT_NOTICE) == 1
+    # Above the contents list, because forty links between the title and that
+    # sentence is the same thing as not putting it on the cover.
+    assert markdown.index(_DEFAULT_NOTICE) < markdown.index(CONTENTS_HEADING)
+
+    # And set once in the two formats that already had it, not twice: they build
+    # their own title page out of the same compiled Markdown.
+    pdf = "\n".join(
+        (page.extract_text() or "")
+        for page in PdfReader(BytesIO(render_pdf(markdown))).pages
+    )
+    assert pdf.count("Draft for internal review") == 1
+
+    with ZipFile(BytesIO(render_docx(markdown))) as archive:
+        document = archive.read("word/document.xml").decode("utf-8")
+    assert document.count("Draft for internal review") == 1

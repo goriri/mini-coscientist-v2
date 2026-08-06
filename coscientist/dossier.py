@@ -162,6 +162,14 @@ def _front_matter(record: ResearchRecord, overview: ResearchOverview) -> list[st
     return [
         f"# {overview.goal_title}",
         "",
+        # The cover notice, which the PDF and the DOCX both print under the title
+        # and the Markdown printed nowhere. Markdown is the copy that gets pasted
+        # into a message or opened in an editor, and in that copy the statement
+        # that none of this is a finding sat in an appendix two thousand seven
+        # hundred lines down. Three exports of one report, and only two of them
+        # told the reader what they were holding.
+        f"*{_DEFAULT_NOTICE}*",
+        "",
         "# Research Goal Details",
         "",
         "## Goal",
@@ -2347,6 +2355,18 @@ _DEFAULT_NOTICE = (
     "reviews they received, not verified findings; every claim must be independently "
     "verified against primary sources before it is acted upon."
 )
+
+
+def _without_cover_notice(content: str) -> str:
+    """The compiled Markdown without the notice these two exporters set themselves.
+
+    The notice is cover matter, and each format puts it where that format's cover
+    is: under the title in Markdown, on the title page in the PDF and the DOCX.
+    Left in the body for those two it would be set twice, a page apart.
+    """
+    return content.replace(f"*{_DEFAULT_NOTICE}*\n\n", "", 1)
+
+
 _SERIF = "Times-Roman"
 _SERIF_BOLD = "Times-Bold"
 _SERIF_ITALIC = "Times-Italic"
@@ -3291,7 +3311,9 @@ def render_pdf(content: str) -> bytes:
     # numbering pass is idempotent and only fires on markup compiled elsewhere.
     blocks = parse_blocks(
         flatten_fragment_links(
-            strip_table_of_contents(number_figures_and_tables(content))
+            strip_table_of_contents(
+                _without_cover_notice(number_figures_and_tables(content))
+            )
         )
     )
     title, question, stamp = _dossier_meta(blocks)
@@ -3911,7 +3933,9 @@ def render_docx(content: str) -> bytes:
     # numbering pass is idempotent and only fires on markup compiled elsewhere.
     blocks = parse_blocks(
         flatten_fragment_links(
-            strip_table_of_contents(number_figures_and_tables(content))
+            strip_table_of_contents(
+                _without_cover_notice(number_figures_and_tables(content))
+            )
         )
     )
     title, question, stamp = _dossier_meta(blocks)

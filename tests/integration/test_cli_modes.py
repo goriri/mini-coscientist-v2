@@ -99,6 +99,9 @@ def test_cli_auto_mode_completes_only_with_explicit_exploratory_opt_in(
     report = report_path.read_text()
     assert "exploratory leads rather than findings" in report
     assert "none should be cited as established" in report
+    # And the cover notice, which says the same thing of the document as a whole
+    # before the reader has read any of it.
+    assert "not verified findings" in report
 
 
 def test_tui_default_milestone_mode_requires_four_accept_inputs(monkeypatch, capsys):
