@@ -16,6 +16,16 @@ class DisciplineProfile(BaseModel):
     default_actor_guidance: str = ""
     actor_guidance: dict[str, str] = Field(default_factory=dict)
     default_critic_rubric: str = ""
+    """What a critic must reject at every stage, which is nothing any profile records.
+
+    Each of the twelve profiles set this to a verbatim copy of its generate rubric,
+    so every stage's critic was handed the generate stage's demands. The reflect
+    critics were told to reject a review that omits "a structured Evaluation Table
+    and an explicit Critical Scientific Judgment section" -- artefacts of the
+    hypothesis contract, asked of a reviewer -- and the reviewers complied: fourteen
+    review findings on a live run were a Markdown table in a prose field. What is
+    domain-specific and stage-specific is already carried by ``stage_checklists``.
+    """
     critic_rubrics: dict[str, str] = Field(default_factory=dict)
     stage_checklists: dict[str, tuple[str, ...]] = Field(default_factory=dict)
 
@@ -109,11 +119,6 @@ def _create_registry() -> dict[str, DisciplineProfile]:
                 "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific chemical/biophysical risks, epimerization controls, or failure modes."
             )
         },
-        default_critic_rubric=(
-            "Reject drafts that omit mandatory chemistry/materials rigor pillars: specific state-of-the-art reagents/additives, "
-            "exact fragmentation points or synthetic routes, epimerization controls, stereochemical integrity, a structured Evaluation Table, "
-            "and an explicit Critical Scientific Judgment section evaluating chemical risks."
-        ),
         critic_rubrics={
             "generate": (
                 "Reject drafts that omit mandatory chemistry/materials rigor pillars: specific state-of-the-art reagents/additives, "
@@ -143,11 +148,6 @@ def _create_registry() -> dict[str, DisciplineProfile]:
                 "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific biological confounders, toxicity, or clinical failure modes."
             )
         },
-        default_critic_rubric=(
-            "Reject drafts that omit mandatory biology/medicine rigor pillars: specific biological mechanisms, "
-            "cohort designs or experimental models (in vitro/in vivo), sample sizes and statistical power calculations, confounder controls, "
-            "biomarker specificity, a structured Evaluation Table, and an explicit Critical Scientific Judgment section evaluating biological risks or toxicity."
-        ),
         critic_rubrics={
             "generate": (
                 "Reject drafts that omit mandatory biology/medicine rigor pillars: specific biological mechanisms, "
@@ -175,11 +175,6 @@ def _create_registry() -> dict[str, DisciplineProfile]:
                 "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific physical constraints, instrument noise, or failure modes."
             )
         },
-        default_critic_rubric=(
-            "Reject drafts that omit mandatory physics/engineering rigor pillars: physical principles, conservation laws, "
-            "equations of motion, calibration protocols, uncertainty quantification, a structured Evaluation Table, "
-            "and an explicit Critical Scientific Judgment section evaluating physical limits."
-        ),
         critic_rubrics={
             "generate": (
                 "Reject drafts that omit mandatory physics/engineering rigor pillars: physical principles, conservation laws, "
@@ -207,11 +202,6 @@ def _create_registry() -> dict[str, DisciplineProfile]:
                 "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific computational risks, overfitting, data leakage, or failure modes."
             )
         },
-        default_critic_rubric=(
-            "Reject drafts that omit mandatory computer science/AI rigor pillars: algorithmic complexity, "
-            "formal problem/architecture definitions, training/inference compute requirements, benchmark dataset specifications, "
-            "data leakage controls, a structured Evaluation Table, and an explicit Critical Scientific Judgment section evaluating computational limits."
-        ),
         critic_rubrics={
             "generate": (
                 "Reject drafts that omit mandatory computer science/AI rigor pillars: algorithmic complexity, "
@@ -239,11 +229,6 @@ def _create_registry() -> dict[str, DisciplineProfile]:
                 "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific proof gaps, degenerate cases, or analytical failure modes."
             )
         },
-        default_critic_rubric=(
-            "Reject drafts that omit mandatory mathematics/statistics rigor pillars: axiomatic rigor, proof sketch completeness, "
-            "formal definitions, boundary conditions, analytical or statistical derivations, a structured Evaluation Table, "
-            "and an explicit Critical Scientific Judgment section evaluating proof gaps or degenerate cases."
-        ),
         critic_rubrics={
             "generate": (
                 "Reject drafts that omit mandatory mathematics/statistics rigor pillars: axiomatic rigor, proof sketch completeness, "
@@ -271,11 +256,6 @@ def _create_registry() -> dict[str, DisciplineProfile]:
                 "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific observational biases, chaotic dynamics, or climate model limitations."
             )
         },
-        default_critic_rubric=(
-            "Reject drafts that omit mandatory earth/climate sciences rigor pillars: geophysical mechanisms, "
-            "spatiotemporal scales, boundary conditions, observational datasets, uncertainty quantification, a structured Evaluation Table, "
-            "and an explicit Critical Scientific Judgment section evaluating geophysical limitations."
-        ),
         critic_rubrics={
             "generate": (
                 "Reject drafts that omit mandatory earth/climate sciences rigor pillars: geophysical mechanisms, "
@@ -303,11 +283,6 @@ def _create_registry() -> dict[str, DisciplineProfile]:
                 "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific experimental confounders, measurement noise, or cognitive task limitations."
             )
         },
-        default_critic_rubric=(
-            "Reject drafts that omit mandatory neuroscience/cognitive rigor pillars: neural mechanisms, "
-            "behavioral paradigms, neuroimaging/electrophysiological controls, sample sizes and statistical power calculations, a structured Evaluation Table, "
-            "and an explicit Critical Scientific Judgment section evaluating experimental confounders."
-        ),
         critic_rubrics={
             "generate": (
                 "Reject drafts that omit mandatory neuroscience/cognitive rigor pillars: neural mechanisms, "
@@ -337,11 +312,6 @@ def _create_registry() -> dict[str, DisciplineProfile]:
                 "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific instrumental limitations, systematic errors, or astrophysical confounds."
             )
         },
-        default_critic_rubric=(
-            "Reject drafts that omit mandatory astronomy/astrophysics rigor pillars: astrophysical mechanisms, "
-            "observational wavelengths/instruments, signal-to-noise ratios, calibration controls, a structured Evaluation Table, "
-            "and an explicit Critical Scientific Judgment section evaluating systematic errors."
-        ),
         critic_rubrics={
             "generate": (
                 "Reject drafts that omit mandatory astronomy/astrophysics rigor pillars: astrophysical mechanisms, "
@@ -369,11 +339,6 @@ def _create_registry() -> dict[str, DisciplineProfile]:
                 "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific endogeneity, selection bias, or socio-economic confounders."
             )
         },
-        default_critic_rubric=(
-            "Reject drafts that omit mandatory social science/economics rigor pillars: theoretical constructs, "
-            "econometric/causal identification strategies, dataset provenance, confounder controls, robustness checks, a structured Evaluation Table, "
-            "and an explicit Critical Scientific Judgment section evaluating endogeneity or selection bias."
-        ),
         critic_rubrics={
             "generate": (
                 "Reject drafts that omit mandatory social science/economics rigor pillars: theoretical constructs, "
@@ -403,11 +368,6 @@ def _create_registry() -> dict[str, DisciplineProfile]:
                 "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific ecological complexity, seasonal variability, or sampling biases."
             )
         },
-        default_critic_rubric=(
-            "Reject drafts that omit mandatory environmental/ecology rigor pillars: ecological mechanisms, "
-            "biodiversity metrics, field sampling protocols, spatiotemporal controls, a structured Evaluation Table, "
-            "and an explicit Critical Scientific Judgment section evaluating sampling biases."
-        ),
         critic_rubrics={
             "generate": (
                 "Reject drafts that omit mandatory environmental/ecology rigor pillars: ecological mechanisms, "
@@ -437,11 +397,6 @@ def _create_registry() -> dict[str, DisciplineProfile]:
                 "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific metabolite toxicity, adverse drug reactions, or pharmacokinetic limitations."
             )
         },
-        default_critic_rubric=(
-            "Reject drafts that omit mandatory pharmacology/toxicology rigor pillars: pharmacokinetic/pharmacodynamic models, "
-            "dosing regimens, toxicity endpoints, assays, therapeutic index calculations, a structured Evaluation Table, "
-            "and an explicit Critical Scientific Judgment section evaluating toxicity risks."
-        ),
         critic_rubrics={
             "generate": (
                 "Reject drafts that omit mandatory pharmacology/toxicology rigor pillars: pharmacokinetic/pharmacodynamic models, "
@@ -469,11 +424,6 @@ def _create_registry() -> dict[str, DisciplineProfile]:
                 "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific cross-disciplinary confounds, measurement limitations, or failure modes."
             )
         },
-        default_critic_rubric=(
-            "Reject drafts that omit mandatory general interdisciplinary rigor pillars: clear mechanistic hypotheses, "
-            "independent/dependent variables, domain-appropriate controls, falsifiable validation protocols, a structured Evaluation Table, "
-            "and an explicit Critical Scientific Judgment section evaluating cross-disciplinary confounds."
-        ),
         critic_rubrics={
             "generate": (
                 "Reject drafts that omit mandatory general interdisciplinary rigor pillars: clear mechanistic hypotheses, "

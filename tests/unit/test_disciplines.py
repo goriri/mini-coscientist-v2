@@ -166,3 +166,41 @@ def test_discipline_dynamic_prompt_loading():
     provider = DeterministicProvider()
     scope_specialist.run(unclassified_session, provider)
     assert unclassified_session.discipline == "computer_science_ai"
+
+
+def test_the_generate_rubric_does_not_reach_a_reviewer_of_reviews():
+    """Each stage's critic gets its own stage's rubric, and none where none is set.
+
+    Every profile used to carry ``default_critic_rubric`` as a verbatim copy of its
+    generate rubric, so the reflect critic was handed the hypothesis contract and
+    told to reject a review that omits "a structured Evaluation Table". The
+    reviewers complied: fourteen review findings on a live run arrived as a Markdown
+    table inside a prose field.
+    """
+    session = Session(
+        question="Design exact fragmentation points for peptide synthesis.",
+        discipline="chemistry_materials",
+    )
+    profile = get_discipline_profile("chemistry_materials")
+    assert profile.default_critic_rubric == ""
+    assert "Evaluation Table" in profile.get_critic_rubric("generate")
+    assert profile.get_critic_rubric("reflect") == ""
+
+    generating = Specialist("generate", "generation", "Generate candidate hypotheses")
+    generate_prompt = generating._build_critic_prompt(session, "draft", 1, "- check")
+    assert "Domain Quality Rubric & Rigor Pillars (chemistry_materials)" in (
+        generate_prompt
+    )
+    assert "structured Evaluation Table" in generate_prompt
+    assert "4. Epistemic Integrity" in generate_prompt
+
+    reflecting = Specialist("reflect", "reflection", "Review candidate hypotheses")
+    reflect_prompt = reflecting._build_critic_prompt(session, "draft", 1, "- check")
+    assert "Evaluation Table" not in reflect_prompt
+    assert "Domain Quality Rubric" not in reflect_prompt
+    # Renumbered, not left as an empty heading over a blank line.
+    assert "3. Epistemic Integrity" in reflect_prompt
+    assert "4." not in reflect_prompt
+    # The discipline still reaches this critic, by the checklist that is scoped to
+    # its stage rather than by a rubric copied off another one.
+    assert "chemistry_materials" in reflect_prompt

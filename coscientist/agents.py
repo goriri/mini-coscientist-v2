@@ -540,6 +540,29 @@ class Specialist:
             if discipline_checklist
             else ""
         )
+        # Numbered as printed rather than numbered in the source: a profile that
+        # records no rubric for this stage used to leave "3. Domain Quality Rubric &
+        # Rigor Pillars (chemistry_materials):" over an empty line, and a numbered
+        # criterion with nothing under it reads as an instruction that went missing.
+        criteria = [
+            "Completeness & Schema Compliance: Does it provide all required fields, "
+            "tables, or JSON contracts without omissions or truncation?",
+            "Scientific Rigor & Plausibility: Are mechanisms, controls, falsifiers, "
+            "or citations domain-specific, plausible, and testable?",
+            *(
+                [
+                    f"Domain Quality Rubric & Rigor Pillars ({profile.name}):\n"
+                    f"{critic_rubric}"
+                ]
+                if critic_rubric
+                else []
+            ),
+            "Epistemic Integrity: Are hypotheses clearly distinguished from verified "
+            "empirical claims?",
+        ]
+        numbered = "\n".join(
+            f"{index}. {item}" for index, item in enumerate(criteria, start=1)
+        )
         return (
             f"You are the Lead Scientific Critic and Quality Reviewer for the '{self.role}' specialist "
             f"at the '{self.stage}' stage of the Co-Scientist system.\n"
@@ -554,10 +577,7 @@ class Specialist:
             # ends after the next one.
             f"--- CURRENT ACTOR DRAFT (Round {round_num}/{CRITIC_ROUNDS}) ---\n{content}\n\n"
             "Evaluate this draft with maximum scientific rigor against the following criteria:\n"
-            "1. Completeness & Schema Compliance: Does it provide all required fields, tables, or JSON contracts without omissions or truncation?\n"
-            "2. Scientific Rigor & Plausibility: Are mechanisms, controls, falsifiers, or citations domain-specific, plausible, and testable?\n"
-            f"3. Domain Quality Rubric & Rigor Pillars ({profile.name}):\n{critic_rubric}\n"
-            "4. Epistemic Integrity: Are hypotheses clearly distinguished from verified empirical claims?\n\n"
+            f"{numbered}\n\n"
             "If the draft fully satisfies all scientific and structural requirements, reply with EXACTLY:\n"
             "SATISFIED\n\n"
             "If the draft has ANY deficiencies, omissions, or areas requiring improvement, provide a concise, actionable bulleted critique of what the Actor must change. Do NOT output SATISFIED if changes are needed."
