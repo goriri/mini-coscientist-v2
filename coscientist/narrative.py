@@ -33,6 +33,7 @@ from .models import (
     CandidateReview,
     Contract,
     DiscoveryManifest,
+    DiscoveryNarrative,
     DossierManifest,
     EvidencePacket,
     EvolutionCycle,
@@ -7072,32 +7073,133 @@ def _unexpected_connections(
     )
 
 
+# A Deep Research report tags most of its sentences with the facet the pass was
+# sent to cover, and cites by a marker numbered against a source list only that
+# pass held. Both are the provider talking to the pipeline. Printed to a reader
+# the tag is the same word ninety times over, and the marker sends them to an
+# entry of this report's reference list that is a different paper.
+_FACET_TAG_RE = re.compile(
+    r"[ \t]*\[(?:facet:\s*)?(?:"
+    + "|".join(
+        sorted(
+            (facet.replace("_", "[ _-]") for facet in EVIDENCE_FACETS),
+            key=len,
+            reverse=True,
+        )
+    )
+    + r")\](?=[\s.,;:)]|$)",
+    re.IGNORECASE,
+)
+_PASS_CITE_RE = re.compile(r"[ \t]*\[cite:[^\]\n]{0,80}\]")
+_MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(\S.*)$")
+
+
+def _deep_research_prose(text: str) -> str:
+    """One pass's report, as Markdown that sits under this report's own headings.
+
+    What arrives is a whole document: its own title, its own heading tree, a facet
+    tag on most sentences and pass-local citation markers. This section used to
+    collapse each report's whitespace and run all seven together, which put
+    nineteen thousand characters on a single line -- headings inlined as literal
+    text -- and, because that line began with a hash, put the whole of it into one
+    entry of the table of contents.
+    """
+    stripped = _PASS_CITE_RE.sub("", _FACET_TAG_RE.sub("", text))
+    lines = []
+    for line in stripped.splitlines():
+        heading = _MARKDOWN_HEADING_RE.match(line.strip())
+        if heading:
+            # Demoted, not dropped: the pass's own structure is how a fifteen-page
+            # literature report stays navigable, and it has to nest under the
+            # "### Pass n" heading this section puts above it.
+            depth = min(6, 3 + len(heading.group(1)))
+            lines.append(f"{'#' * depth} {heading.group(2).strip()}")
+            continue
+        lines.append(line.rstrip())
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def _narrative_facet(narrative: DiscoveryNarrative) -> str:
+    """Which facet a pass covered, from the pass itself or from what it returned."""
+    if narrative.facet in FACET_PHRASES:
+        return narrative.facet
+    counted = Counter(
+        statement.facet
+        for statement in narrative.statements
+        if statement.facet in FACET_PHRASES
+    )
+    return counted.most_common(1)[0][0] if counted else ""
+
+
 def _knowledge_summary(record: ResearchRecord) -> str:
-    summaries = [
-        " ".join(narrative.summary.split())
+    narratives = [
+        narrative
         for narrative in (record.discovery.narratives if record.discovery else [])
         if narrative.summary.strip()
     ]
-    if summaries:
+    if narratives:
         # The discovery pass writes this in the voice of a settled literature review
         # -- "experimental data strongly supports the mechanism" -- and the report
         # printed it as the opening of its own Knowledge Base. On a run where no
         # source was ever opened, that is the strongest claim in the document and
         # nothing on the page said whose claim it was or what stood behind it.
-        checked = [
-            claim
+        checked = any(
+            claim.verification_status in {"verified", "corrected"}
             for claim in (record.evidence.claims if record.evidence else [])
-            if claim.verification_status in {"verified", "corrected"}
-        ]
-        if checked:
-            return " ".join(summaries)
-        return (
-            "The following is the literature search's own summary of what it found. "
-            "No source behind it was opened and checked in this run, so it is a "
-            "report of what the search returned rather than a finding about the "
-            "field, and the confidence in its wording is the search's own. "
-            + " ".join(summaries)
         )
+        parts = []
+        if not checked:
+            parts.append(
+                "What follows is the literature search's own report of what it "
+                "found. No source behind it was opened and checked in this run, so "
+                "it is a report of what the search returned rather than a finding "
+                "about the field, and the confidence in its wording is the search's "
+                "own."
+            )
+        if len(narratives) > 1:
+            parts.append(
+                f"The search ran as {_number_word(len(narratives)).lower()} separate "
+                "passes, each asked for a different kind of evidence, and each "
+                "wrote its own report. They are reproduced below one per pass and "
+                "in the order they ran, because a pass that found nothing is a "
+                "finding about the literature and disappears when the reports are "
+                "merged."
+            )
+        if any(_PASS_CITE_RE.search(item.summary) for item in narratives):
+            parts.append(
+                "Each pass numbered its citations against its own source list, "
+                "which is not the numbering under References in this report, so "
+                "those markers are removed here rather than left pointing at the "
+                "wrong paper. Which sources a pass found is recorded per pass in "
+                "the discovery appendix."
+            )
+        for index, narrative in enumerate(narratives, start=1):
+            # A single pass needs no heading over it: there is nothing to tell it
+            # apart from, and "Pass 1" over the only report is a heading that
+            # reports the absence of a fan-out.
+            if len(narratives) > 1:
+                phrase = FACET_PHRASES.get(_narrative_facet(narrative), "")
+                parts.append(
+                    f"### Pass {index}: {phrase[0].upper() + phrase[1:]}"
+                    if phrase
+                    else f"### Pass {index}"
+                )
+            parts.append(_deep_research_prose(narrative.summary))
+            if narrative.truncated:
+                parts.append(
+                    "*This pass's report is longer than the run stores in the "
+                    "manifest and is cut off above, on the last sentence that "
+                    "fitted. The whole of it is in the stored artifact this pass "
+                    "recorded.*"
+                )
+            if not narrative.statements:
+                parts.append(
+                    "*No statement in this pass could be tied to a source the "
+                    "provider also returned, so nothing from it was carried into "
+                    "the evidence base or cited elsewhere in this report. It is "
+                    "printed here as what the pass reported and nothing more.*"
+                )
+        return "\n\n".join(parts)
     if _evidence_statements(record):
         # Saying no external knowledge was consulted, on a page that goes on to list
         # four cited papers, was the report contradicting itself. A search-grounded

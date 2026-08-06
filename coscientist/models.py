@@ -388,6 +388,22 @@ class DiscoveryNarrative(Contract):
     disagreements: list[str] = Field(default_factory=list)
     uncertainties: list[str] = Field(default_factory=list)
     summary: str = ""
+    facet: str = ""
+    """Which facet the pass that produced this narrative was sent to cover.
+
+    The fan-out asks seven different questions and gets seven reports back. Only
+    the statements carried the facet, so a narrative whose paragraphs all failed
+    to resolve a citation lost every trace of what it had been asked -- and the
+    report, which prints the reports themselves, had nothing to label them with
+    and ran all seven together as one block of prose.
+    """
+    truncated: bool = False
+    """Whether ``summary`` is a prefix of the report rather than the whole of it.
+
+    The store cuts the report at a fixed length, which lands mid-word. Printing
+    that without saying so presents a sentence the provider never wrote as the
+    end of its findings.
+    """
 
 
 class SourceLead(Contract):

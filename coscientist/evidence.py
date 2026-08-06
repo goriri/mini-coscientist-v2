@@ -1177,6 +1177,30 @@ def _source_leads(
     return list(by_url.values())
 
 
+SUMMARY_CHARACTER_LIMIT = 12000
+"""How much of one pass's report the manifest keeps for the Knowledge Base."""
+
+
+def _report_summary(text: str) -> tuple[str, bool]:
+    """The report as the dossier will print it, cut where a reader can see a cut.
+
+    The limit used to be applied as a bare slice, which lands mid-word: a live
+    run's Knowledge Base ended on "eliminating ambient thermal fl" and read as a
+    sentence the provider had written that way. Cutting on a boundary and saying
+    the cut happened are both this function's job, because the dossier is given
+    the text and cannot tell a truncated report from a short one.
+    """
+    text = text.strip()
+    if len(text) <= SUMMARY_CHARACTER_LIMIT:
+        return text, False
+    head = text[:SUMMARY_CHARACTER_LIMIT]
+    for boundary, keep in (("\n\n", 0), (". ", 1), ("\n", 0)):
+        cut = head.rfind(boundary)
+        if cut > SUMMARY_CHARACTER_LIMIT // 2:
+            return head[: cut + keep].strip(), True
+    return head.rstrip(), True
+
+
 def _fallback_narrative(
     question: str,
     report: str,
@@ -1225,10 +1249,12 @@ def _fallback_narrative(
         question=question,
         research_directions=[question],
         statements=statements,
-        summary=report[:12000],
-        uncertainties=(
-            [] if statements else ["No citation-linked statements could be normalized."]
-        ),
+        summary=report,
+        # This is a diagnostic about the normalizer, not a question the field has
+        # left open, and Open Questions is where the report prints uncertainties.
+        # A reader asking what this run could not settle was handed "No
+        # citation-linked statements could be normalized." among seven real ones.
+        uncertainties=[],
     )
 
 
@@ -1309,6 +1335,11 @@ def normalize_report(
             accepted_statements.append(statement)
     narrative.statements = accepted_statements
     narrative.question = question
+    # Applied to whichever summary survived -- the normalizer's or the fallback's
+    # -- so the dossier is handed one kind of text however this pass was parsed.
+    narrative.summary, narrative.truncated = _report_summary(
+        narrative.summary or report
+    )
     return narrative
 
 
@@ -1900,6 +1931,7 @@ class IterativeEvidenceDiscovery:
                 # guessed from their wording. This is the whole reason a
                 # fan-out can score coverage honestly and a single broad report
                 # cannot.
+                narrative.facet = run.facet
                 for statement in narrative.statements:
                     statement.facet = run.facet
             additions = _source_leads(
