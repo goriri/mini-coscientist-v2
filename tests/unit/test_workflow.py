@@ -100,7 +100,7 @@ def test_only_discovery_card_has_google_search():
     verifier = next(
         card for card in flow.agent_cards if card.name == "source_verification"
     )
-    assert verifier.tools == ["load_web_page"]
+    assert verifier.tools == ["fetch_source_document"]
     assert len(flow.agent_cards) == 13
 
 

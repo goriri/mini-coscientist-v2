@@ -18,8 +18,14 @@ from urllib.request import Request, urlopen
 from pydantic import ValidationError
 
 from .models import (
+    CREDITED_STATUSES,
     EVIDENCE_FACETS,
+    EVIDENCE_FLOOR_CREDIT,
+    EVIDENCE_FLOOR_FACETS,
     FACET_PHRASES,
+    MAX_DISCOVERY_PASSES,
+    METADATA_VERIFIED_WEIGHT,
+    VERIFIED_STATUSES,
     DeepResearchRun,
     DiscoveryCoverage,
     DiscoveryManifest,
@@ -27,6 +33,7 @@ from .models import (
     DiscoveryStatement,
     EnrichmentRequest,
     EvidenceClaim,
+    EvidenceFloor,
     EvidencePacket,
     ResearchGap,
     ResearchPlan,
@@ -34,15 +41,32 @@ from .models import (
     SourceLead,
     SourceRecord,
 )
+from .retrieval import RetrievalOutcome, SourceRetriever, assess_sources
 
 DEEP_RESEARCH_AGENT = "deep-research-preview-04-2026"
 DEEP_RESEARCH_LOCATION = "global"
-MAX_DEEP_RESEARCH_PASSES = 3
+MAX_DEEP_RESEARCH_PASSES = MAX_DISCOVERY_PASSES
 MIN_COVERAGE_IMPROVEMENT = 0.05
 SUFFICIENT_COVERAGE = 0.90
 DEFAULT_COST_PER_PASS_USD = 3.0
-DEFAULT_COST_WARNING_USD = 6.0
-DEFAULT_COST_LIMIT_USD = 10.0
+DEFAULT_COST_WARNING_USD = 12.0
+DEFAULT_COST_LIMIT_USD = 24.0
+"""The hard spend ceiling for one run's discovery, in US dollars.
+
+Eight passes at three dollars each: the seven-facet fan-out plus one
+gap-closing pass, and nothing beyond that. The service takes anonymous requests
+and a pass cannot be cancelled once started, so this is a bound the code
+enforces rather than a budget somebody watches.
+"""
+
+FAN_OUT_FACETS = EVIDENCE_FACETS
+"""Which facets get a Deep Research interaction of their own on the first wave.
+
+Sequential gap-directed passes were smarter per dollar and slower by a factor of
+seven, and they only ever asked the second question after the first came back.
+Fanning out across the facets asks all seven at once; the gap-closing pass that
+follows is what keeps the gap-direction that the fan-out gives up.
+"""
 DEFAULT_PASS_TIMEOUT_SECONDS = 3900
 MAX_ENRICHMENT_REQUESTS = 6
 MAX_REGISTRY_REQUESTS = 30
@@ -617,6 +641,224 @@ def downgrade_unlocatable_sources(packet: EvidencePacket) -> EvidencePacket:
     return downgraded
 
 
+_TIER_RANK = {
+    "inaccessible": 0,
+    "discovered_unverified": 0,
+    "metadata_verified": 1,
+    "verified": 2,
+    "corrected": 2,
+}
+
+
+async def sweep_verification(
+    packet: EvidencePacket, *, retriever: SourceRetriever | None = None
+) -> EvidencePacket:
+    """Cap every status in a packet at what an actual retrieval supports.
+
+    The specialist decides whether a document says what was attributed to it,
+    because that is a judgement about meaning. It does not get to decide whether
+    the document was read, because that is a fact, and a run in which the only
+    retrieval tool raised ``ImportError`` on every call still returned a packet
+    full of confident statuses. Nothing downstream could tell those from real
+    ones: all the report reads is the status field.
+
+    So each locator is fetched here, independently and concurrently, and the
+    result sets a ceiling. A source whose text arrived keeps whatever the
+    specialist concluded. One that only a registry could confirm cannot be
+    called verified. One that neither reached is inaccessible whatever the
+    packet says. A retraction overrides everything, in the other direction:
+    a retracted paper is perfectly readable and must never be cited as support.
+
+    Registry metadata is written back at the same time, so the reference list
+    can show authors and a year instead of a URL.
+    """
+    if not packet.sources:
+        return packet
+    targets = [
+        (source.url, source.title)
+        for source in packet.sources
+        if names_a_document(source.url)
+    ]
+    outcomes = await assess_sources(targets, retriever=retriever)
+    if not outcomes:
+        return packet
+    return apply_retrieval_outcomes(packet, outcomes)
+
+
+def apply_retrieval_outcomes(
+    packet: EvidencePacket, outcomes: dict[str, RetrievalOutcome]
+) -> EvidencePacket:
+    """Reconcile a packet against retrieval results. Pure, so it can be tested."""
+    updated = packet.model_copy(deep=True)
+    demoted: list[str] = []
+    retracted: list[str] = []
+    for source in updated.sources:
+        outcome = outcomes.get(source.url)
+        if outcome is None:
+            if not names_a_document(source.url):
+                source.verification_status = "inaccessible"
+                source.verification_note = (
+                    "This locator names a website rather than a document, so no "
+                    "retrieval was attempted."
+                )
+            continue
+        metadata = outcome.metadata
+        if metadata.title and not source.title:
+            source.title = metadata.title
+        if metadata.authors:
+            source.authors = metadata.authors
+        if metadata.year:
+            source.year = metadata.year
+        if metadata.container:
+            source.container = metadata.container
+        if metadata.identifiers:
+            source.identifiers = {**metadata.identifiers, **source.identifiers}
+        source.verification_note = outcome.reason
+        if outcome.tier == "retracted":
+            source.verification_status = "retracted"
+            retracted.append(source.id)
+            continue
+        ceiling = _TIER_RANK[outcome.tier]
+        if _TIER_RANK.get(source.verification_status, 0) > ceiling:
+            source.verification_status = outcome.tier
+            demoted.append(source.id)
+        elif (
+            source.verification_status == "discovered_unverified"
+            and outcome.tier == "metadata_verified"
+        ):
+            # The specialist never reached a conclusion about this one, and the
+            # registry did. Recording what is known beats recording nothing.
+            source.verification_status = "metadata_verified"
+    ceilings = {source.id: source.verification_status for source in updated.sources}
+    for claim in updated.claims:
+        status = ceilings.get(claim.source_id or "")
+        if status is None:
+            continue
+        if status == "retracted":
+            claim.verification_status = "retracted"
+        elif _TIER_RANK.get(claim.verification_status, 0) > _TIER_RANK.get(status, 0):
+            # A claim is only as verified as the document it rests on.
+            claim.verification_status = status
+    if demoted:
+        updated.limitations.append(
+            f"{len(demoted)} source"
+            + ("" if len(demoted) == 1 else "s")
+            + " claimed a stronger verification status than retrieval supported "
+            + ("and was" if len(demoted) == 1 else "and were")
+            + " downgraded to what the fetch and the scholarly registries could "
+            "actually establish."
+        )
+    if retracted:
+        updated.limitations.append(
+            f"{len(retracted)} source"
+            + ("" if len(retracted) == 1 else "s")
+            + " in this corpus "
+            + ("is" if len(retracted) == 1 else "are")
+            + " recorded as retracted by a scholarly registry and must not be "
+            "cited as support."
+        )
+    return updated
+
+
+def evaluate_evidence_floor(
+    packet: EvidencePacket,
+    manifest: DiscoveryManifest | None = None,
+) -> EvidenceFloor:
+    """Whether this corpus is strong enough to generate hypotheses from.
+
+    The test it replaces demanded that every source in the packet be verified,
+    which is unclearable by construction: one publisher being down on the day
+    fails a corpus of ninety. This measures the three things that actually
+    decide whether a hypothesis rests on a literature -- how much was checked,
+    how many kinds of evidence were found, and whether anything was found that
+    disagrees -- and reports each of them whether or not the floor is met, since
+    the researcher is being asked to decide, not merely informed of a verdict.
+    """
+    credited = [
+        source
+        for source in packet.sources
+        if source.verification_status in CREDITED_STATUSES
+    ]
+    verified = [
+        source for source in credited if source.verification_status in VERIFIED_STATUSES
+    ]
+    metadata_only = [
+        source
+        for source in credited
+        if source.verification_status == "metadata_verified"
+    ]
+    credit = len(verified) + METADATA_VERIFIED_WEIGHT * len(metadata_only)
+
+    facets_by_url = {}
+    for lead in manifest.source_leads if manifest else []:
+        facets_by_url.setdefault(lead.canonical_url, set()).update(lead.facets)
+    covered: set[str] = set()
+    for source in credited:
+        if source.facet:
+            covered.add(source.facet)
+        covered.update(facets_by_url.get(source.url, ()))
+    covered &= set(EVIDENCE_FACETS)
+
+    contradicting_source_ids = {
+        claim.source_id
+        for claim in packet.claims
+        if claim.relation == "contradicts" and claim.source_id
+    }
+    disconfirming = sum(source.id in contradicting_source_ids for source in credited)
+    searched = bool(
+        {"contradictory", "negative_null"}
+        & (
+            set(manifest.discovery_angles if manifest else ())
+            | {run.facet for run in (manifest.runs if manifest else ())}
+        )
+    )
+
+    floor = EvidenceFloor(
+        verified_sources=len(verified),
+        metadata_verified_sources=len(metadata_only),
+        weighted_credit=round(credit, 2),
+        facets_covered=sorted(covered),
+        facets_missing=[facet for facet in EVIDENCE_FACETS if facet not in covered],
+        disconfirming_sources=disconfirming,
+        retracted_sources=sum(
+            source.verification_status == "retracted" for source in packet.sources
+        ),
+        inaccessible_sources=sum(
+            source.verification_status in {"inaccessible", "discovered_unverified"}
+            for source in packet.sources
+        ),
+        searched_for_disconfirming=searched,
+    )
+    if not floor.credit_met:
+        floor.shortfalls.append(
+            f"{floor.weighted_credit:g} of {EVIDENCE_FLOOR_CREDIT:g} weighted "
+            f"verified sources: {floor.verified_sources} read in full and "
+            f"{floor.metadata_verified_sources} confirmed by a registry but "
+            "unreadable, which count for half each."
+        )
+    if not floor.facets_met:
+        floor.shortfalls.append(
+            f"{len(floor.facets_covered)} of {EVIDENCE_FLOOR_FACETS} required "
+            "evidence facets have a verified source. Missing: "
+            + ", ".join(
+                FACET_PHRASES.get(facet, facet.replace("_", " "))
+                for facet in floor.facets_missing
+            )
+            + "."
+        )
+    if not disconfirming and not searched:
+        # Soft only once the search has happened. "We found none" is a finding
+        # about the literature; "we never looked" is a hole in the method.
+        floor.shortfalls.append(
+            "No search was run for contradictory or negative evidence, so the "
+            "absence of any is not yet a finding."
+        )
+    floor.met = bool(
+        floor.credit_met and floor.facets_met and (disconfirming or searched)
+    )
+    return floor
+
+
 @dataclass(frozen=True)
 class DiscoveryAngle:
     """One sub-search of a decomposed discovery pass."""
@@ -982,6 +1224,13 @@ def merge_leads(
             )
         )
         current.identifiers.update(lead.identifiers)
+        # A paper found by both the replication search and the contradictory
+        # search belongs under both, and dropping the second is how a facet
+        # ends up looking empty when it was covered.
+        current.facets = list(dict.fromkeys([*current.facets, *lead.facets]))
+        current.claim_relations = list(
+            dict.fromkeys([*current.claim_relations, *lead.claim_relations])
+        )
         if not current.title and lead.title:
             current.title = lead.title
         if current.source_type == "unknown":
@@ -993,17 +1242,51 @@ def audit_coverage(
     narrative: DiscoveryNarrative,
     leads: list[SourceLead],
     previous: DiscoveryCoverage | None = None,
+    *,
+    searched_facets: set[str] | None = None,
 ) -> DiscoveryCoverage:
+    """Score what the literature actually covers, and name what it does not.
+
+    ``searched_facets`` is which facets a search was aimed at, which the caller
+    knows and the report cannot say: a facet whose dedicated pass came back with
+    "no such literature exists" leaves no statement behind to be counted, so
+    without it that facet is indistinguishable from one nobody asked about.
+    """
     facet_scores = {}
     statement_text = "\n".join(
         statement.text.lower() for statement in narrative.statements
     )
+    # When the searches were decomposed by facet, the facet a statement carries
+    # is a record of which search returned it, and guessing from its wording can
+    # only make coverage look better than it was. A run whose contradictory
+    # search came back empty scored that facet 1.0 because some other statement
+    # happened to contain the word "inconsistent". The keyword pass is kept for
+    # the undecomposed single-report case, where a tag is all the report's own
+    # prose can supply.
+    #
+    # A tag alone is not coverage, or the fan-out would score itself: seven
+    # passes go out tagged with seven facets, and every one of them comes back
+    # tagged whether it found literature or reported that there is none. What
+    # counts is a tagged statement that cites something, which is exactly the
+    # difference between "we looked here" and "there is evidence here".
+    searched = searched_facets or {
+        statement.facet
+        for statement in narrative.statements
+        if statement.facet in EVIDENCE_FACETS
+    }
+    tagged_facets = {
+        statement.facet
+        for statement in narrative.statements
+        if statement.facet in EVIDENCE_FACETS and statement.source_urls
+    }
     for facet in EVIDENCE_FACETS:
-        tagged = any(statement.facet == facet for statement in narrative.statements)
+        if searched:
+            facet_scores[facet] = 1.0 if facet in tagged_facets else 0.0
+            continue
         keyword_match = any(
             keyword in statement_text for keyword in _FACET_KEYWORDS[facet]
         )
-        facet_scores[facet] = 1.0 if tagged or keyword_match else 0.0
+        facet_scores[facet] = 1.0 if keyword_match else 0.0
 
     directions = narrative.research_directions or [narrative.question]
     direction_scores = {
@@ -1029,7 +1312,13 @@ def audit_coverage(
             direction="Evidence landscape",
             facet=facet,
             description=(
-                "The discovery pass found no adequate "
+                # A facet that got its own pass and came back empty is a
+                # different finding from one nothing ever asked about, and the
+                # gap-closing pass is aimed by these descriptions.
+                f"A pass dedicated to {FACET_PHRASES.get(facet, facet.replace('_', ' '))} "
+                "returned no citable source."
+                if facet in searched
+                else "The discovery pass found no adequate "
                 f"{FACET_PHRASES.get(facet, facet.replace('_', ' '))}."
             ),
             decision_impact=(
@@ -1051,6 +1340,44 @@ def audit_coverage(
         new_authoritative_source_count=max(0, authoritative - previous_authoritative),
         material_gaps_closed=max(0, len(previous.gaps) - len(gaps) if previous else 0),
         gaps=gaps,
+    )
+
+
+def _combined_narrative(
+    question: str, narratives: list[DiscoveryNarrative]
+) -> DiscoveryNarrative:
+    """Everything discovered so far, as one narrative to score coverage against.
+
+    Seven facet passes produce seven narratives that each answer a different
+    question, and coverage is a property of the whole literature rather than of
+    any one of them. Statements are deduplicated on what they say and where they
+    say it came from, because two passes citing the same paper for the same
+    finding is one finding.
+    """
+    seen: dict[tuple[str, tuple[str, ...], str, str], DiscoveryStatement] = {}
+    for item in narratives:
+        for statement in item.statements:
+            seen.setdefault(
+                (
+                    statement.text,
+                    tuple(statement.source_urls),
+                    statement.facet,
+                    statement.relation,
+                ),
+                statement,
+            )
+    return DiscoveryNarrative(
+        question=question,
+        research_directions=list(
+            dict.fromkeys(
+                direction
+                for item in narratives
+                for direction in item.research_directions
+            )
+        ),
+        statements=list(seen.values()),
+        disagreements=[value for item in narratives for value in item.disagreements],
+        uncertainties=[value for item in narratives for value in item.uncertainties],
     )
 
 
@@ -1087,6 +1414,7 @@ def build_research_prompt(
     *,
     pass_number: int,
     previous_manifest: DiscoveryManifest | None = None,
+    facet: str = "",
 ) -> str:
     coverage_requirements = "\n".join(
         # The facet token is what a statement must be tagged with, so it is given
@@ -1094,7 +1422,24 @@ def build_research_prompt(
         f"- {facet}: {FACET_PHRASES[facet]}"
         for facet in EVIDENCE_FACETS
     )
-    if pass_number == 1 or previous_manifest is None:
+    if facet:
+        # One interaction per facet, all seven running at once. A single broad
+        # report asked for the mechanism, the studies for and against it, the
+        # replications, the null results and the retractions together, and
+        # answered with the supporting literature -- which is what that question
+        # deserves. Asked on its own, each facet is a search with its own answer.
+        focus = (
+            f"THIS PASS COVERS ONE FACET ONLY: {facet} — {FACET_PHRASES[facet]}.\n"
+            "The other facets of this question are being researched in parallel "
+            "by separate passes, so breadth outside your facet costs this run its "
+            "coverage rather than adding to it. Go deep on yours: find the "
+            "primary literature, name the studies, and tag every statement you "
+            f"return with the facet {facet}.\n"
+            "If the literature for this facet genuinely does not exist, report "
+            "that plainly. An honest empty facet is a finding; a facet padded "
+            "with adjacent material is a gap that has been hidden."
+        )
+    elif pass_number == 1 or previous_manifest is None:
         focus = (
             "Build a broad, domain-appropriate evidence landscape. Identify distinct "
             "research directions, material disagreements, and evidence gaps."
@@ -1124,6 +1469,16 @@ def build_research_prompt(
 
 
 @dataclass
+class PlannedPass:
+    """One Deep Research interaction the controller has decided to start."""
+
+    pass_number: int
+    facet: str
+    prompt: str
+    gap_ids: list[str]
+
+
+@dataclass
 class IterativeEvidenceDiscovery:
     transport: DeepResearchTransport
     artifact_store: EvidenceArtifactStore
@@ -1131,155 +1486,267 @@ class IterativeEvidenceDiscovery:
     pass_timeout_seconds: float = DEFAULT_PASS_TIMEOUT_SECONDS
     cost_per_pass_usd: float = DEFAULT_COST_PER_PASS_USD
     max_passes: int = MAX_DEEP_RESEARCH_PASSES
+    max_waves: int = 2
+    """How many rounds of interactions a run may take, fan-out counting as one.
+
+    Two: the facet fan-out, then one pass aimed at whatever it left open. The
+    fan-out buys breadth and gives up gap-direction, because seven passes
+    launched together cannot see what the others missed; the second wave is
+    where that is bought back.
+    """
+    fan_out: bool = True
     registry_enricher: RegistryMetadataEnricher | None = None
     polls_per_invocation: int | None = None
 
-    def run(
+    _TERMINAL = frozenset(
+        {"completed", "failed", "cancelled", "incomplete", "budget_exceeded"}
+    )
+    _IN_FLIGHT = frozenset({"queued", "in_progress", "requires_action"})
+
+    def _remaining_passes(self, manifest: DiscoveryManifest) -> int:
+        """How many more interactions the pass and cost ceilings still allow."""
+        by_count = self.max_passes - len(manifest.runs)
+        if self.cost_per_pass_usd <= 0:
+            return max(0, by_count)
+        by_cost = int(
+            (DEFAULT_COST_LIMIT_USD - manifest.estimated_cost_usd)
+            // self.cost_per_pass_usd
+        )
+        return max(0, min(by_count, by_cost))
+
+    def _plan_wave(
+        self, session: Session, plan: ResearchPlan, manifest: DiscoveryManifest
+    ) -> tuple[list[PlannedPass], str]:
+        """The next round of interactions to start, or why there is not one."""
+        budget = self._remaining_passes(manifest)
+        if not budget:
+            return [], (
+                "maximum_passes_reached"
+                if len(manifest.runs) >= self.max_passes
+                else "cost_limit_reached"
+            )
+        started = len(manifest.runs)
+        if not started:
+            facets = list(FAN_OUT_FACETS) if self.fan_out else [""]
+            if len(facets) > budget:
+                # Never silently narrow the fan-out: a run that could only afford
+                # four of the seven facets must say which three were never
+                # searched, or its empty facets read as absent literature.
+                dropped = facets[budget:]
+                facets = facets[:budget]
+                manifest.convergence_reason = "fan_out_truncated_by_budget:" + ",".join(
+                    dropped
+                )
+            return [
+                PlannedPass(
+                    pass_number=index,
+                    facet=facet,
+                    prompt=build_research_prompt(
+                        session, plan, pass_number=index, facet=facet
+                    ),
+                    gap_ids=[],
+                )
+                for index, facet in enumerate(facets, start=1)
+            ], ""
+        repeat, reason = should_repeat(
+            manifest.coverage_history,
+            manifest.estimated_cost_usd,
+            max_passes=self.max_waves,
+        )
+        if not repeat:
+            return [], reason
+        gaps = manifest.coverage_history[-1].gaps if manifest.coverage_history else []
+        return [
+            PlannedPass(
+                pass_number=started + 1,
+                facet="",
+                prompt=build_research_prompt(
+                    session,
+                    plan,
+                    pass_number=started + 1,
+                    previous_manifest=manifest,
+                ),
+                gap_ids=[gap.id for gap in gaps],
+            )
+        ], ""
+
+    def _start_wave(
         self,
         session: Session,
-        plan: ResearchPlan,
-        *,
-        manifest: DiscoveryManifest | None = None,
-        normalizer: Callable[[str], str] | None = None,
-        status_callback: Callable[[DeepResearchRun], None] | None = None,
-        manifest_callback: Callable[[DiscoveryManifest], None] | None = None,
-    ) -> DiscoveryManifest:
-        manifest = manifest or DiscoveryManifest(question=session.question)
-        while True:
-            repeat, reason = should_repeat(
-                manifest.coverage_history,
-                manifest.estimated_cost_usd,
-                max_passes=self.max_passes,
-            )
-            if not repeat:
-                manifest.convergence_reason = reason
-                break
-            resumable = next(
-                (
-                    item
-                    for item in reversed(manifest.runs)
-                    if item.status in {"queued", "in_progress", "requires_action"}
-                    and item.interaction_id
-                ),
-                None,
-            )
-            pass_number = resumable.pass_number if resumable else len(manifest.runs) + 1
-            prompt = build_research_prompt(
-                session,
-                plan,
-                pass_number=pass_number,
-                previous_manifest=manifest if manifest.runs else None,
-            )
-            active = resumable
-            if active is None:
+        planned: list[PlannedPass],
+        manifest: DiscoveryManifest,
+    ) -> tuple[list[DeepResearchRun], dict[str, dict]]:
+        """Dispatch a planned wave, recording each interaction as it is accepted.
+
+        A pass that will not start is recorded as failed and the wave continues.
+        Six facets researched and one refused is a run with a stated hole in it;
+        raising here would throw away six interactions that have already been
+        paid for.
+
+        The payload ``start`` returned travels back with the runs, because a
+        Deep Research interaction can already be complete when it is created and
+        Vertex will refuse to be polled for one. Keeping only its id and status
+        threw the report away and recorded the pass as "completed without a
+        report" -- the whole wave, every time, for that shape of transport.
+        """
+        started: list[DeepResearchRun] = []
+        payloads: dict[str, dict] = {}
+        for item in planned:
+            try:
                 created = self.transport.start(
-                    prompt=prompt,
-                    pass_number=pass_number,
+                    prompt=item.prompt,
+                    pass_number=item.pass_number,
                     session_id=session.id,
                 )
                 interaction_id = str(created.get("id") or "")
-                if not interaction_id:
-                    raise RuntimeError("Deep Research returned no interaction ID.")
-                run = DeepResearchRun(
-                    pass_number=pass_number,
-                    interaction_id=interaction_id,
-                    status=str(created.get("status") or "queued"),
-                    prompt_gap_ids=[
-                        gap.id
-                        for gap in (
-                            manifest.coverage_history[-1].gaps
-                            if manifest.coverage_history
-                            else []
-                        )
-                    ],
-                    estimated_cost_usd=self.cost_per_pass_usd,
-                )
-                manifest.runs.append(run)
-                payload = created
+            except Exception as exc:
+                created, interaction_id = {}, ""
+                failure = f"{type(exc).__name__}: {exc}"
             else:
-                run = active
-                interaction_id = run.interaction_id
-                payload = {"id": interaction_id, "status": run.status}
-            if status_callback:
-                status_callback(run)
-            if manifest_callback:
-                manifest_callback(manifest)
-            polls_this_invocation = 0
-            if self.polls_per_invocation == 0 and run.status != "completed":
-                manifest.convergence_reason = "interaction_in_progress"
-                return manifest
+                failure = "" if interaction_id else "Deep Research returned no ID."
+            run = DeepResearchRun(
+                pass_number=item.pass_number,
+                facet=item.facet,
+                interaction_id=interaction_id,
+                status=(
+                    str(created.get("status") or "queued")
+                    if interaction_id
+                    else "failed"
+                ),
+                error=failure,
+                prompt_gap_ids=item.gap_ids,
+                estimated_cost_usd=self.cost_per_pass_usd if interaction_id else 0.0,
+            )
+            if not interaction_id:
+                run.completed_at = _now()
+            manifest.runs.append(run)
+            if interaction_id:
+                started.append(run)
+                payloads[interaction_id] = created
+        return started, payloads
 
-            deadline = time.monotonic() + self.pass_timeout_seconds
-            while str(payload.get("status")) not in {
-                "completed",
-                "failed",
-                "cancelled",
-                "incomplete",
-                "budget_exceeded",
-            }:
-                if time.monotonic() >= deadline:
-                    run.status = "timed_out"
-                    run.error = "Deep Research exceeded the local pass deadline."
-                    run.completed_at = _now()
-                    manifest.convergence_reason = "deep_research_timed_out"
-                    return manifest
-                time.sleep(self.poll_interval_seconds)
-                payload = self.transport.get(interaction_id)
-                polls_this_invocation += 1
+    def _await_wave(
+        self,
+        wave: list[DeepResearchRun],
+        manifest: DiscoveryManifest,
+        *,
+        seed: dict[str, dict] | None = None,
+        status_callback: Callable[[DeepResearchRun], None] | None,
+        manifest_callback: Callable[[DiscoveryManifest], None] | None,
+    ) -> dict[str, dict] | None:
+        """Poll every interaction in a wave until all are terminal.
+
+        ``None`` means the caller should return the manifest as it stands: either
+        the step-mode budget for this invocation is spent and a Cloud Task will
+        resume, or the wall-clock deadline passed. Both leave the manifest
+        honest about which passes are still running.
+        """
+        payloads: dict[str, dict] = {
+            run.interaction_id: (seed or {}).get(run.interaction_id)
+            or {"id": run.interaction_id, "status": run.status}
+            for run in wave
+        }
+        polls_this_invocation = 0
+        if self.polls_per_invocation == 0 and any(
+            run.status not in self._TERMINAL for run in wave
+        ):
+            manifest.convergence_reason = "interaction_in_progress"
+            return None
+        deadline = time.monotonic() + self.pass_timeout_seconds
+        while any(
+            str(payloads[run.interaction_id].get("status")) not in self._TERMINAL
+            for run in wave
+        ):
+            if time.monotonic() >= deadline:
+                for run in wave:
+                    if run.status not in self._TERMINAL:
+                        run.status = "timed_out"
+                        run.error = "Deep Research exceeded the local pass deadline."
+                        run.completed_at = _now()
+                manifest.convergence_reason = "deep_research_timed_out"
+                return None
+            time.sleep(self.poll_interval_seconds)
+            polls_this_invocation += 1
+            for run in wave:
+                if str(payloads[run.interaction_id].get("status")) in self._TERMINAL:
+                    continue
+                payloads[run.interaction_id] = self.transport.get(run.interaction_id)
                 run.poll_count += 1
-                run.status = str(payload.get("status") or "in_progress")
+                run.status = str(
+                    payloads[run.interaction_id].get("status") or "in_progress"
+                )
                 if status_callback:
                     status_callback(run)
-                if manifest_callback:
-                    manifest_callback(manifest)
-                if (
-                    self.polls_per_invocation is not None
-                    and polls_this_invocation >= self.polls_per_invocation
-                    and run.status
-                    not in {
-                        "completed",
-                        "failed",
-                        "cancelled",
-                        "incomplete",
-                        "budget_exceeded",
-                    }
-                ):
-                    manifest.convergence_reason = "interaction_in_progress"
-                    return manifest
+            if manifest_callback:
+                manifest_callback(manifest)
+            if (
+                self.polls_per_invocation is not None
+                and polls_this_invocation >= self.polls_per_invocation
+                and any(run.status not in self._TERMINAL for run in wave)
+            ):
+                manifest.convergence_reason = "interaction_in_progress"
+                return None
+        return payloads
 
-            run.status = str(payload.get("status"))
+    def _ingest_wave(
+        self,
+        session: Session,
+        wave: list[DeepResearchRun],
+        payloads: dict[str, dict],
+        manifest: DiscoveryManifest,
+        *,
+        normalizer: Callable[[str], str] | None,
+    ) -> bool:
+        """Fold a completed wave into the manifest and score coverage once.
+
+        Coverage is scored per wave rather than per pass, because seven passes
+        launched together are one observation of the literature: scoring each in
+        turn would report six increments that no search caused.
+
+        Returns whether the run may continue. It may not once every pass in a
+        wave has failed, which is a transport problem rather than a thin
+        literature and will not be improved by paying for another wave.
+        """
+        completed = 0
+        for run in wave:
+            payload = payloads.get(run.interaction_id) or {}
+            run.status = str(payload.get("status") or run.status)
             run.completed_at = _now()
             run.usage = payload.get("usage") or {}
             run.raw_artifact_reference = self.artifact_store.put(
-                session.id, pass_number, payload
+                session.id, run.pass_number, payload
             )
             manifest.estimated_cost_usd = round(
                 manifest.estimated_cost_usd + self.cost_per_pass_usd, 2
             )
-            if manifest_callback:
-                manifest_callback(manifest)
             if run.status != "completed":
                 run.error = json.dumps(
                     payload.get("error") or payload.get("incomplete_details") or {}
                 )
-                manifest.convergence_reason = f"deep_research_{run.status}"
-                break
-
+                continue
             report = _extract_report(payload)
             if not report.strip():
                 run.status = "failed"
                 run.error = "Deep Research completed without a report."
-                manifest.convergence_reason = "empty_deep_research_report"
-                break
+                continue
+            completed += 1
             narrative = normalize_report(
                 question=session.question,
                 report=report,
-                pass_number=pass_number,
+                pass_number=run.pass_number,
                 normalizer=normalizer,
             )
+            if run.facet:
+                # The pass was sent to cover one facet, so that is what its
+                # statements are, whatever the keyword heuristic would have
+                # guessed from their wording. This is the whole reason a
+                # fan-out can score coverage honestly and a single broad report
+                # cannot.
+                for statement in narrative.statements:
+                    statement.facet = run.facet
             additions = _source_leads(
                 report,
-                pass_number,
+                run.pass_number,
                 run.raw_artifact_reference,
                 citation_urls=_payload_urls(payload.get("steps") or []),
                 citation_titles=_citation_titles(payload.get("steps") or []),
@@ -1292,45 +1759,79 @@ class IterativeEvidenceDiscovery:
                 lead.originating_statement_ids = statement_ids_by_url.get(
                     lead.canonical_url, []
                 )
+                if run.facet:
+                    lead.facets = [run.facet]
             manifest.narratives.append(narrative)
             manifest.source_leads = merge_leads(manifest.source_leads, additions)
-            combined_statements = {}
-            for item in manifest.narratives:
-                for statement in item.statements:
-                    key = (
-                        statement.text,
-                        tuple(statement.source_urls),
-                        statement.facet,
-                        statement.relation,
-                    )
-                    combined_statements.setdefault(key, statement)
-            combined = DiscoveryNarrative(
-                question=session.question,
-                research_directions=list(
-                    dict.fromkeys(
-                        direction
-                        for item in manifest.narratives
-                        for direction in item.research_directions
-                    )
-                ),
-                statements=list(combined_statements.values()),
-                disagreements=[
-                    value
-                    for item in manifest.narratives
-                    for value in item.disagreements
-                ],
-                uncertainties=[
-                    value
-                    for item in manifest.narratives
-                    for value in item.uncertainties
-                ],
+        if not completed:
+            manifest.convergence_reason = (
+                f"deep_research_{wave[0].status}" if wave else "deep_research_failed"
             )
-            coverage = audit_coverage(
-                combined,
+            return False
+        manifest.coverage_history.append(
+            audit_coverage(
+                _combined_narrative(session.question, manifest.narratives),
                 manifest.source_leads,
                 manifest.coverage_history[-1] if manifest.coverage_history else None,
+                searched_facets={
+                    run.facet
+                    for run in manifest.runs
+                    if run.facet in EVIDENCE_FACETS and run.status == "completed"
+                },
             )
-            manifest.coverage_history.append(coverage)
+        )
+        return True
+
+    def run(
+        self,
+        session: Session,
+        plan: ResearchPlan,
+        *,
+        manifest: DiscoveryManifest | None = None,
+        normalizer: Callable[[str], str] | None = None,
+        status_callback: Callable[[DeepResearchRun], None] | None = None,
+        manifest_callback: Callable[[DiscoveryManifest], None] | None = None,
+    ) -> DiscoveryManifest:
+        manifest = manifest or DiscoveryManifest(question=session.question)
+        seed: dict[str, dict] = {}
+        while True:
+            # An interaction already in flight is resumed rather than restarted.
+            # This is what lets the Cloud Tasks worker step a fan-out: it returns
+            # after one poll, and the next invocation picks up all seven.
+            wave = [
+                run
+                for run in manifest.runs
+                if run.status in self._IN_FLIGHT and run.interaction_id
+            ]
+            if not wave:
+                planned, reason = self._plan_wave(session, plan, manifest)
+                if not planned:
+                    if not manifest.convergence_reason.startswith("fan_out_truncated"):
+                        manifest.convergence_reason = reason
+                    break
+                wave, seed = self._start_wave(session, planned, manifest)
+                if not wave:
+                    manifest.convergence_reason = "deep_research_start_failed"
+                    break
+            if status_callback:
+                for run in wave:
+                    status_callback(run)
+            if manifest_callback:
+                manifest_callback(manifest)
+            payloads = self._await_wave(
+                wave,
+                manifest,
+                seed=seed,
+                status_callback=status_callback,
+                manifest_callback=manifest_callback,
+            )
+            seed = {}
+            if payloads is None:
+                return manifest
+            if not self._ingest_wave(
+                session, wave, payloads, manifest, normalizer=normalizer
+            ):
+                break
             if manifest_callback:
                 manifest_callback(manifest)
 

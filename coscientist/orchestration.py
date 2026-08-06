@@ -26,12 +26,15 @@ from .evidence import (
     GeminiEvidenceNormalizer,
     IterativeEvidenceDiscovery,
     RegistryMetadataEnricher,
+    audit_coverage,
     discovery_angles,
     downgrade_unlocatable_sources,
+    evaluate_evidence_floor,
     merge_evidence_packets,
     merge_leads,
     resolve_manifest_locators,
     resolve_packet_locators,
+    sweep_verification,
 )
 from .governance import (
     adjudicated_review_ids,
@@ -43,6 +46,7 @@ from .ledger import ResearchLedger
 from .methods import classify_research_mode, method_requirements
 from .model_catalog import DEFAULT_LANGUAGE, DEFAULT_MODEL
 from .models import (
+    EVIDENCE_FACETS,
     STAGES,
     ApprovalMode,
     ApprovalProfile,
@@ -52,6 +56,9 @@ from .models import (
     DecisionAction,
     DeepResearchRun,
     DiscoveryManifest,
+    DiscoveryNarrative,
+    DiscoveryStatement,
+    EvidenceFloor,
     EvidencePacket,
     GovernanceAdjudication,
     HumanDecision,
@@ -72,21 +79,32 @@ MILESTONE_STAGES = frozenset({"scope", "rank", "evolve", "meta_review"})
 def _deep_research_enabled() -> bool:
     """Whether this process may start a live Deep Research interaction.
 
-    Opt-in, not opt-out. A pass costs roughly three dollars, runs for minutes,
-    and cannot be cancelled -- Vertex answers ``interactions.cancel()`` with
-    501 UNIMPLEMENTED and refuses to delete an unfinished one. Application
-    Default Credentials are ambient on developer machines, in CI, and on Cloud
-    Run, so a default of "on" means any script that merely imports and runs the
-    workflow spends money before anyone reads its output. Defaulting off makes
-    the worst accident a missing evidence packet, which the discovery manifest
-    reports as ``deep_research_unavailable`` and the evidence gate refuses to
-    pass silently.
+    On by default. It was opt-in, and the reasoning was sound as far as it went
+    -- a pass costs roughly three dollars, runs for minutes, and cannot be
+    cancelled, because Vertex answers ``interactions.cancel()`` with 501
+    UNIMPLEMENTED and refuses to delete an unfinished one -- but the cost of the
+    default was paid on every run instead of on the accidental ones. Deep
+    Research is the discovery method this system is built around; a workspace
+    that quietly substitutes grounded search for it is not the system anyone
+    asked for.
+
+    What replaced the default as the guard is a ceiling the code enforces rather
+    than a switch somebody remembers: :data:`coscientist.models.MAX_DISCOVERY_PASSES`
+    passes and :data:`coscientist.evidence.DEFAULT_COST_LIMIT_USD` per run, both
+    checked before an interaction is started. ``COSCIENTIST_DEEP_RESEARCH=off``
+    still turns it off for tests, CI, and any deployment that should not spend.
+
+    Only an explicit off turns it off, where the switch used to accept only an
+    explicit on. Both readings mistrust typos, and the question is which way a
+    typo should fail. It used to fail into grounded search, which costs nothing
+    and is invisible in the output; now it fails into Deep Research, which is
+    visible in the panel and bounded by the ceiling.
     """
-    return os.environ.get("COSCIENTIST_DEEP_RESEARCH", "off").lower() in {
-        "on",
-        "true",
-        "1",
-        "yes",
+    return os.environ.get("COSCIENTIST_DEEP_RESEARCH", "on").lower() not in {
+        "off",
+        "false",
+        "0",
+        "no",
     }
 
 
@@ -382,26 +400,21 @@ class CoScientistWorkflow:
                 transport_error = str(exc)
         elif controller is None:
             transport_error = (
-                "Deep Research is off. It is billable and cannot be cancelled "
-                "once started, so it is opt-in: set COSCIENTIST_DEEP_RESEARCH=on."
+                "Deep Research was turned off for this deployment "
+                "(COSCIENTIST_DEEP_RESEARCH=off), so the literature was searched "
+                "with grounded web search instead."
             )
         if controller is None and transport is not None:
-            repeat_enabled = (
-                os.environ.get("EVIDENCE_REPEAT_PASSES", "false").lower() == "true"
-            )
-            pass_three_enabled = (
-                os.environ.get("EVIDENCE_ENABLE_PASS_3", "false").lower() == "true"
-            )
             controller = IterativeEvidenceDiscovery(
                 transport,
                 EvidenceArtifactStore(),
-                max_passes=(
-                    3
-                    if repeat_enabled and pass_three_enabled
-                    else 2
-                    if repeat_enabled
-                    else 1
-                ),
+                # One interaction per evidence facet, all seven at once, then a
+                # single pass at whatever they left open. The sequential
+                # gap-directed loop this replaces was smarter per dollar and
+                # seven times slower, and it only ever asked its second question
+                # after the first had come back.
+                fan_out=os.environ.get("EVIDENCE_FAN_OUT", "true").lower() == "true",
+                max_waves=2,
                 registry_enricher=RegistryMetadataEnricher(),
                 polls_per_invocation=(
                     1
@@ -545,6 +558,7 @@ class CoScientistWorkflow:
             feedback=feedback,
             revision=revision,
         )
+        verified_packets: list[EvidencePacket] = []
         for result in results:
             self.session.tasks.append(result.task)
             if result.artifact.schema_name == "EvidencePacket" and (
@@ -557,9 +571,23 @@ class CoScientistWorkflow:
                 checked = downgrade_unlocatable_sources(
                     EvidencePacket.model_validate(result.artifact.payload)
                 )
+                # And then every remaining locator is actually fetched. Whether
+                # the specialist called its tool, and what the tool returned, are
+                # facts rather than judgements, so they are established here
+                # instead of being taken on trust -- a run whose only retrieval
+                # tool raised ImportError on every call still returned a packet
+                # full of confident statuses.
+                checked = await self._swept(checked)
+                verified_packets.append(checked)
                 result.artifact.payload = checked.model_dump(mode="json")
             self.session.artifacts.append(result.artifact)
             output_ids.append(result.artifact.id)
+
+        if verified_packets:
+            manifest = self._manifest_with_verification(manifest, verified_packets)
+            discovery.revise(
+                self._evidence_summary(manifest), manifest.model_dump(mode="json")
+            )
 
         verifier_text = "\n\n".join(
             f"### Source Verification\n\n{result.artifact.content}"
@@ -588,6 +616,61 @@ class CoScientistWorkflow:
         )
         return draft
 
+    async def _swept(self, packet: EvidencePacket) -> EvidencePacket:
+        """Fetch every locator in a packet, and carry on if the network will not.
+
+        A discovery pass that found real literature must not be lost because the
+        machine running it has no outbound access. What could not be reached
+        keeps whatever the specialist said, and the packet's own limitations
+        already record how it was reached.
+        """
+        try:
+            return await sweep_verification(packet)
+        except Exception:
+            return packet
+
+    def _manifest_with_verification(
+        self, manifest: DiscoveryManifest, packets: list[EvidencePacket]
+    ) -> DiscoveryManifest:
+        """Write each source's verification outcome back onto its discovery lead.
+
+        The evidence panel is rendered from the manifest, and the manifest had no
+        way to hold a verification result -- ``SourceLead.verification_status``
+        was typed as the single literal ``discovered_unverified``. So the panel
+        showed forty-four leads all marked unverified next to a verification
+        stage that had run, and a reader had no way to tell which sources the
+        run could actually stand on.
+        """
+        updated = manifest.model_copy(deep=True)
+        by_url = {source.url: source for packet in packets for source in packet.sources}
+        relations: dict[str, list[str]] = {}
+        for packet in packets:
+            urls = {source.id: source.url for source in packet.sources}
+            for claim in packet.claims:
+                url = urls.get(claim.source_id or "")
+                if url:
+                    relations.setdefault(url, []).append(claim.relation)
+        for lead in updated.source_leads:
+            source = by_url.get(lead.canonical_url)
+            if source is None:
+                continue
+            lead.verification_status = source.verification_status
+            lead.verification_note = source.verification_note
+            if source.authors:
+                lead.authors = source.authors
+            if source.year:
+                lead.year = source.year
+            if source.identifiers:
+                lead.identifiers = {**source.identifiers, **lead.identifiers}
+            if source.facet and source.facet not in lead.facets:
+                lead.facets = [*lead.facets, source.facet]
+            lead.claim_relations = list(
+                dict.fromkeys(
+                    [*lead.claim_relations, *relations.get(lead.canonical_url, [])]
+                )
+            )
+        return updated
+
     async def _search_grounded_discovery(
         self,
         plan: ResearchPlan,
@@ -609,9 +692,17 @@ class CoScientistWorkflow:
 
         What it returns is weaker than a Deep Research report, and the manifest
         says so: the attempted pass is recorded with the reason it did not run,
-        every lead carries ``provider="google_search"``, coverage is unscored,
-        and nothing is verified here. Verification runs next, against material
-        that now exists.
+        every lead carries ``provider="google_search"``, and nothing is verified
+        here. Verification runs next, against material that now exists.
+
+        Coverage is scored, though, which it was not. Only the Deep Research
+        controller used to call :func:`audit_coverage`, so on this path the
+        manifest's ``coverage_history`` stayed empty and the evidence panel
+        rendered "Coverage by facet" and "Unresolved gaps" as blank boxes -- on
+        the majority of runs, and with no indication that the blankness meant
+        unmeasured rather than perfect. It is measured here from the angle each
+        packet was searched under, which is better evidence of what a source is
+        than the keyword heuristic: the search that found it is what defines it.
         """
         existing = next(
             (
@@ -674,8 +765,19 @@ class CoScientistWorkflow:
             )
         )
         results = [result for batch in dispatched for result in batch]
+        # dispatch_stage returns one result per specialist, and there is one
+        # specialist in this definition, so the batches line up with the angles
+        # that produced them. That correspondence is what lets a facet be
+        # recorded rather than inferred.
+        angle_by_result = {
+            id(result): angles[index]
+            for index, batch in enumerate(dispatched)
+            for result in batch
+            if index < len(angles)
+        }
         packets: list[EvidencePacket] = []
         leads: list[SourceLead] = []
+        statements: list[DiscoveryStatement] = []
         for result in results:
             self.session.tasks.append(result.task)
             if not result.artifact.payload:
@@ -687,6 +789,31 @@ class CoScientistWorkflow:
             # every lead drawn from it name the paper rather than the link that
             # points at it.
             packet = await self._resolved_locators(packet)
+            angle = angle_by_result.get(id(result))
+            facet = angle.key if angle and angle.key in EVIDENCE_FACETS else ""
+            relations_by_source: dict[str, list[str]] = {}
+            for claim in packet.claims:
+                if claim.source_id:
+                    relations_by_source.setdefault(claim.source_id, []).append(
+                        claim.relation
+                    )
+            if facet:
+                for source in packet.sources:
+                    source.facet = facet
+                statements.extend(
+                    DiscoveryStatement(
+                        text=claim.claim,
+                        facet=facet,
+                        source_urls=[
+                            source.url
+                            for source in packet.sources
+                            if source.id == claim.source_id
+                        ],
+                        originating_pass=1,
+                        relation=claim.relation,
+                    )
+                    for claim in packet.claims
+                )
             result.artifact.payload = packet.model_dump(mode="json")
             self.session.artifacts.append(result.artifact)
             packets.append(packet)
@@ -700,12 +827,30 @@ class CoScientistWorkflow:
                         provider="google_search",
                         originating_passes=[1],
                         originating_statement_ids=list(source.supports_claim_ids),
+                        facets=[facet] if facet else [],
+                        claim_relations=list(
+                            dict.fromkeys(relations_by_source.get(source.id, []))
+                        ),
                         raw_artifact_reference=result.artifact.id,
                     )
                     for source in packet.sources
                 ],
             )
         corpus = self._merged_discovery_corpus(packets, results, feedback=feedback)
+        coverage = audit_coverage(
+            DiscoveryNarrative(
+                question=self.session.question,
+                research_directions=list(plan.success_criteria),
+                statements=statements,
+            ),
+            leads,
+            # Which facets were searched is known from the angles that were
+            # dispatched, so an angle that came back with nothing is scored as
+            # a searched, empty facet rather than as one never asked about.
+            searched_facets={
+                angle.key for angle in angles if angle.key in EVIDENCE_FACETS
+            },
+        )
         manifest = DiscoveryManifest(
             discovery_angles=[angle.key for angle in angles],
             question=self.session.question,
@@ -721,6 +866,7 @@ class CoScientistWorkflow:
                 )
             ],
             source_leads=leads,
+            coverage_history=[coverage] if leads else [],
             convergence_reason=(
                 "search_grounded_fallback" if leads else "deep_research_unavailable"
             ),
@@ -899,30 +1045,53 @@ class CoScientistWorkflow:
                 (item for item in inputs if item.schema_name == "EvidencePacket"),
                 None,
             )
-            manifest_ok = False
-            if manifest_artifact:
-                manifest = DiscoveryManifest.model_validate(manifest_artifact.payload)
-                manifest_ok = bool(manifest.source_leads) and not any(
-                    run.status in {"failed", "cancelled", "timed_out", "incomplete"}
-                    for run in manifest.runs
-                )
-            packet_ok = bool(
-                packet_artifact
-                and EvidencePacket.model_validate(packet_artifact.payload).verified
+            manifest = (
+                DiscoveryManifest.model_validate(manifest_artifact.payload)
+                if manifest_artifact
+                else None
             )
-            if not (manifest_ok and packet_ok):
+            manifest_ok = bool(manifest and manifest.source_leads)
+            packet = (
+                EvidencePacket.model_validate(packet_artifact.payload)
+                if packet_artifact
+                else None
+            )
+            # The test here used to be that every source in the packet was
+            # verified. That is unclearable by construction -- one publisher
+            # being down on the day fails a corpus of ninety -- and a gate that
+            # can only ever refuse teaches people to click past it. The floor
+            # measures the three things that decide whether a hypothesis rests
+            # on a literature: how much of it was checked, how many kinds of
+            # evidence were found, and whether anything was found that
+            # disagrees.
+            floor = (
+                evaluate_evidence_floor(packet, manifest)
+                if packet
+                else EvidenceFloor(shortfalls=["No verification packet was produced."])
+            )
+            if not (manifest_ok and floor.met):
                 self.session.status = "evidence_required"
                 self._persist(
                     self._event(
                         "evidence_verification_required",
                         "supervisor",
-                        payload={"manifest_ok": manifest_ok, "packet_ok": packet_ok},
+                        payload={
+                            "manifest_ok": manifest_ok,
+                            "packet_ok": floor.met,
+                            "evidence_floor": floor.model_dump(mode="json"),
+                        },
                     )
                 )
                 raise ValueError(
-                    "Generation requires completed discovery and claim-level source "
-                    "verification. Retry, or explicitly select the limited "
-                    "exploratory workflow."
+                    "The evidence base does not meet the floor for generating "
+                    "hypotheses. "
+                    + (
+                        " ".join(floor.shortfalls)
+                        if floor.shortfalls
+                        else "No source leads were discovered."
+                    )
+                    + " Retry discovery, or explicitly select the limited "
+                    "exploratory workflow to proceed on this evidence."
                 )
         if (
             self.approval_profile == ApprovalProfile.ARTIFACT

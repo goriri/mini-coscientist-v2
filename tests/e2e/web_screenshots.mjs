@@ -15,6 +15,14 @@ const chrome =
 const debuggingPort = Number(process.env.CHROME_DEBUGGING_PORT || "9224");
 const profile = await mkdtemp(join(tmpdir(), "coscientist-shots-"));
 const startServer = process.env.COSCIENTIST_E2E_START_SERVER !== "false";
+// Thirty seconds is right for the offline server this script starts itself.
+// Pointed at a deployment with Deep Research on, the evidence stage is seven
+// concurrent research interactions and takes minutes, so the budget is a knob
+// rather than a constant -- otherwise the only way to photograph a real run is
+// to edit the harness.
+const gateTimeout = Number(
+  process.env.COSCIENTIST_E2E_GATE_TIMEOUT_MS || "30000",
+);
 let server = null;
 
 await mkdir(outputDir, { recursive: true });
@@ -120,7 +128,7 @@ class Cdp {
   }
 }
 
-async function waitFor(cdp, expression, note, timeout = 30000) {
+async function waitFor(cdp, expression, note, timeout = gateTimeout) {
   const started = Date.now();
   while (Date.now() - started < timeout) {
     if (await cdp.evaluate(expression)) return;
@@ -238,6 +246,18 @@ try {
         "!!document.querySelector('.approval-card:not(.resolved) [data-decision=\"exploratory_evidence\"]')",
       )
     ) {
+      // The trust assessment sits above the gate it explains, so the gate
+      // screenshot alone never showed the thing the researcher is deciding on.
+      if (await cdp.evaluate("!!document.querySelector('.evidence-trust')")) {
+        await cdp.evaluate(
+          "document.querySelector('.evidence-trust').scrollIntoView({block: 'start'})",
+        );
+        await delay(300);
+        shots.push(await shoot(cdp, "04-evidence-trust"));
+        await cdp.evaluate(
+          "document.querySelector('.approval-card:not(.resolved)').scrollIntoView({block: 'center'})",
+        );
+      }
       await delay(300);
       shots.push(await shoot(cdp, "04-evidence-integrity-gate"));
       await click(cdp, '[data-decision="exploratory_evidence"]');
@@ -260,7 +280,7 @@ try {
     cdp,
     "!!document.querySelector('.report-completion')",
     "The dossier never completed.",
-    90000,
+    Math.max(90000, gateTimeout),
   );
   await delay(600);
   shots.push(await shoot(cdp, "06-dossier-complete"));
@@ -276,6 +296,17 @@ try {
     deviceScaleFactor: 3,
     mobile: true,
   });
+  // With mobile emulation on, Chrome applies a visual-viewport zoom of its own,
+  // and the first capture after this switch came out as the top-left corner of
+  // the phone layout blown up past every edge -- an artefact of the capture, not
+  // a layout bug on the page. Pinning the page scale to 1 is what makes the shot
+  // show what a phone shows; the layout viewport is already 390 by this point.
+  await cdp.call("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+  await waitFor(
+    cdp,
+    "window.innerWidth === 390 && document.documentElement.scrollWidth <= 390",
+    "The phone viewport never settled at 390px.",
+  );
   await delay(600);
   shots.push(await shoot(cdp, "08-dossier-mobile"));
   await cdp.evaluate("document.querySelector('#historyButton').click()");

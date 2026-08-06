@@ -10,6 +10,13 @@
   --teal-light: #d6e9e2;
   --acid: #c7e36b;
   --coral: #e46e4c;
+
+  /* Registry-confirmed sources need a third colour: they are neither trusted
+     like a read document nor discarded like an unreachable one, and reusing
+     either would say something false about them. Dark enough to clear 4.5:1 as
+     text on the panel, which the chip label is. */
+  --amber: #8a5a00;
+  --coral-ink: #a8351a;
   --white: #fff;
   --shadow: 0 18px 50px rgb(18 28 24 / 9%);
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
@@ -20,15 +27,19 @@
      half the stylesheet sat below the 12px floor, and the research dossier --
      the thing people spend an hour reading -- was set at 14px. These are the
      only sizes now used. The smallest is reserved for uppercase micro-labels,
-     which are read as marks rather than as sentences. */
+     which are read as marks rather than as sentences.
+
+     Each step above the body floor then came down one notch, which fits more
+     of the dossier on a screen without pushing running text under 12px --
+     below that the chrome stops being readable rather than merely compact. */
   --text-2xs: 11px;
   --text-xs: 12px;
   --text-sm: 13px;
-  --text-base: 14px;
-  --text-md: 15px;
-  --text-lg: 16px;
-  --text-xl: 17px;
-  --text-2xl: 18px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 15px;
+  --text-xl: 16px;
+  --text-2xl: 17px;
 
   /* On the dark rail, text used to be the paper colour at 35%-48% opacity,
      which lands at 2.7:1 against near-black -- well under the 4.5:1 floor.
@@ -422,38 +433,15 @@ button {
   display: none;
 }
 
-.model-orbit {
-  position: relative;
-  width: 40px;
-  height: 40px;
-  border: 1px solid rgb(199 227 107 / 40%);
-  border-radius: 50%;
-}
-
-.model-orbit::before {
-  position: absolute;
-  inset: 8px;
-  border: 1px solid rgb(241 239 231 / 35%);
-  border-radius: 50%;
-  content: "";
-}
-
-.model-orbit span {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--acid);
-  box-shadow: 0 0 0 3px rgb(199 227 107 / 12%);
-}
-
 .workspace {
   position: relative;
   display: grid;
   min-width: 0;
   min-height: 0;
+  /* The single column was implicit, so it sized to the widest row. A topbar
+     carrying a session name rather than "Inquiry 001" made that row 605px on
+     a 390px phone, and overflow:hidden sliced the difference off in silence. */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   background-color: var(--paper);
@@ -477,22 +465,74 @@ button {
 
 .topbar > div:first-child {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 14px;
 }
 
-.topbar h1 {
-  margin: 2px 0 0;
-  font-family: var(--serif);
-  font-size: 22px;
-  font-weight: 500;
+.topbar-heading {
+  min-width: 0;
 }
 
-.topbar h1 span {
+/* The heading and its editor occupy the same slot, so the pencil must not
+   shuffle sideways when a long name is truncated -- it sits after a heading
+   that is allowed to shrink rather than after one that pushes. */
+.session-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.topbar h1 {
+  overflow: hidden;
+  min-width: 0;
+  margin: 2px 0 0;
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rename-session {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  place-items: center;
+}
+
+.rename-session:hover {
+  background: var(--teal-light);
   color: var(--teal);
-  font-size: var(--text-md);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.08em;
+}
+
+.rename-session svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.7;
+}
+
+/* Sized to match the heading it replaces, so committing a name does not make
+   the topbar jump. */
+.session-title-input {
+  width: min(420px, 46vw);
+  padding: 3px 8px;
+  border: 1px solid var(--teal);
+  border-radius: 6px;
+  margin-top: 2px;
+  background: var(--white);
+  color: var(--ink);
+  font: 500 20px var(--serif);
 }
 
 .mobile-menu {
@@ -512,6 +552,7 @@ button {
 
 .topbar-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 9px;
 }
@@ -529,6 +570,7 @@ button {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .icon-button {
@@ -593,7 +635,7 @@ button {
 .welcome h2 {
   margin: 19px 0 17px;
   font-family: var(--serif);
-  font-size: clamp(38px, 4.4vw, 62px);
+  font-size: clamp(34px, 4vw, 56px);
   font-weight: 400;
   letter-spacing: -0.035em;
   line-height: 0.98;
@@ -864,7 +906,7 @@ button {
 .presentation-head h3 {
   margin: 6px 0 0;
   font-family: var(--serif);
-  font-size: 23px;
+  font-size: 21px;
   font-weight: 550;
   line-height: 1.35;
 }
@@ -892,6 +934,15 @@ button {
   color: var(--teal);
   font-family: var(--serif);
   font-size: var(--text-2xl);
+}
+
+/* The unit was in the payload and unrendered, so "Estimated cost 21.0" and
+   "Coverage 55.0" both read as bare numbers. */
+.presentation-metrics strong em {
+  margin-left: 3px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-style: normal;
 }
 
 .presentation-metrics span {
@@ -1131,6 +1182,326 @@ button {
 
 .recommendation-card.excluded {
   border-color: rgb(228 110 76 / 35%);
+}
+
+/* Evidence trust assessment. Verification status is the primary axis, so it is
+   carried by a labelled chip rather than by colour alone -- the colour is a
+   second channel on top of the word, not a substitute for it. */
+.evidence-trust {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.evidence-floor {
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--teal);
+  border-radius: 6px;
+  background: var(--paper);
+}
+
+.evidence-floor.unmet {
+  border-left-color: var(--amber);
+}
+
+.evidence-floor-headline {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: var(--text-lg);
+  line-height: 1.4;
+}
+
+.evidence-floor-checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  margin: 11px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.evidence-floor-checks li {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--white);
+}
+
+.evidence-floor-checks li span {
+  display: block;
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.evidence-floor-checks li strong {
+  display: block;
+  margin-top: 3px;
+  font-size: var(--text-sm);
+}
+
+.evidence-floor-checks li.met strong {
+  color: var(--teal);
+}
+
+.evidence-floor-checks li.unmet strong {
+  color: var(--amber);
+}
+
+.evidence-shortfalls {
+  margin: 11px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.evidence-shortfalls li + li {
+  margin-top: 4px;
+}
+
+.evidence-pending {
+  margin: 0;
+  padding: 11px 13px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.evidence-facet-list {
+  display: grid;
+  gap: 10px;
+}
+
+.evidence-facet {
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 55%);
+}
+
+/* An empty facet is a finding, not a rendering failure, so it stays on the page
+   and is quiet rather than hidden. */
+.evidence-facet.empty {
+  border-style: dashed;
+  background: transparent;
+}
+
+.evidence-facet > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.evidence-facet h5 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.evidence-facet > header span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.evidence-empty-facet {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.evidence-gaps {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.evidence-gaps li + li {
+  margin-top: 4px;
+}
+
+.gap-impact {
+  margin-right: 6px;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: var(--text-2xs);
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.gap-impact.impact-high,
+.gap-impact.impact-blocking {
+  border-color: rgb(168 53 26 / 35%);
+  color: var(--coral-ink);
+}
+
+.evidence-source-list {
+  display: grid;
+  gap: 9px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.evidence-source {
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 5px;
+  background: var(--white);
+}
+
+.evidence-source.tone-verified {
+  border-left-color: var(--teal);
+}
+
+.evidence-source.tone-partial {
+  border-left-color: var(--amber);
+}
+
+.evidence-source.tone-retracted {
+  border-left-color: var(--coral-ink);
+}
+
+.evidence-source-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.evidence-source-head a {
+  color: var(--ink);
+  font-size: var(--text-md);
+  font-weight: 600;
+  text-decoration-color: var(--line);
+  text-underline-offset: 2px;
+}
+
+.evidence-source-head a:hover,
+.evidence-source-head a:focus-visible {
+  color: var(--teal);
+  text-decoration-color: currentcolor;
+}
+
+.status-chip {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.status-chip.tone-verified {
+  border-color: rgb(15 107 92 / 32%);
+  background: var(--teal-light);
+  color: var(--teal);
+}
+
+.status-chip.tone-partial {
+  border-color: rgb(138 90 0 / 32%);
+  background: #f6eddc;
+  color: var(--amber);
+}
+
+.status-chip.tone-retracted {
+  border-color: rgb(168 53 26 / 35%);
+  background: #f8e4de;
+  color: var(--coral-ink);
+}
+
+.evidence-citation {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.evidence-claims {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.evidence-claim {
+  padding: 5px 0 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.evidence-claim + .evidence-claim {
+  margin-top: 5px;
+  border-top: 1px dashed var(--line);
+}
+
+.claim-relation {
+  margin-right: 6px;
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.relation-supports .claim-relation {
+  color: var(--teal);
+}
+
+.relation-contradicts .claim-relation {
+  color: var(--coral-ink);
+}
+
+.claim-location {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-style: italic;
+}
+
+.evidence-no-claim,
+.evidence-note {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.evidence-quarantine,
+.evidence-legend {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+}
+
+.evidence-quarantine > summary,
+.evidence-legend > summary {
+  min-height: 24px;
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+.evidence-legend dd {
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 
 .presentation-details {
@@ -1500,40 +1871,6 @@ button {
   font: 600 var(--text-md) var(--serif);
 }
 
-.approval-indicator {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-top: 16px;
-  padding: 11px;
-  border: 1px solid rgb(15 107 92 / 20%);
-  border-radius: 6px;
-  background: var(--teal-light);
-}
-
-.approval-indicator i {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--teal);
-}
-
-.approval-indicator strong,
-.approval-indicator span {
-  display: block;
-}
-
-.approval-indicator strong {
-  font: 600 var(--text-base) var(--serif);
-}
-
-.approval-indicator span {
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: var(--text-xs);
-}
-
 .notify-toggle {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
@@ -1748,7 +2085,7 @@ kbd {
 .historical-preview-banner h2 {
   margin: 5px 0 4px;
   font-family: var(--serif);
-  font-size: 23px;
+  font-size: 21px;
   font-weight: 600;
 }
 
@@ -1869,7 +2206,7 @@ body.history-preview .composer .send-button {
 .context-head h2 {
   margin: 4px 0 0;
   font-family: var(--serif);
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 500;
 }
 
@@ -2006,6 +2343,7 @@ body.history-preview .composer .send-button {
   opacity: 0.55;
 }
 
+.session-rename,
 .session-remove,
 .session-delete-cloud {
   width: 32px;
@@ -2026,54 +2364,10 @@ body.history-preview .composer .send-button {
   color: var(--coral);
 }
 
-.runtime-section {
-  flex: 0 0 auto;
-}
-
-.runtime-card {
-  display: grid;
-  grid-template-columns: 42px 1fr;
-  gap: 11px;
-  align-items: center;
-}
-
-.runtime-card small,
-.runtime-card strong,
-.runtime-card p {
-  display: block;
-}
-
-.runtime-card small {
-  color: var(--muted);
-  font-size: var(--text-2xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.runtime-card strong {
-  margin-top: 3px;
-  font-family: var(--serif);
-  font-size: var(--text-md);
-  font-weight: 600;
-  /* Model identifiers arrive as unbroken slugs like gemini-3.1-pro-preview. */
-  overflow-wrap: anywhere;
-}
-
-.runtime-card p {
-  margin: 4px 0 0;
-  color: var(--muted);
-  font-size: var(--text-xs);
-}
-
-/* Only the leading marker is a dot. The rule used to match every span in the
-   line, so the detail text inherited a 5px box and broke one word per line. */
-.runtime-card p > span:first-child {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-right: 4px;
-  border-radius: 50%;
-  background: var(--teal);
+/* Renaming is not destructive, so it does not borrow the delete colour. */
+.session-rename:hover {
+  background: var(--teal-light);
+  color: var(--teal);
 }
 
 .section-heading h2 {
@@ -2092,29 +2386,6 @@ body.history-preview .composer .send-button {
   font-weight: 750;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-}
-
-.gate-list {
-  margin: 13px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.gate-list li {
-  display: grid;
-  grid-template-columns: 22px 1fr;
-  gap: 8px;
-  padding: 7px 0;
-  border-bottom: 1px solid #ebe8df;
-  color: #5b635e;
-  font-size: var(--text-xs);
-  line-height: 1.35;
-}
-
-.gate-list li span {
-  color: var(--coral);
-  font-family: var(--serif);
-  font-size: var(--text-sm);
 }
 
 .context-foot {
@@ -2332,15 +2603,28 @@ body.history-preview .composer .send-button {
     gap: 8px;
   }
 
+  /* A flex item refuses to shrink below its own content by default, and the
+     widest option in the model list plus a label that must not wrap put these
+     rows 71px past a 390px phone -- sliced off, because the workspace clips
+     rather than scrolls. Both halves may now shrink; the select ellipsises. */
+  .mode-switch,
+  .profile-control {
+    min-width: 0;
+  }
+
   .profile-control {
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    white-space: nowrap;
   }
 
+  /* "Research language" set solid is wider than the half-row it is given, and
+     nowrap made it push the select over the screen edge. Two short lines cost
+     nothing here; a select sliced by the bezel costs the option you cannot
+     read. */
   .profile-control select {
-    flex: 0 1 52%;
+    flex: 0 0 46%;
+    min-width: 0;
   }
 
   /* The 44px box holds one and a half lines, and the placeholder runs to two

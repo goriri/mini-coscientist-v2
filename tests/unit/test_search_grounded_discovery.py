@@ -1,11 +1,12 @@
 """Evidence discovery when Deep Research is switched off.
 
-Deep Research is opt-in because it is billable and uncancellable, so the common
-case is that it never runs. That used to empty the whole evidence stage: no
-leads, nothing to verify, and every downstream hypothesis honestly citing
-nothing. The grounded-search specialist covers that case, and these tests hold
-it to the difference that matters -- material discovered by search is discovered,
-never verified, and is labelled with the provider that found it.
+Deep Research runs by default, but a deployment can switch it off, and a
+deployment with no Vertex project cannot reach it at all. That used to empty the
+whole evidence stage: no leads, nothing to verify, and every downstream
+hypothesis honestly citing nothing. The grounded-search specialist covers that
+case, and these tests hold it to the difference that matters -- material
+discovered by search is discovered, never verified, and is labelled with the
+provider that found it.
 """
 
 from __future__ import annotations
@@ -113,6 +114,15 @@ def _manifest(flow: CoScientistWorkflow) -> DiscoveryManifest:
     return DiscoveryManifest.model_validate(artifact.payload)
 
 
+def _verification_packet(flow: CoScientistWorkflow) -> EvidencePacket:
+    artifact = next(
+        item
+        for item in reversed(flow.session.artifacts)
+        if item.agent == "source_verification" and item.payload
+    )
+    return EvidencePacket.model_validate(artifact.payload)
+
+
 def test_search_discovers_leads_when_deep_research_is_off():
     flow = _at_evidence(SearchingProvider())
     flow.preview()
@@ -132,10 +142,19 @@ def test_every_search_lead_names_the_provider_that_found_it():
 
     manifest = _manifest(flow)
     assert {lead.provider for lead in manifest.source_leads} == {"google_search"}
-    assert all(
-        lead.verification_status == "discovered_unverified"
-        for lead in manifest.source_leads
-    )
+    # Discovery labels the lead; verification decides its status. Each lead now
+    # carries the status the verification stage reached for that URL, and never
+    # the one discovery asserted -- the discovery packet called src_alumina
+    # verified, and no lead here says so.
+    verdicts = {
+        source.url: source.verification_status
+        for source in _verification_packet(flow).sources
+    }
+    assert verdicts
+    assert "verified" not in set(verdicts.values())
+    assert {
+        lead.canonical_url: lead.verification_status for lead in manifest.source_leads
+    } == verdicts
 
 
 def test_discovery_cannot_verify_its_own_finds():
@@ -162,7 +181,7 @@ def test_the_manifest_records_why_deep_research_did_not_run():
 
     manifest = _manifest(flow)
     assert [run.status for run in manifest.runs] == ["failed"]
-    assert "opt-in" in manifest.runs[0].error
+    assert "COSCIENTIST_DEEP_RESEARCH=off" in manifest.runs[0].error
     assert manifest.estimated_cost_usd == 0.0
     assert manifest.stored_interaction_notice is False
 

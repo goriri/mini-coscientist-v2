@@ -136,8 +136,41 @@
             >
               <span></span><span></span>
             </button>
-            <p class="eyebrow">Scientific research workspace</p>
-            <h1>Inquiry <span id="inquiryNumber">001</span></h1>
+            <!-- Eyebrow above the name rather than beside it: a session name
+                 runs to a clause where "Inquiry 001" was four characters, and
+                 side by side the two of them squeezed each other onto two
+                 lines apiece. -->
+            <div class="topbar-heading">
+              <p class="eyebrow">Scientific research workspace</p>
+              <!-- The heading used to be a counter that meant nothing to anyone
+                   but the browser holding it: two people comparing "Inquiry 004"
+                   were looking at different research. It carries the session's
+                   name now, and the name is editable because the one derived
+                   from the opening question is a guess. -->
+              <div class="session-title">
+                <h1 id="sessionTitle">New inquiry</h1>
+                <button
+                  class="rename-session"
+                  id="renameSession"
+                  type="button"
+                  hidden
+                  aria-label="Rename this session"
+                  title="Rename this session"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3Z" />
+                  </svg>
+                </button>
+                <input
+                  class="session-title-input"
+                  id="sessionTitleInput"
+                  type="text"
+                  maxlength="80"
+                  hidden
+                  aria-label="Session name"
+                />
+              </div>
+            </div>
           </div>
           <div class="topbar-actions">
             <span class="public-badge">
@@ -349,42 +382,6 @@
               <span>∅</span>
               <strong>No saved research yet</strong>
               <p>Guided inquiries created in this browser will appear here.</p>
-            </div>
-          </div>
-        </section>
-
-        <!-- The engine named here used to be a fixed string in the markup while
-             the model was a per-run choice in the composer, so the panel could
-             sit there naming Gemini through an entire Claude run. Both lines
-             are written from the run's own configuration now. -->
-        <section class="context-section compact runtime-section">
-          <div class="runtime-card">
-            <div class="model-orbit" aria-hidden="true"><span></span></div>
-            <div>
-              <small>Reasoning engine</small>
-              <strong id="runtimeModel">Selecting…</strong>
-              <p>
-                <span></span> <span id="runtimeDetail">Global endpoint</span>
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section class="context-section compact">
-          <div class="section-heading">
-            <h2>Integrity gates</h2>
-          </div>
-          <ul class="gate-list">
-            <li><span>01</span> No invented inputs or results</li>
-            <li><span>02</span> Unverified leads are labelled as unverified</li>
-            <li><span>03</span> Fatal flaws block promotion</li>
-            <li><span>04</span> Humans own real-world decisions</li>
-          </ul>
-          <div class="approval-indicator" id="approvalIndicator">
-            <i></i>
-            <div>
-              <strong>Human review enabled</strong>
-              <span>Milestone decisions are audited</span>
             </div>
           </div>
         </section>

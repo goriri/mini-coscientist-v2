@@ -26,6 +26,7 @@ from .model_catalog import (
 )
 from .models import Artifact, ArtifactStatus, Session
 from .parity import ROLE_CONTRACTS, typed_specialist_payload
+from .retrieval import fetch_source_document
 
 GEMINI_MODEL = DEFAULT_MODEL
 """Default Vertex AI model ID for the reasoning-backed ADK workflow.
@@ -75,20 +76,39 @@ STRUCTURED_OUTPUT_INSTRUCTIONS = {
         "check before discovering it was never there."
     ),
     "source_verification": (
-        "Return one EvidencePacket JSON object. A verified claim requires a source "
-        "ID, original URL, exact supporting or contradicting location, relation, "
-        "and correction/retraction status. Otherwise keep it unverified.\n"
+        "Return one EvidencePacket JSON object.\n"
+        "Call fetch_source_document on every source before you give it a status. "
+        "Do not assign one from the look of a URL: that is guessing, and a "
+        "previous run marked fourteen sources inaccessible without a single "
+        "fetch having happened. The tool follows redirects, so DOI links "
+        "resolve; it reads PDFs; and it falls back to an open-access copy when "
+        "the publisher refuses.\n"
+        "The tool reports a tier. Never assign a status above it:\n"
+        "- verified: the document was retrieved AND its text states what the "
+        "claim attributes to it. Record the exact location -- section, figure, "
+        "table or quoted phrase -- where you found it.\n"
+        "- metadata_verified: a registry confirms the record but the text could "
+        "not be read. Use this for paywalled papers that provably exist. It is "
+        "an honest status, not a failure, and the evidence floor counts it.\n"
+        "- retracted: a registry records a retraction. Say so in limitations. "
+        "Nothing retracted may be recorded as supporting anything.\n"
+        "- inaccessible: neither the document nor a registry record was "
+        "obtained.\n"
+        "If the tool retrieved the text and the text does not say what was "
+        "attributed to it, the source is verified and the claim is not. Those "
+        "are separate fields and that combination is a real and important "
+        "finding.\n"
         "Carry every source and every claim you were given into your packet. "
-        "This stage decides a status, never membership: a source you could not "
-        "reach is inaccessible, one whose document does not say what was "
-        "attributed to it is unverified, and one you could not find at all is "
-        "still a record of what the search returned. Omitting an entry deletes "
-        "that record, and the report then shows a smaller literature than the "
-        "run actually saw.\n"
+        "This stage decides a status, never membership: omitting an entry "
+        "deletes the record, and the report then shows a smaller literature "
+        "than the run actually saw.\n"
         "A locator that names only a website -- a bare domain, a publisher's "
         "front page, a search redirect -- reaches no document, so nothing can "
-        "have been checked against it. Mark those inaccessible rather than "
-        "verified, whatever the title beside them says."
+        "have been checked against it. Mark those inaccessible whatever the "
+        "title beside them says.\n"
+        "Set verification_note on every source to one sentence saying why it "
+        "holds its status, in terms a researcher can act on: which registry "
+        "confirmed it, or what the fetch returned."
     ),
     "generation": (
         "Return one CandidatePopulation JSON object containing exactly eight "
@@ -636,7 +656,6 @@ def build_adk_workflow(model: str = GEMINI_MODEL):
     try:
         from google.adk.agents import Agent, LlmAgent
         from google.adk.tools import google_search
-        from google.adk.tools.load_web_page import load_web_page
         from google.genai import types
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise RuntimeError("Install google-adk to create the live ADK graph.") from exc
@@ -669,7 +688,14 @@ def build_adk_workflow(model: str = GEMINI_MODEL):
             agent_model = grounded_model
             agent_config = grounded_config
         elif item.role == "source_verification":
-            tools = [load_web_page]
+            # ADK's load_web_page was here and could not verify anything in this
+            # deployment: it imports beautifulsoup4, which this project does not
+            # install, so every call raised ImportError; it sends no user agent a
+            # publisher will serve; and it passes allow_redirects=False, so every
+            # doi.org link -- the only kind that unambiguously names a paper --
+            # came back a bare 302. A live run discovered forty-four sources and
+            # verified none of them.
+            tools = [fetch_source_document]
         else:
             tools = []
         # The ranking specialist is a match judge, not a tournament reporter.

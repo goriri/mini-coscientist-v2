@@ -35,7 +35,7 @@ class SpecialistService:
         if specialist.role == "evidence_discovery":
             tools = ["google_search"]
         elif specialist.role == "source_verification":
-            tools = ["load_web_page"]
+            tools = ["fetch_source_document"]
         else:
             tools = []
         self.card = AgentCard(

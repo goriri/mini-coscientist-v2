@@ -135,7 +135,10 @@ def test_the_verifier_is_told_it_decides_a_status_and_never_membership():
     instruction = STRUCTURED_OUTPUT_INSTRUCTIONS["source_verification"]
 
     assert "decides a status, never membership" in instruction
-    assert "Omitting an entry deletes that record" in instruction
+    assert "omitting an entry deletes the record" in instruction
+    # The status it may assign is capped by an actual retrieval, so the sentence
+    # above only means something if the verifier is told to fetch first.
+    assert "Call fetch_source_document on every source" in instruction
 
 
 # ---------------------------------------------------------------------------

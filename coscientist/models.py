@@ -113,15 +113,61 @@ class InputRequirement(Contract):
         return self.status in {"provided", "fallback_accepted"}
 
 
+VerificationStatus = Literal[
+    "discovered_unverified",
+    "metadata_verified",
+    "verified",
+    "inaccessible",
+    "retracted",
+    "corrected",
+]
+"""What is known about a source, in ascending order of what it licenses.
+
+``metadata_verified`` is the tier this system was missing, and its absence was
+distorting every evidence count. A paywalled paper whose DOI resolves, whose
+title and authors a registry confirms, and against which no retraction is
+recorded is not the same object as a citation nobody can find -- but with only
+``verified`` and ``inaccessible`` available it had to be recorded as the second,
+which made the evidence floor a measure of open-access availability rather than
+of scholarship. It is reported separately and counted at a discount, because
+nothing has checked that the paper says what was attributed to it.
+"""
+
+VERIFIED_STATUSES = frozenset({"verified", "corrected"})
+"""Statuses that mean someone read the document and found the passage."""
+
+CREDITED_STATUSES = frozenset({"verified", "corrected", "metadata_verified"})
+"""Statuses that count toward the evidence floor, at their respective weights."""
+
+METADATA_VERIFIED_WEIGHT = 0.5
+"""What an unread but registry-confirmed source is worth against the floor.
+
+Half, because half of what verification promises has been done: the document
+provably exists and is the one that was cited, and nothing has confirmed that it
+supports the claim resting on it.
+"""
+
+
 class SourceRecord(Contract):
     id: str = Field(default_factory=lambda: new_id("src"))
     url: str
     title: str = ""
     source_type: str = "unknown"
     accessed_at: str = Field(default_factory=utc_now)
-    verification_status: Literal[
-        "discovered_unverified", "verified", "inaccessible", "retracted", "corrected"
-    ] = "discovered_unverified"
+    verification_status: VerificationStatus = "discovered_unverified"
+    verification_note: str = ""
+    """Why the source holds the status it does, in one sentence a reader can act on.
+
+    "Inaccessible" alone tells a researcher nothing about whether to chase the
+    paper down themselves; "HTTP 403 from the publisher, and no open-access copy
+    is registered" tells them exactly.
+    """
+    facet: str = ""
+    """Which evidence facet this source was found under, when it is known."""
+    authors: list[str] = Field(default_factory=list)
+    year: int | None = None
+    identifiers: dict[str, str] = Field(default_factory=dict)
+    container: str = ""
     supports_claim_ids: list[str] = Field(default_factory=list)
 
 
@@ -131,13 +177,7 @@ class EvidenceClaim(Contract):
     source_id: str | None = None
     exact_location: str = ""
     relation: Literal["supports", "contradicts", "neutral"] = "neutral"
-    verification_status: Literal[
-        "discovered_unverified",
-        "verified",
-        "inaccessible",
-        "retracted",
-        "corrected",
-    ] = "discovered_unverified"
+    verification_status: VerificationStatus = "discovered_unverified"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     limitations: list[str] = Field(default_factory=list)
 
@@ -151,17 +191,80 @@ class EvidencePacket(Contract):
 
     @property
     def verified(self) -> bool:
+        """Whether every single record in the packet was checked against a document.
+
+        Retained because it is the strictest thing that can be said about a
+        corpus, and the dossier reports it. It is no longer what the generation
+        gate consults: an all-or-nothing test over ninety sources fails on the
+        one paper whose publisher was down, so it was refusing corpora that were
+        overwhelmingly sound. :class:`EvidenceFloor` is the gate now.
+        """
         verified_sources = bool(self.sources) and all(
-            source.verification_status in {"verified", "corrected"}
-            for source in self.sources
+            source.verification_status in VERIFIED_STATUSES for source in self.sources
         )
         verified_claims = bool(self.claims) and all(
             claim.source_id
             and claim.exact_location
-            and claim.verification_status in {"verified", "corrected"}
+            and claim.verification_status in VERIFIED_STATUSES
             for claim in self.claims
         )
         return verified_sources and verified_claims
+
+
+EVIDENCE_FLOOR_CREDIT = 8.0
+"""Weighted verified sources a corpus needs before hypotheses may be generated.
+
+Eight is what it takes for a hypothesis to rest on a literature rather than on a
+handful of papers that happened to be open access. It is weighted rather than
+counted so that a field where most of the relevant work is paywalled can still
+clear it -- sixteen registry-confirmed papers are worth the same as eight read
+ones, and the shortfall message says which kind the corpus is made of.
+"""
+
+EVIDENCE_FLOOR_FACETS = 4
+"""How many of the seven evidence facets must be non-empty.
+
+Four rather than seven because ``corrections_retractions`` is legitimately empty
+for most healthy literatures, and requiring it would make the gate unclearable
+on sound evidence.
+"""
+
+
+class EvidenceFloor(Contract):
+    """Whether a corpus is strong enough to generate hypotheses from.
+
+    Every field is reported to the researcher whether the floor is met or not,
+    because the decision the gate offers -- keep searching, or proceed knowing
+    what is thin -- cannot be made from a pass/fail bit.
+    """
+
+    verified_sources: int = 0
+    metadata_verified_sources: int = 0
+    weighted_credit: float = 0.0
+    required_credit: float = EVIDENCE_FLOOR_CREDIT
+    facets_covered: list[str] = Field(default_factory=list)
+    facets_missing: list[str] = Field(default_factory=list)
+    required_facets: int = EVIDENCE_FLOOR_FACETS
+    disconfirming_sources: int = 0
+    retracted_sources: int = 0
+    inaccessible_sources: int = 0
+    searched_for_disconfirming: bool = False
+    """Whether the run actually went looking for evidence against its direction.
+
+    The disconfirming requirement is soft, but only after the search has been
+    made: "we found none" and "we never looked" are different states, and only
+    the first is a finding.
+    """
+    met: bool = False
+    shortfalls: list[str] = Field(default_factory=list)
+
+    @property
+    def credit_met(self) -> bool:
+        return self.weighted_credit >= self.required_credit
+
+    @property
+    def facets_met(self) -> bool:
+        return len(self.facets_covered) >= self.required_facets
 
 
 EVIDENCE_FACETS = (
@@ -193,9 +296,26 @@ a citation.
 """
 
 
+MAX_DISCOVERY_PASSES = 8
+"""The hard ceiling on Deep Research interactions one run may start.
+
+Exactly the seven-facet fan-out plus one gap-closing pass. A pass costs roughly
+three dollars and cannot be cancelled -- Vertex answers ``interactions.cancel()``
+with 501 UNIMPLEMENTED -- and the deployed service takes anonymous requests, so
+the bound is in the contract rather than in an operator's attention. A run that
+reaches it records that it did instead of quietly stopping.
+"""
+
+
 class DeepResearchRun(Contract):
     id: str = Field(default_factory=lambda: new_id("deep_research"))
-    pass_number: int = Field(ge=1, le=3)
+    pass_number: int = Field(ge=1, le=MAX_DISCOVERY_PASSES)
+    facet: str = ""
+    """Which evidence facet this pass was sent to cover, on a fan-out pass.
+
+    Empty on the gap-closing pass, which is aimed at whatever the fan-out left
+    open rather than at one axis.
+    """
     interaction_id: str = ""
     status: Literal[
         "queued",
@@ -223,7 +343,7 @@ class DiscoveryStatement(Contract):
     text: str
     facet: str
     source_urls: list[str] = Field(default_factory=list)
-    originating_pass: int = Field(ge=1, le=3)
+    originating_pass: int = Field(ge=1, le=MAX_DISCOVERY_PASSES)
     relation: Literal["supports", "contradicts", "neutral"] = "neutral"
     uncertainty: str = ""
 
@@ -248,7 +368,30 @@ class SourceLead(Contract):
     provider: str = "deep_research"
     originating_passes: list[int] = Field(default_factory=list)
     originating_statement_ids: list[str] = Field(default_factory=list)
-    verification_status: Literal["discovered_unverified"] = "discovered_unverified"
+    facets: list[str] = Field(default_factory=list)
+    """Which evidence facets this source was found under.
+
+    A lead is a search result, and the search that found it is the only thing
+    that says what kind of evidence it is. Discarding that was why the reader
+    was shown forty-four titles in one undifferentiated list: nothing left in
+    the record could group them, so nothing did.
+    """
+    verification_status: VerificationStatus = "discovered_unverified"
+    """What verification later concluded about this lead, once it has run.
+
+    Previously pinned to ``discovered_unverified`` by its own type, which was
+    accurate at the moment a lead is created and made it impossible to ever
+    write the answer back. The manifest is what the evidence panel reads, so a
+    lead that cannot record its outcome is a panel that cannot show one.
+    """
+    verification_note: str = ""
+    claim_relations: list[str] = Field(default_factory=list)
+    """Whether the claims resting on this source support or contradict the direction.
+
+    A reference list that does not distinguish the two is a reading list. The
+    thing a researcher needs to see at a glance is which of these papers
+    disagrees with where the run is heading.
+    """
     raw_artifact_reference: str = ""
 
 
@@ -291,7 +434,9 @@ class EnrichmentRequest(Contract):
 
 class DiscoveryManifest(Contract):
     question: str
-    runs: list[DeepResearchRun] = Field(default_factory=list, max_length=3)
+    runs: list[DeepResearchRun] = Field(
+        default_factory=list, max_length=MAX_DISCOVERY_PASSES
+    )
     discovery_angles: list[str] = Field(default_factory=list)
     """Which sub-searches a decomposed grounded pass ran, in the order they ran.
 

@@ -12,7 +12,7 @@ from coscientist.evidence import (
     canonicalize_url,
     normalize_report,
 )
-from coscientist.models import ResearchPlan, Session
+from coscientist.models import EVIDENCE_FACETS, ResearchPlan, Session
 
 # Shape recorded from a completed Vertex AI Deep Research interaction
 # (agent deep-research-preview-04-2026, project cellular-cider-495602-r9). Vertex
@@ -176,25 +176,30 @@ def test_vertex_citation_annotations_become_titled_source_leads():
     assert manifest.stored_interaction_notice is True
 
 
-def test_deep_research_never_starts_unless_someone_asked_for_it(monkeypatch):
-    """The switch protecting a billable, uncancellable call must default shut.
+def test_deep_research_runs_by_default_and_can_still_be_switched_off(monkeypatch):
+    """Deep Research is on unless a deployer turns it off, and bounded either way.
 
-    ADC is ambient on developer machines, CI, and Cloud Run, so an opt-out
-    default means importing and running the workflow spends money before
-    anyone has read a line of output. That happened once; this pins it.
+    The switch used to default shut because the call is billable and cannot be
+    cancelled. It bought nothing: a run without it discovered leads that no tool
+    could verify, so the money it saved was the money that made the stage worth
+    running. What replaced it is a ceiling the code enforces --
+    ``MAX_DISCOVERY_PASSES`` interactions and ``DEFAULT_COST_LIMIT_USD`` -- which
+    bounds an anonymous request whether or not anybody is watching the switch.
     """
+    from coscientist.evidence import DEFAULT_COST_LIMIT_USD, MAX_DEEP_RESEARCH_PASSES
     from coscientist.orchestration import _deep_research_enabled
 
     monkeypatch.delenv("COSCIENTIST_DEEP_RESEARCH", raising=False)
-    assert _deep_research_enabled() is False
-    for value in ("on", "ON", "true", "1", "yes"):
+    assert _deep_research_enabled() is True
+    for value in ("on", "ON", "true", "1", "yes", "", "anything"):
         monkeypatch.setenv("COSCIENTIST_DEEP_RESEARCH", value)
         assert _deep_research_enabled() is True, value
-    # Anything that is not an explicit yes is a no, including typos: a
-    # misspelled opt-in must fail closed rather than bill.
-    for value in ("off", "false", "0", "no", "onn", ""):
+    for value in ("off", "OFF", "false", "0", "no"):
         monkeypatch.setenv("COSCIENTIST_DEEP_RESEARCH", value)
         assert _deep_research_enabled() is False, value
+
+    assert MAX_DEEP_RESEARCH_PASSES == 8
+    assert DEFAULT_COST_LIMIT_USD == 24.0
 
 
 def test_discovery_is_attempted_whenever_vertex_adc_is_reachable(
@@ -237,49 +242,100 @@ def test_discovery_is_attempted_whenever_vertex_adc_is_reachable(
     assert built[0].project == "adc-project"
 
 
-def test_sufficient_first_pass_does_not_repeat():
+FAN_OUT_REPORTS = [
+    "Supporting evidence from a primary study https://pubmed.ncbi.nlm.nih.gov/1/",
+    "Contradictory evidence was reported https://doi.org/10.1000/conflict",
+    "A negative null result found no effect https://pubmed.ncbi.nlm.nih.gov/2/",
+    "An independent replication is available https://pubmed.ncbi.nlm.nih.gov/3/",
+    "Methods and measurement bias are described https://pubmed.ncbi.nlm.nih.gov/4/",
+    "Safety toxicity and governance evidence https://www.fda.gov/example",
+    "Corrections and retractions were checked https://retractionwatch.com/example",
+]
+"""One report per facet, in the order the fan-out asks for them."""
+
+
+def test_the_first_wave_asks_every_facet_at_once_and_stops_when_all_answer():
+    """Seven interactions, one per facet, and no second wave once all came back.
+
+    The sequential shape this replaces asked one broad question and scored the
+    answer: two live runs came back with the supporting literature and empty
+    everywhere else, because that is what a single question about seven things
+    gets answered with.
+    """
     question = "Does treatment X improve outcome Y?"
-    paragraphs = [
-        f"{question} Supporting evidence from a primary study https://pubmed.ncbi.nlm.nih.gov/1/",
-        "Contradictory evidence was reported https://doi.org/10.1000/conflict",
-        "A negative null result found no effect https://pubmed.ncbi.nlm.nih.gov/2/",
-        "An independent replication is available https://pubmed.ncbi.nlm.nih.gov/3/",
-        "Methods and measurement bias are described https://pubmed.ncbi.nlm.nih.gov/4/",
-        "Safety toxicity and governance evidence https://www.fda.gov/example",
-        "Corrections and retractions were checked https://retractionwatch.com/example",
-    ]
-    transport = FakeTransport(["\n\n".join(paragraphs)])
+    transport = FakeTransport(list(FAN_OUT_REPORTS))
     session = Session(question=question)
     manifest = IterativeEvidenceDiscovery(
         transport, EvidenceArtifactStore(bucket_name=""), poll_interval_seconds=0
     ).run(session, _plan(session))
 
-    assert len(transport.starts) == 1
+    assert len(transport.starts) == len(EVIDENCE_FACETS)
+    assert [run.facet for run in manifest.runs] == list(EVIDENCE_FACETS)
+    # Each pass is told which facet is its own and told the others are covered.
+    assert (
+        "THIS PASS COVERS ONE FACET ONLY: contradictory"
+        in (transport.starts[1]["prompt"])
+    )
     assert manifest.coverage_history[-1].sufficient
     assert manifest.convergence_reason == "coverage_sufficient"
+    assert manifest.estimated_cost_usd == pytest.approx(21.0)
     assert all(
         lead.verification_status == "discovered_unverified"
         for lead in manifest.source_leads
     )
 
 
-def test_low_value_second_pass_stops_and_queues_targeted_enrichment():
-    report = (
-        "Supporting evidence exists, but the landscape is incomplete "
-        "https://pubmed.ncbi.nlm.nih.gov/1/"
-    )
-    transport = FakeTransport([report, report])
-    session = Session(question="Test an incomplete evidence landscape")
+def test_a_facet_whose_pass_returned_nothing_citable_is_not_scored_as_covered():
+    """A pass that reports "no such literature" must not close its own facet.
+
+    Scoring a facet from the tag its pass carries makes the fan-out grade
+    itself: seven passes go out tagged, seven come back tagged, and coverage is
+    1.0 before anybody has cited anything.
+    """
+    reports = list(FAN_OUT_REPORTS)
+    reports[1] = "No contradictory literature exists for this question."
+    transport = FakeTransport([*reports, "Still nothing contradictory was found."])
+    session = Session(question="Test a facet with no literature")
     manifest = IterativeEvidenceDiscovery(
         transport, EvidenceArtifactStore(bucket_name=""), poll_interval_seconds=0
     ).run(session, _plan(session))
 
-    assert len(transport.starts) == 2
-    assert manifest.convergence_reason == "coverage_improvement_below_threshold"
+    coverage = manifest.coverage_history[-1]
+    assert coverage.facet_scores["contradictory"] == 0.0
+    assert coverage.facet_scores["supporting"] == 1.0
+    gap = next(item for item in coverage.gaps if item.facet == "contradictory")
+    # Searched and empty is a different report from never asked about.
+    assert gap.description.startswith("A pass dedicated to")
+    # The gap-closing pass is the eighth and last interaction the ceiling allows.
+    assert len(transport.starts) == 8
+    assert manifest.estimated_cost_usd == pytest.approx(24.0)
+    assert manifest.convergence_reason == "maximum_passes_reached"
     assert 1 <= len(manifest.enrichment_requests) <= 6
     assert all(
         request.provider == "google_search" for request in manifest.enrichment_requests
     )
+
+
+def test_the_fan_out_says_which_facets_the_budget_dropped():
+    """A run that cannot afford seven passes must name the three it never ran.
+
+    Otherwise the facets it skipped are indistinguishable from facets with no
+    literature, and the panel reports an absence of evidence that is really an
+    absence of searching.
+    """
+    transport = FakeTransport(list(FAN_OUT_REPORTS))
+    session = Session(question="Test a truncated fan-out")
+    manifest = IterativeEvidenceDiscovery(
+        transport,
+        EvidenceArtifactStore(bucket_name=""),
+        poll_interval_seconds=0,
+        max_passes=3,
+    ).run(session, _plan(session))
+
+    assert len(transport.starts) == 3
+    assert manifest.convergence_reason.startswith("fan_out_truncated_by_budget:")
+    dropped = manifest.convergence_reason.split(":", 1)[1].split(",")
+    assert dropped == list(EVIDENCE_FACETS[3:])
 
 
 def test_normalization_rejects_citations_not_in_originating_report():
@@ -345,12 +401,12 @@ def test_retry_resumes_the_same_stored_interaction():
     class InterruptedTransport:
         starts = 0
 
-        def start(self, **_):
+        def start(self, *, pass_number: int, **_):
             self.starts += 1
-            return {"id": "stable-interaction", "status": "in_progress"}
+            return {"id": f"stable-interaction-{pass_number}", "status": "in_progress"}
 
         def get(self, interaction_id: str):
-            assert interaction_id == "stable-interaction"
+            assert interaction_id.startswith("stable-interaction-")
             return {"id": interaction_id, "status": "completed", "output_text": report}
 
     session = Session(question="Resumable research")
@@ -370,8 +426,10 @@ def test_retry_resumes_the_same_stored_interaction():
 
     assert captured is not None
     result = controller.run(session, _plan(session), manifest=captured)
-    assert transport.starts == 1
-    assert result.runs[0].interaction_id == "stable-interaction"
+    # The resumed run adopts the whole wave that was already paid for rather
+    # than starting a second one: seven interactions exist, seven were started.
+    assert transport.starts == len(EVIDENCE_FACETS)
+    assert result.runs[0].interaction_id == "stable-interaction-1"
 
 
 def test_short_worker_steps_start_then_poll_without_duplicate_interaction():
@@ -384,9 +442,9 @@ def test_short_worker_steps_start_then_poll_without_duplicate_interaction():
         starts = 0
         polls = 0
 
-        def start(self, **_):
+        def start(self, *, pass_number: int, **_):
             self.starts += 1
-            return {"id": "step-interaction", "status": "in_progress"}
+            return {"id": f"step-interaction-{pass_number}", "status": "in_progress"}
 
         def get(self, interaction_id: str):
             self.polls += 1
@@ -403,13 +461,15 @@ def test_short_worker_steps_start_then_poll_without_duplicate_interaction():
         EvidenceArtifactStore(bucket_name=""),
         polls_per_invocation=0,
     ).run(session, _plan(session))
-    assert first.runs[0].status == "in_progress"
+    assert [run.status for run in first.runs] == ["in_progress"] * len(EVIDENCE_FACETS)
 
     second = IterativeEvidenceDiscovery(
         transport,
         EvidenceArtifactStore(bucket_name=""),
         polls_per_invocation=1,
     ).run(session, _plan(session), manifest=first)
-    assert transport.starts == 1
-    assert transport.polls == 1
-    assert second.runs[0].status == "completed"
+    # The second invocation polls the wave it inherited -- one poll per live
+    # interaction -- instead of starting a second wave beside it.
+    assert transport.starts == len(EVIDENCE_FACETS)
+    assert transport.polls == len(EVIDENCE_FACETS)
+    assert [run.status for run in second.runs] == ["completed"] * len(EVIDENCE_FACETS)

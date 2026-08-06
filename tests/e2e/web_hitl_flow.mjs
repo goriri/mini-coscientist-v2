@@ -457,6 +457,47 @@ try {
     "Session naming must truncate deterministically at a word boundary.",
   );
 
+  // The topbar used to hold a per-browser counter, so it named nothing anyone
+  // else could recognise. It carries the session name now, and the name the
+  // opening question produces is only a guess -- a researcher must be able to
+  // replace it, and the replacement must reach every place the name is shown.
+  const topbarName = await cdp.evaluate(
+    "document.querySelector('#sessionTitle').textContent",
+  );
+  assert(
+    topbarName.includes("protective coating"),
+    `The topbar must name the session, not a counter. Saw "${topbarName}".`,
+  );
+
+  await cdp.evaluate(`(() => {
+    document.querySelector("#renameSession").click();
+    const field = document.querySelector("#sessionTitleInput");
+    field.value = "Coating durability study";
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  })()`);
+  await waitFor(
+    cdp,
+    `document.querySelector("#sessionTitle").textContent === "Coating durability study"
+      && document.querySelector('.session-history-item[data-session-id="${workflowId}"] .session-history-open strong').textContent === "Coating durability study"
+      && document.querySelector("#currentSessionName").textContent === "Coating durability study"`,
+    "A renamed session did not carry its name to the topbar, history and rail.",
+    5000,
+  );
+
+  // Emptying the field is how the derived name is asked for back.
+  await cdp.evaluate(`(() => {
+    document.querySelector("#renameSession").click();
+    const field = document.querySelector("#sessionTitleInput");
+    field.value = "   ";
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  })()`);
+  await waitFor(
+    cdp,
+    `document.querySelector("#sessionTitle").textContent.includes("protective coating")`,
+    "Clearing a custom name did not restore the derived one.",
+    5000,
+  );
+
   await cdp.evaluate("document.querySelector('#newInquiry').click()");
   await cdp.evaluate(`(() => {
     const input = document.querySelector("#promptInput");
@@ -566,6 +607,38 @@ try {
   assert(
     mobileLayout.pageScroll === 0 && Math.abs(mobileLayout.topbarTop) <= 1,
     "The mobile page shell must not scroll away from its fixed workspace.",
+  );
+
+  // The workspace sets overflow:hidden, so anything too wide for a phone is
+  // silently sliced off at the right edge rather than producing a scrollbar
+  // anyone would notice. The topbar heading and the composer selects were both
+  // running past it. Nothing a reader has to read may leave the viewport.
+  const mobileOverflow = await cdp.evaluate(`(() => {
+    const scrolls = (node) => {
+      for (let at = node.parentElement; at; at = at.parentElement) {
+        // A code block that scrolls sideways is offering its width, not losing it.
+        if (at.scrollWidth > at.clientWidth + 1) return true;
+      }
+      return false;
+    };
+    const escapes = [];
+    for (const node of document.querySelectorAll(".workspace *")) {
+      if (!node.getClientRects().length) continue;
+      const box = node.getBoundingClientRect();
+      if (box.width === 0 || box.right <= innerWidth + 1) continue;
+      if (scrolls(node)) continue;
+      escapes.push({
+        selector: node.tagName.toLowerCase() + "." + (node.className || "").toString().split(" ")[0],
+        right: Math.round(box.right),
+        width: Math.round(box.width),
+        parent: Math.round(node.parentElement.getBoundingClientRect().width),
+      });
+    }
+    return escapes.slice(0, 12);
+  })()`);
+  assert(
+    mobileOverflow.length === 0,
+    `Content ran off the phone viewport: ${JSON.stringify(mobileOverflow)}`,
   );
 
   await cdp.evaluate("document.querySelector('#historyButton').click()");

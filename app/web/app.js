@@ -37,7 +37,6 @@ const state = {
   autoFollow: true,
   lastDraftId: null,
   pollTimer: null,
-  inquiry: Number(localStorage.getItem("coscientist.inquiry") || "1"),
   viewingStage: null,
   recentSessions: loadSessionHistory(),
   notifyStageAlerts: localStorage.getItem(NOTIFY_KEY) !== "off",
@@ -45,6 +44,7 @@ const state = {
   notifiedGateKey: null,
   pendingAttention: false,
   optionsReady: null,
+  renamingId: null,
 };
 
 localStorage.setItem("coscientist.userId", state.userId);
@@ -59,7 +59,9 @@ const elements = {
   copySession: document.querySelector("#copySession"),
   connection: document.querySelector(".composer-note"),
   connectionText: document.querySelector("#connectionText"),
-  inquiryNumber: document.querySelector("#inquiryNumber"),
+  sessionTitle: document.querySelector("#sessionTitle"),
+  sessionTitleInput: document.querySelector("#sessionTitleInput"),
+  renameSession: document.querySelector("#renameSession"),
   toast: document.querySelector("#toast"),
   mobileMenu: document.querySelector("#mobileMenu"),
   conversation: document.querySelector(".conversation"),
@@ -67,7 +69,6 @@ const elements = {
   approvalProfile: document.querySelector("#approvalProfile"),
   modelChoice: document.querySelector("#modelChoice"),
   languageChoice: document.querySelector("#languageChoice"),
-  approvalIndicator: document.querySelector("#approvalIndicator"),
   currentSessionCard: document.querySelector("#currentSessionCard"),
   currentSessionName: document.querySelector("#currentSessionName"),
   currentSessionState: document.querySelector("#currentSessionState"),
@@ -75,8 +76,6 @@ const elements = {
   sessionCount: document.querySelector("#sessionCount"),
   historyButton: document.querySelector("#historyButton"),
   closeHistory: document.querySelector("#closeHistory"),
-  runtimeModel: document.querySelector("#runtimeModel"),
-  runtimeDetail: document.querySelector("#runtimeDetail"),
   notifySection: document.querySelector("#notifySection"),
   notifyEnabled: document.querySelector("#notifyEnabled"),
   notifyDetail: document.querySelector("#notifyDetail"),
@@ -101,10 +100,6 @@ const agentLabels = {
   proximity: "Proximity landscape",
   meta_reviewer: "Meta reviewer",
 };
-
-function updateInquiryNumber() {
-  elements.inquiryNumber.textContent = String(state.inquiry).padStart(3, "0");
-}
 
 function setConnection(mode, text) {
   elements.connection.classList.remove("ready", "error");
@@ -308,12 +303,108 @@ function renderCandidateCard(candidate) {
     </article>`;
 }
 
+function renderEvidenceSource(source) {
+  const claims = (source.claims || [])
+    .map(
+      (claim) => `
+        <li class="evidence-claim relation-${escapeHtml(claim.relation || "neutral")}">
+          <span class="claim-relation">${escapeHtml(claim.relation_label || "")}</span>
+          <span class="claim-text">${formatInline(claim.text || "")}</span>
+          ${claim.location ? `<span class="claim-location">${escapeHtml(claim.location)}</span>` : ""}
+        </li>`,
+    )
+    .join("");
+  return `
+    <li class="evidence-source tone-${escapeHtml(source.status_tone || "quarantined")}">
+      <div class="evidence-source-head">
+        <span class="status-chip tone-${escapeHtml(source.status_tone || "quarantined")}" title="${escapeHtml(source.status_meaning || "")}">${escapeHtml(source.status_label || "")}</span>
+        <a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.title || source.url)}</a>
+      </div>
+      ${source.citation ? `<p class="evidence-citation">${escapeHtml(source.citation)}</p>` : ""}
+      ${claims ? `<ul class="evidence-claims">${claims}</ul>` : '<p class="evidence-no-claim">No claim was attributed to this source.</p>'}
+      ${source.verification_note ? `<p class="evidence-note">${formatInline(source.verification_note)}</p>` : ""}
+    </li>`;
+}
+
+// The evidence panel is the one place a reader decides whether to trust the
+// run at all, and the generic detail renderer flattened it into titles and
+// URLs: forty-four rows, no facet, no claim, no verification outcome. This
+// renders the three things that decision needs -- what kind of evidence exists,
+// what each source was cited for, and how far each one has actually been
+// checked -- and keeps the empty facets visible, because an absent line of
+// evidence is a finding.
+function renderEvidenceTrust(evidence) {
+  if (!evidence) return "";
+  const floorChecks = (evidence.floor_details || [])
+    .map(
+      (check) => `
+        <li class="${check.met ? "met" : "unmet"}">
+          <span>${escapeHtml(check.label)}</span>
+          <strong>${escapeHtml(check.value)}</strong>
+        </li>`,
+    )
+    .join("");
+  const shortfalls = (evidence.shortfalls || [])
+    .map((item) => `<li>${formatInline(item)}</li>`)
+    .join("");
+  const floor = floorChecks
+    ? `<div class="evidence-floor ${evidence.floor?.met ? "met" : "unmet"}">
+        <p class="evidence-floor-headline">${escapeHtml(evidence.headline || "")}</p>
+        <ul class="evidence-floor-checks">${floorChecks}</ul>
+        ${shortfalls ? `<ul class="evidence-shortfalls">${shortfalls}</ul>` : ""}
+      </div>`
+    : `<p class="evidence-pending">Sources have been discovered; verification has not run yet, so nothing here is confirmed.</p>`;
+  const facets = (evidence.facets || [])
+    .map((facet) => {
+      const count = (facet.sources || []).length;
+      const gaps = (facet.gaps || [])
+        .map(
+          (gap) =>
+            `<li><span class="gap-impact impact-${escapeHtml(gap.impact || "medium")}">${escapeHtml(gap.impact || "medium")} impact</span> ${formatInline(gap.description || "")}</li>`,
+        )
+        .join("");
+      return `
+        <article class="evidence-facet ${count ? "" : "empty"}">
+          <header>
+            <h5>${escapeHtml(facet.label)}</h5>
+            <span>${count ? `${count} usable source${count === 1 ? "" : "s"}` : "nothing usable"}</span>
+          </header>
+          ${
+            count
+              ? `<ul class="evidence-source-list">${facet.sources.map(renderEvidenceSource).join("")}</ul>`
+              : `<p class="evidence-empty-facet">No source that survived verification covers this.</p>`
+          }
+          ${gaps ? `<ul class="evidence-gaps">${gaps}</ul>` : ""}
+        </article>`;
+    })
+    .join("");
+  const quarantine = (evidence.quarantine || []).length
+    ? `<details class="evidence-quarantine">
+        <summary>${evidence.quarantine.length} source${evidence.quarantine.length === 1 ? "" : "s"} nothing may rest on</summary>
+        <ul class="evidence-source-list">${evidence.quarantine.map(renderEvidenceSource).join("")}</ul>
+      </details>`
+    : "";
+  const legend = (evidence.legend || [])
+    .map(
+      (item) =>
+        `<div><dt><span class="status-chip tone-${escapeHtml(item.tone)}">${escapeHtml(item.label)}</span></dt><dd>${escapeHtml(item.meaning)}</dd></div>`,
+    )
+    .join("");
+  return `
+    <section class="evidence-trust">
+      ${floor}
+      <div class="evidence-facet-list">${facets}</div>
+      ${quarantine}
+      ${legend ? `<details class="evidence-legend"><summary>What these verification labels mean</summary><dl class="compact-fields">${legend}</dl></details>` : ""}
+    </section>`;
+}
+
 function renderStagePresentation(presentation, rawText = "") {
   if (!presentation) return formatText(rawText);
   const metrics = (presentation.metrics || [])
     .map(
       (metric) =>
-        `<div><strong>${renderDisplayValue(metric.value)}</strong><span>${escapeHtml(metric.label)}</span></div>`,
+        `<div><strong>${renderDisplayValue(metric.value)}${metric.unit ? `<em>${escapeHtml(metric.unit)}</em>` : ""}</strong><span>${escapeHtml(metric.label)}</span></div>`,
     )
     .join("");
   const details = (presentation.details || [])
@@ -401,6 +492,7 @@ function renderStagePresentation(presentation, rawText = "") {
       ${evolution ? `<div class="evolution-list">${evolution}</div>` : ""}
       ${clusters ? `<div class="cluster-grid">${clusters}</div>` : ""}
       ${recommendations ? `<div class="recommendation-grid">${recommendations}</div>` : ""}
+      ${renderEvidenceTrust(presentation.evidence)}
       ${details ? `<div class="presentation-details">${details}</div>` : ""}
       ${
         rawText
@@ -528,6 +620,21 @@ function deriveSessionName(question, maxLength = 52) {
   return `${clipped.trim()}…`;
 }
 
+// A session has one name everywhere it is shown: the topbar, the sidebar card,
+// the history list, and the notification body. It starts as the first clause of
+// the opening question and stays that way until someone renames it.
+function sessionTitle(workflow) {
+  if (!workflow) return "New inquiry";
+  const saved = state.recentSessions.find((item) => item.id === workflow.id);
+  return (
+    saved?.customTitle || saved?.title || deriveSessionName(workflow.question)
+  );
+}
+
+function historyTitle(entry) {
+  return entry.customTitle || entry.title;
+}
+
 function stageLabel(stage) {
   return stage === "meta_review" ? "Meta-review" : humanizeKey(stage);
 }
@@ -559,6 +666,8 @@ function upsertRecentSession(workflow, touch = false) {
   const entry = {
     id: workflow.id,
     title: deriveSessionName(workflow.question),
+    // Re-derived on every poll; a name the researcher typed is not.
+    customTitle: existing?.customTitle || null,
     query: workflow.question,
     status: workflow.status,
     stage: workflow.stage,
@@ -655,16 +764,17 @@ function renderSessionHistory() {
           <button class="session-history-open" type="button" ${
             item.unavailable ? "disabled" : ""
           } title="${escapeHtml(item.query || item.title)}">
-            <strong>${escapeHtml(item.title)}</strong>
+            <strong>${escapeHtml(historyTitle(item))}</strong>
             <span>${item.unavailable ? "Unavailable on this instance" : `${escapeHtml(stageLabel(item.stage))} · ${escapeHtml(relativeTime(item.updatedAt))}`}</span>
           </button>
           <div class="session-history-actions">
+            <button class="session-rename" type="button" aria-label="Rename ${escapeHtml(historyTitle(item))}" title="Rename this session">✎</button>
             ${
               item.deleteToken
-                ? `<button class="session-delete-cloud" type="button" aria-label="Permanently delete ${escapeHtml(item.title)} from Google Cloud" title="Permanently delete from Google Cloud">⌫</button>`
+                ? `<button class="session-delete-cloud" type="button" aria-label="Permanently delete ${escapeHtml(historyTitle(item))} from Google Cloud" title="Permanently delete from Google Cloud">⌫</button>`
                 : ""
             }
-            <button class="session-remove" type="button" aria-label="Remove ${escapeHtml(item.title)} from this browser" title="Remove from this browser">×</button>
+            <button class="session-remove" type="button" aria-label="Remove ${escapeHtml(historyTitle(item))} from this browser" title="Remove from this browser">×</button>
           </div>
         </article>`,
     )
@@ -674,9 +784,10 @@ function renderSessionHistory() {
 function updateSessionIdentity(workflow) {
   if (!workflow) {
     elements.currentSessionCard.hidden = true;
+    renderSessionTitle(null);
     return;
   }
-  const title = deriveSessionName(workflow.question);
+  const title = sessionTitle(workflow);
   elements.currentSessionCard.hidden = false;
   elements.currentSessionName.textContent = title;
   elements.currentSessionName.title = workflow.question;
@@ -685,6 +796,52 @@ function updateSessionIdentity(workflow) {
     `Current query: ${workflow.question}`,
   );
   elements.currentSessionState.textContent = `${stageLabel(workflow.stage)} · ${workflowStatusCopy(workflow)}`;
+  renderSessionTitle(workflow);
+}
+
+function renderSessionTitle(workflow = state.workflow) {
+  const named = Boolean(workflow);
+  const title = sessionTitle(workflow);
+  elements.sessionTitle.textContent = title;
+  elements.sessionTitle.title = workflow?.question || "";
+  elements.renameSession.hidden = !named;
+  document.title = state.pendingAttention
+    ? `\u25cf ${title} · Co—Scientist`
+    : named
+      ? `${title} · Co—Scientist`
+      : DOCUMENT_TITLE;
+}
+
+function beginRename(sessionId = state.workflowId) {
+  const entry = state.recentSessions.find((item) => item.id === sessionId);
+  if (!entry) return;
+  state.renamingId = sessionId;
+  elements.sessionTitleInput.value = historyTitle(entry);
+  elements.sessionTitleInput.hidden = false;
+  elements.sessionTitle.hidden = true;
+  elements.renameSession.hidden = true;
+  elements.sessionTitleInput.focus();
+  elements.sessionTitleInput.select();
+}
+
+function endRename(commit) {
+  if (!state.renamingId) return;
+  const entry = state.recentSessions.find(
+    (item) => item.id === state.renamingId,
+  );
+  if (commit && entry) {
+    const typed = elements.sessionTitleInput.value.trim();
+    // Clearing the field is how a researcher asks for the derived name back,
+    // rather than pinning an empty heading over the workspace.
+    entry.customTitle = typed && typed !== entry.title ? typed : null;
+    saveSessionHistory();
+    renderSessionHistory();
+  }
+  state.renamingId = null;
+  elements.sessionTitleInput.hidden = true;
+  elements.sessionTitle.hidden = false;
+  renderSessionTitle();
+  if (state.workflow) updateSessionIdentity(state.workflow);
 }
 
 function updateStageNavigation(workflow = null) {
@@ -855,32 +1012,6 @@ async function loadResearchOptions() {
     title: "",
     selected: item.default,
   }));
-  updateRuntimeCard(state.workflow);
-}
-
-function selectedLabel(select) {
-  return select.selectedOptions[0]?.textContent?.trim() || "";
-}
-
-function updateRuntimeCard(workflow = null) {
-  // A restored run keeps whatever it was started with, so the workflow wins
-  // over the composer: changing the dropdown afterwards changes the next run,
-  // not the one on screen.
-  const model =
-    workflow?.model ||
-    selectedLabel(elements.modelChoice) ||
-    elements.modelChoice.value;
-  const languageOption = workflow?.language
-    ? elements.languageChoice.querySelector(
-        `option[value="${workflow.language}"]`,
-      )
-    : elements.languageChoice.selectedOptions[0];
-  const language = languageOption?.textContent?.trim() || "";
-  elements.runtimeModel.textContent = model || "Selecting…";
-  elements.runtimeModel.title = model || "";
-  elements.runtimeDetail.textContent = language
-    ? `${language} · global endpoint`
-    : "Global endpoint";
 }
 
 function notificationsAvailable() {
@@ -915,7 +1046,7 @@ async function requestStageAlerts() {
 
 function setAttention(pending) {
   state.pendingAttention = pending;
-  document.title = pending ? `● ${DOCUMENT_TITLE}` : DOCUMENT_TITLE;
+  renderSessionTitle();
 }
 
 function researcherIsWatching() {
@@ -928,7 +1059,7 @@ function raiseStageAlert(workflow, headline) {
   if (!notificationsAvailable() || Notification.permission !== "granted")
     return;
   const notification = new Notification(headline, {
-    body: `${stageLabel(workflow.stage)} · ${deriveSessionName(workflow.question)}`,
+    body: `${stageLabel(workflow.stage)} · ${sessionTitle(workflow)}`,
     // One live notification per run: a poll that fires twice must replace its
     // own banner rather than stack a second one behind it.
     tag: `coscientist:${workflow.id}`,
@@ -1020,27 +1151,6 @@ function workflowStatusCopy(workflow) {
   return "Workflow active";
 }
 
-function updateApprovalIndicator() {
-  const label = elements.approvalIndicator.querySelector("strong");
-  const detail = elements.approvalIndicator.querySelector("span");
-  const profile = elements.approvalProfile.value;
-  if (state.mode === "conversation") {
-    label.textContent = "Conversational mode";
-    detail.textContent = "No stage promotion controls";
-  } else if (profile === "auto") {
-    label.textContent = "Automatic workflow";
-    detail.textContent = "Mandatory integrity gates still apply";
-  } else {
-    label.textContent = "Human review enabled";
-    detail.textContent =
-      profile === "milestone"
-        ? "Scope, ranking, evolution, and synthesis are audited"
-        : profile === "stage"
-          ? "Every stage promotion requires a decision"
-          : "Every specialist artifact requires approval";
-  }
-}
-
 function unresolvedRequirements(workflow) {
   return workflow.input_requirements.filter(
     (item) =>
@@ -1054,9 +1164,14 @@ function evidenceProgressCopy(workflow) {
   const metric = Object.fromEntries(
     (presentation.metrics || []).map((item) => [item.label, item.value]),
   );
-  return `Deep Research pass ${metric["Deep Research passes"] || 1} of 3 · ${
+  const verified = metric["Verified"];
+  const trust =
+    verified === undefined
+      ? "discovered, not yet verified"
+      : `${verified} verified · ${metric["Registry-confirmed"] || 0} registry-confirmed · ${metric["Quarantined"] || 0} quarantined`;
+  return `Deep Research pass ${metric["Deep Research passes"] || 1} of 8 · ${
     metric.Coverage || 0
-  }% coverage · ${metric["Source leads"] || 0} source leads · discovered, not yet verified`;
+  }% coverage · ${metric["Source leads"] || 0} source leads · ${trust}`;
 }
 
 function renderApprovalCard(workflow) {
@@ -1375,7 +1490,6 @@ function renderWorkflow(workflow, pending = null, touchHistory = false) {
   state.sessionId = workflow.id;
   updateSessionIdentity(workflow);
   updateStageNavigation(workflow);
-  updateRuntimeCard(workflow);
   upsertRecentSession(workflow, touchHistory);
   localStorage.setItem(CURRENT_WORKFLOW_KEY, workflow.id);
   const operationActive = ["queued", "running"].includes(
@@ -1478,7 +1592,6 @@ function selectMode(mode) {
     control.hidden = mode === "conversation";
     control.closest(".profile-control").hidden = mode === "conversation";
   });
-  updateApprovalIndicator();
 }
 
 async function openResearchSession(sessionId, { restore = false } = {}) {
@@ -1638,9 +1751,6 @@ async function newInquiry() {
   state.viewingStage = null;
   localStorage.removeItem(CURRENT_WORKFLOW_KEY);
   setPreviewMode(false);
-  state.inquiry += 1;
-  localStorage.setItem("coscientist.inquiry", String(state.inquiry));
-  updateInquiryNumber();
   clearWorkflowDisplay();
   updateSessionIdentity(null);
   updateStageNavigation(null);
@@ -1648,7 +1758,6 @@ async function newInquiry() {
   setAttention(false);
   state.notifiedGateKey = null;
   state.operationStartedAt = null;
-  updateRuntimeCard();
   if (state.mode === "conversation") {
     try {
       await createSession();
@@ -1726,6 +1835,13 @@ elements.messages.addEventListener("click", (event) => {
 elements.sessionHistory.addEventListener("click", (event) => {
   const item = event.target.closest(".session-history-item");
   if (!item) return;
+  if (event.target.closest(".session-rename")) {
+    // Renaming from the list retitles that session wherever it appears, but
+    // the editor lives in the topbar, so the drawer gets out of the way.
+    document.body.classList.remove("history-open");
+    beginRename(item.dataset.sessionId);
+    return;
+  }
   if (event.target.closest(".session-remove")) {
     removeRecentSession(item.dataset.sessionId);
     return;
@@ -1740,16 +1856,18 @@ elements.sessionHistory.addEventListener("click", (event) => {
     openResearchSession(item.dataset.sessionId);
   }
 });
+elements.renameSession.addEventListener("click", () => beginRename());
+elements.sessionTitleInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") endRename(true);
+  if (event.key === "Escape") endRename(false);
+});
+elements.sessionTitleInput.addEventListener("blur", () => endRename(true));
 elements.historyButton.addEventListener("click", () => {
   document.body.classList.add("history-open");
 });
 elements.closeHistory.addEventListener("click", () => {
   document.body.classList.remove("history-open");
 });
-elements.approvalProfile.addEventListener("change", updateApprovalIndicator);
-[elements.modelChoice, elements.languageChoice].forEach((control) =>
-  control.addEventListener("change", () => updateRuntimeCard(state.workflow)),
-);
 elements.notifyEnabled.addEventListener("change", () => {
   state.notifyStageAlerts = elements.notifyEnabled.checked;
   localStorage.setItem(NOTIFY_KEY, state.notifyStageAlerts ? "on" : "off");
@@ -1779,8 +1897,8 @@ document.addEventListener("click", (event) => {
   }
 });
 
-updateInquiryNumber();
 state.optionsReady = loadResearchOptions();
+renderSessionTitle(null);
 renderNotifyControl();
 selectMode(state.mode);
 renderSessionHistory();
