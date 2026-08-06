@@ -43,6 +43,27 @@ if (startServer) {
   );
 }
 
+// A second Chrome cannot bind a port the first one holds, and it exits
+// quietly when it tries. The run then attaches to whichever browser is
+// already there and drives someone else's tabs: two live runs against the
+// same service, one browser, and when the first run ended its browser went
+// with it and the second hung until its timeout. Ninety minutes and a
+// billed research session were lost to that before it was noticed.
+try {
+  const response = await fetch(
+    `http://127.0.0.1:${debuggingPort}/json/version`,
+  );
+  if (response.ok) {
+    throw new Error(
+      `A browser is already listening on the DevTools port ${debuggingPort}. ` +
+        "Another end-to-end run is probably in flight; stop it, or set " +
+        "CHROME_DEBUGGING_PORT to a free port for this one.",
+    );
+  }
+} catch (error) {
+  if (!/ECONNREFUSED|fetch failed/i.test(String(error))) throw error;
+}
+
 const browser = spawn(
   chrome,
   [
