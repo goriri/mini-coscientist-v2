@@ -1,8 +1,9 @@
 import httpx
 import pytest
+from a2a.client.errors import A2AClientHTTPError
 
 from app.app_utils.a2a import default_app_url
-from coscientist.agents import A2AProvider
+from coscientist.agents import A2A_TRANSPORT_ATTEMPTS, A2AProvider
 
 
 def test_a2a_provider_removes_exact_and_trailing_prompt_echoes():
@@ -50,3 +51,67 @@ def test_a_role_no_agent_serves_is_refused_before_the_card_is_fetched():
     provider = A2AProvider(base_url="https://example.invalid")
     with pytest.raises(ValueError, match="is not a published specialist"):
         provider.complete(role="goal_manager_critic", prompt="anything")
+
+
+# --- a dropped stream is the network, not the answer --------------------------
+
+
+def _dialled(monkeypatch, *outcomes) -> tuple[A2AProvider, list[int]]:
+    """A provider whose nth turn raises or returns ``outcomes[n]``, and a call log."""
+    import time
+
+    calls: list[int] = []
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+
+    async def _complete(self, *, role, prompt):
+        outcome = outcomes[len(calls)]
+        calls.append(1)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(A2AProvider, "_complete", _complete)
+    return A2AProvider(base_url="https://example.invalid"), calls
+
+
+def test_a_stream_that_drops_mid_answer_is_dialled_again(monkeypatch):
+    """One httpx.ReadError failed a live evidence stage that had already spent
+    twenty-four dollars on Deep Research. Nothing was received when the read
+    dropped, so dialling again repeats no work and duplicates no cost."""
+    provider, calls = _dialled(
+        monkeypatch,
+        httpx.ReadError("connection closed"),
+        A2AClientHTTPError(503, "Network communication error: "),
+        "the specialist's answer",
+    )
+
+    assert provider.complete(role="ranking", prompt="x") == "the specialist's answer"
+    assert len(calls) == 3
+
+
+def test_the_last_attempt_raises_rather_than_returning_nothing(monkeypatch):
+    provider, calls = _dialled(
+        monkeypatch, *[httpx.ReadError("closed")] * A2A_TRANSPORT_ATTEMPTS
+    )
+
+    with pytest.raises(httpx.ReadError):
+        provider.complete(role="ranking", prompt="x")
+    assert len(calls) == A2A_TRANSPORT_ATTEMPTS
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        A2AClientHTTPError(404, "no card there"),
+        A2AClientHTTPError(400, "malformed message"),
+        RuntimeError("returned no text artifact"),
+    ],
+)
+def test_an_error_about_what_was_asked_is_not_asked_again(monkeypatch, error):
+    """Dialling a wrong role three times over makes one failure into three and a
+    fifteen-second wait, and the answer is the same each time."""
+    provider, calls = _dialled(monkeypatch, error, "never reached")
+
+    with pytest.raises(type(error)):
+        provider.complete(role="ranking", prompt="x")
+    assert len(calls) == 1

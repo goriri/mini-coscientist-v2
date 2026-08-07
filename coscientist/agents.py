@@ -330,6 +330,29 @@ class DeterministicProvider:
         return templates[role]
 
 
+A2A_TRANSPORT_ATTEMPTS = max(1, int(os.environ.get("COSCIENTIST_A2A_ATTEMPTS", "3")))
+"""How many times one specialist turn is dialled before the stage is failed."""
+
+A2A_REDIAL_SECONDS = float(os.environ.get("COSCIENTIST_A2A_REDIAL_SECONDS", "5"))
+"""The wait before the second attempt; the third waits twice as long again."""
+
+
+def _worth_redialling(error: Exception) -> bool:
+    """Whether the call failed on the wire rather than on what was asked of it.
+
+    A dropped read, a refused connection and a 503 are the network between two
+    services on the same revision. A 404 on a card path and a 400 on a message are
+    this caller's own errors, and dialling again three times over turns a wrong
+    role string into three identical failures and a fifteen-second wait.
+    """
+    import httpx
+    from a2a.client.errors import A2AClientHTTPError
+
+    if isinstance(error, A2AClientHTTPError):
+        return error.status_code >= 500
+    return isinstance(error, httpx.TransportError)
+
+
 class A2AProvider:
     """Invoke independently published specialist services through the A2A SDK."""
 
@@ -466,7 +489,32 @@ class A2AProvider:
 
     def complete(self, *, role: str, prompt: str) -> str:
         import asyncio
+        import time
 
+        # A specialist turn is one long HTTP stream to a service on this same
+        # revision, and a stream that drops raises before a word of the answer is
+        # kept. On a live run one httpx.ReadError -- the far side closing the
+        # connection mid-answer -- arrived as "HTTP Error 503: Network communication
+        # error" and failed the evidence stage with twenty-four dollars of Deep
+        # Research already spent behind it and no part of the call retried.
+        #
+        # Re-dialling repeats no work: nothing was received, so there is nothing to
+        # duplicate. A 4xx is the caller's own error and is not dialled again.
+        for attempt in range(1, A2A_TRANSPORT_ATTEMPTS):
+            try:
+                return asyncio.run(self._complete(role=role, prompt=prompt))
+            except Exception as error:
+                if not _worth_redialling(error):
+                    raise
+                logger.warning(
+                    "A2A specialist '%s' dropped on attempt %d of %d (%s); "
+                    "dialling again.",
+                    role,
+                    attempt,
+                    A2A_TRANSPORT_ATTEMPTS,
+                    error,
+                )
+                time.sleep(A2A_REDIAL_SECONDS * attempt)
         return asyncio.run(self._complete(role=role, prompt=prompt))
 
 
