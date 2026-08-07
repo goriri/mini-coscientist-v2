@@ -338,7 +338,14 @@ A2A_REDIAL_SECONDS = float(os.environ.get("COSCIENTIST_A2A_REDIAL_SECONDS", "5")
 
 
 class EmptyA2AStream(RuntimeError):
-    """A specialist's event stream closed before it sent a single event."""
+    """A specialist's turn ended with no answer of its own kept from it.
+
+    Named for the case it was written for -- a stream that closed before its first
+    event -- but the property that matters to the caller is the one every case here
+    shares: nothing was received, so dialling again repeats no work and duplicates
+    nothing. A turn that opened, sent its task-status events and then died is the
+    same nothing as a turn that never opened.
+    """
 
 
 def _as_empty_stream(role: str, error: RuntimeError) -> EmptyA2AStream | None:
@@ -463,14 +470,26 @@ class A2AProvider:
             )
         finally:
             await http_client.aclose()
-        if not responses:
-            raise RuntimeError(f"A2A specialist '{role}' returned no text artifact.")
         # Sanitized on the way back too. A specialist quotes the documents it
         # read, so what it returns can carry the same characters its sources
         # did, and this content becomes an artifact row of our own.
         content = strip_unstorable_characters(
             self._without_prompt_echo(responses, prompt)
         )
+        if not content:
+            # Dialled again rather than raised through. The turn that made this
+            # necessary died three minutes in on a 503 from the model API, which the
+            # far side answered inside a stream it had already opened with 200: the
+            # task-status events arrived, the answer never did, and a plain
+            # RuntimeError here is not something ``_worth_redialling`` recognises. So
+            # one transient upstream failure took the reflect stage with it, on a run
+            # eight Deep Research passes deep. Nothing of the turn was kept, whether
+            # the stream sent nothing or sent only the echo of the prompt, so there is
+            # nothing a second dial could duplicate.
+            raise EmptyA2AStream(
+                f"A2A specialist '{role}' ended its turn without returning an "
+                "answer of its own, so nothing was kept from it."
+            )
         if resolved:
             content += "\n\nGrounding URLs (resolved to the document each one opens):\n"
             content += "\n".join(f"- {url}" for url in resolved)

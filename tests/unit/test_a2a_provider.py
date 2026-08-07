@@ -112,7 +112,7 @@ def test_the_last_attempt_raises_rather_than_returning_nothing(monkeypatch):
     [
         A2AClientHTTPError(404, "no card there"),
         A2AClientHTTPError(400, "malformed message"),
-        RuntimeError("returned no text artifact"),
+        RuntimeError("the card names a model this deployment does not serve"),
     ],
 )
 def test_an_error_about_what_was_asked_is_not_asked_again(monkeypatch, error):
@@ -197,6 +197,61 @@ def test_the_provider_reports_an_empty_stream_as_the_specialist_sending_nothing(
 
     with pytest.raises(EmptyA2AStream, match="without sending anything"):
         asyncio.run(provider._complete(role="ranking", prompt="x"))
+
+
+def _streaming(monkeypatch, *texts: str):
+    """A client whose stream opens, sends what it was given, and ends."""
+    import a2a.client
+    from a2a.types import Message, Part, Role, TextPart
+
+    class _Client:
+        async def send_message(self, message):
+            for text in texts:
+                yield Message(
+                    message_id="msg-reply",
+                    role=Role.agent,
+                    parts=[Part(root=TextPart(text=text))],
+                )
+
+    async def _connect(agent, **kwargs):
+        return _Client()
+
+    monkeypatch.setattr(a2a.client.ClientFactory, "connect", _connect)
+    return A2AProvider(base_url="https://example.invalid")
+
+
+def test_a_turn_that_opens_and_then_dies_is_the_same_nothing_as_one_that_never_did(
+    monkeypatch,
+):
+    """The far side answered 200, sent its task-status events, and three minutes
+    later hit a 503 from the model API. The stream carried no answer, and the plain
+    RuntimeError raised here was not something the redial recognised -- so one
+    transient upstream failure took the reflect stage with it, eight Deep Research
+    passes into a live run."""
+    provider = _streaming(monkeypatch)
+
+    with pytest.raises(EmptyA2AStream, match="without returning an answer"):
+        asyncio.run(provider._complete(role="ranking", prompt="x"))
+
+
+def test_a_turn_that_sent_back_only_the_prompt_is_nothing_kept_either(monkeypatch):
+    """The echo is stripped as task history, which leaves the empty string. Returned
+    rather than raised, it reached the contract check as a malformed answer and
+    stopped the run for a human over a failure a second dial would have cleared."""
+    provider = _streaming(monkeypatch, "Review these candidates.")
+
+    with pytest.raises(EmptyA2AStream):
+        asyncio.run(
+            provider._complete(role="ranking", prompt="Review these candidates.")
+        )
+
+
+def test_a_turn_that_answered_is_returned_untouched(monkeypatch):
+    provider = _streaming(monkeypatch, '{"ratings": {}}')
+
+    said = asyncio.run(provider._complete(role="ranking", prompt="Rank these."))
+
+    assert said == '{"ratings": {}}'
 
 
 def test_an_empty_stream_is_retried_and_the_stage_survives_it(monkeypatch):
