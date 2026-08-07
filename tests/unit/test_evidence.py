@@ -286,6 +286,76 @@ def test_the_first_wave_asks_every_facet_at_once_and_stops_when_all_answer():
     )
 
 
+class SlowTransport:
+    """A wave where every pass but one comes back on the first poll.
+
+    The shape of the live failure: seven interactions start together, six finish,
+    and the seventh is still running when the wall clock runs out.
+    """
+
+    def __init__(self, reports: list[str], *, laggard: int):
+        self.reports = reports
+        self.laggard = laggard
+
+    def start(self, *, prompt: str, pass_number: int, session_id: str) -> dict:
+        return {"id": f"interaction-{pass_number}", "status": "in_progress"}
+
+    def get(self, interaction_id: str) -> dict:
+        number = int(interaction_id.rsplit("-", 1)[1])
+        if number == self.laggard:
+            return {"id": interaction_id, "status": "in_progress"}
+        return {
+            "id": interaction_id,
+            "status": "completed",
+            "output_text": self.reports[number - 1],
+        }
+
+
+def _clock(monkeypatch, step: float):
+    """A monotonic clock that moves ``step`` seconds every time it is read."""
+    import coscientist.evidence
+
+    ticks = [0.0]
+
+    def monotonic() -> float:
+        ticks[0] += step
+        return ticks[0] - step
+
+    monkeypatch.setattr(coscientist.evidence.time, "monotonic", monotonic)
+
+
+def test_a_wave_cut_off_by_the_deadline_still_yields_the_passes_that_finished(
+    monkeypatch,
+):
+    """Six completed Deep Research reports were discarded because a seventh ran long.
+
+    Seen on a live production run: the stage reported "7 passes attempted, 0 source
+    leads, $0.00" and an evidence floor met by nothing, after thirty-three minutes
+    and six finished searches it had already paid for. The poller returned the
+    whole wave unread the moment one pass passed the deadline.
+    """
+    _clock(monkeypatch, step=5.0)
+    transport = SlowTransport(list(FAN_OUT_REPORTS), laggard=2)
+    session = Session(question="Does treatment X improve outcome Y?")
+
+    manifest = IterativeEvidenceDiscovery(
+        transport,
+        EvidenceArtifactStore(bucket_name=""),
+        poll_interval_seconds=0,
+        pass_timeout_seconds=6,
+    ).run(session, _plan(session))
+
+    assert manifest.convergence_reason == "deep_research_timed_out"
+    assert len(manifest.source_leads) == len(EVIDENCE_FACETS) - 1
+    assert [run.status for run in manifest.runs].count("completed") == 6
+    # The pass that ran out of time says so in words rather than as an empty object.
+    laggard = next(run for run in manifest.runs if run.pass_number == 2)
+    assert laggard.status == "timed_out"
+    assert laggard.error == "Deep Research exceeded the local pass deadline."
+    # And the deadline ends the search: no second wave is bought after it.
+    assert len(manifest.runs) == len(EVIDENCE_FACETS)
+
+
 def test_a_facet_whose_pass_returned_nothing_citable_is_not_scored_as_covered():
     """A pass that reports "no such literature" must not close its own facet.
 

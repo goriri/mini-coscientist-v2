@@ -1861,10 +1861,14 @@ class IterativeEvidenceDiscovery:
     ) -> dict[str, dict] | None:
         """Poll every interaction in a wave until all are terminal.
 
-        ``None`` means the caller should return the manifest as it stands: either
-        the step-mode budget for this invocation is spent and a Cloud Task will
-        resume, or the wall-clock deadline passed. Both leave the manifest
-        honest about which passes are still running.
+        ``None`` means the caller should return the manifest as it stands: the
+        step-mode budget for this invocation is spent and a Cloud Task will resume,
+        so nothing may be folded in yet or the resumed invocation would fold the
+        same passes in twice.
+
+        A wall-clock deadline is the other ending, and it returns the payloads it
+        has. The passes that finished before it are paid for and complete, and the
+        caller reads them before it stops.
         """
         payloads: dict[str, dict] = {
             run.interaction_id: (seed or {}).get(run.interaction_id)
@@ -1884,12 +1888,23 @@ class IterativeEvidenceDiscovery:
         ):
             if time.monotonic() >= deadline:
                 for run in wave:
-                    if run.status not in self._TERMINAL:
-                        run.status = "timed_out"
-                        run.error = "Deep Research exceeded the local pass deadline."
-                        run.completed_at = _now()
+                    if (
+                        str(payloads[run.interaction_id].get("status"))
+                        in self._TERMINAL
+                    ):
+                        continue
+                    run.status = "timed_out"
+                    run.error = "Deep Research exceeded the local pass deadline."
+                    run.completed_at = _now()
+                    # Marked in the payload as well as on the run, because the
+                    # ingest reads each pass's status back off its payload and
+                    # would otherwise restore the last "in_progress" it polled.
+                    payloads[run.interaction_id] = {
+                        **payloads[run.interaction_id],
+                        "status": "timed_out",
+                    }
                 manifest.convergence_reason = "deep_research_timed_out"
-                return None
+                return payloads
             time.sleep(self.poll_interval_seconds)
             polls_this_invocation += 1
             for run in wave:
@@ -1945,7 +1960,10 @@ class IterativeEvidenceDiscovery:
                 manifest.estimated_cost_usd + self.cost_per_pass_usd, 2
             )
             if run.status != "completed":
-                run.error = json.dumps(
+                # Kept where the poller already said what went wrong in words. A pass
+                # abandoned at the deadline carries no error of its own in its payload,
+                # so serializing that payload would replace the sentence with "{}".
+                run.error = run.error or json.dumps(
                     payload.get("error") or payload.get("incomplete_details") or {}
                 )
                 continue
@@ -2057,12 +2075,20 @@ class IterativeEvidenceDiscovery:
             seed = {}
             if payloads is None:
                 return manifest
+            # A deadline stops the search, but only after the wave it already paid for
+            # is read. On a live run six of seven passes had come back when the seventh
+            # ran long, and returning here unread discarded six completed Deep Research
+            # reports: the stage reported seven passes, zero source leads and a floor
+            # met by nothing, having bought the literature and thrown it away.
+            timed_out = manifest.convergence_reason == "deep_research_timed_out"
             if not self._ingest_wave(
                 session, wave, payloads, manifest, normalizer=normalizer
             ):
                 break
             if manifest_callback:
                 manifest_callback(manifest)
+            if timed_out:
+                break
 
         if manifest.coverage_history and not manifest.coverage_history[-1].sufficient:
             manifest.enrichment_requests = [

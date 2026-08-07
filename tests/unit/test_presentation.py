@@ -1,6 +1,7 @@
 from coscientist.models import (
     ApprovalProfile,
     Artifact,
+    DeepResearchRun,
     DiscoveryManifest,
     Session,
     SourceLead,
@@ -118,4 +119,30 @@ def test_the_evidence_view_does_not_pretend_an_empty_pass_found_a_landscape():
     view = _evidence_view(DiscoveryManifest(question="Can a coating help?"))
 
     assert "nothing was discovered" in view["summary"]
-    assert _labelled(view, "Discovery provider") == ["none"]
+    assert _labelled(view, "Discovery provider") == ["none -- no pass was attempted"]
+
+
+def test_a_wave_that_returned_no_lead_is_not_reported_as_no_provider():
+    """The provider is read off the leads, so an empty wave names none of them.
+
+    Beside a panel reporting seven attempted passes, a bare "none" reads as a
+    deployment with no discovery configured. That is a broken install, not a search
+    that came back empty, and on a live run it sent the first diagnosis the wrong way.
+    """
+    view = _evidence_view(
+        DiscoveryManifest(
+            question="Can a coating help?",
+            runs=[
+                DeepResearchRun(
+                    pass_number=number,
+                    interaction_id=f"interaction-{number}",
+                    status="completed",
+                )
+                for number in (1, 2)
+            ],
+        )
+    )
+
+    assert _labelled(view, "Discovery provider") == [
+        "none named -- no pass returned a lead"
+    ]

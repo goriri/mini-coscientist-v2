@@ -523,7 +523,18 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
             },
         ]
         result["details"] = [
-            {"label": "Discovery provider", "value": providers or ["none"]},
+            {
+                "label": "Discovery provider",
+                # A provider is read off the leads, so a wave that returned none has
+                # none to name. "none" beside a panel reporting seven attempted
+                # passes reads as a deployment with no discovery configured.
+                "value": providers
+                or [
+                    "none named -- no pass returned a lead"
+                    if manifest.runs
+                    else "none -- no pass was attempted"
+                ],
+            },
             {
                 "label": "Passes",
                 "value": [

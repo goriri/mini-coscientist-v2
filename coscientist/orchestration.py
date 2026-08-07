@@ -1197,12 +1197,21 @@ class CoScientistWorkflow:
         gaps = latest.gaps if latest else []
         completed = len([run for run in manifest.runs if run.status == "completed"])
         providers = sorted({lead.provider for lead in manifest.source_leads})
+        # Read off the leads, so a wave that returned none has none to name. Printed
+        # as a bare "none" directly under a line reporting seven attempted passes, it
+        # says the deployment has no discovery provider configured, which is a broken
+        # install rather than a search that came back empty.
+        named = ", ".join(providers) or (
+            "none named -- no pass returned a lead"
+            if manifest.runs
+            else "none -- no pass was attempted"
+        )
         lines = [
             "### Evidence Discovery",
             "",
             f"- Deep Research passes: {completed} completed of "
             f"{len(manifest.runs)} attempted (limit {MAX_DEEP_RESEARCH_PASSES})",
-            f"- Discovery provider: {', '.join(providers) or 'none'}",
+            f"- Discovery provider: {named}",
             f"- Coverage: {coverage}",
             f"- Source leads: {len(manifest.source_leads)}",
             f"- Estimated cost: ${manifest.estimated_cost_usd:.2f}",
