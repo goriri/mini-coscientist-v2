@@ -591,6 +591,49 @@ def _flatten_text(value: Any) -> list[str]:
     return [str(value)]
 
 
+def _declared_bounds(info: Any) -> tuple[float | None, float | None]:
+    """The ``ge``/``le`` a field declares, or ``(None, None)``."""
+    low: float | None = None
+    high: float | None = None
+    for item in getattr(info, "metadata", ()) or ():
+        low = getattr(item, "ge", None) or getattr(item, "gt", None) or low
+        high = getattr(item, "le", None) or getattr(item, "lt", None) or high
+    return low, high
+
+
+def _rescaled_to_bounds(value: Any, info: Any, name: str, repairs: list[str]) -> Any:
+    """Map a score answered on a wider scale onto the one the field declares.
+
+    Specialists answer "out of 10" on fields declared 1-5, which is a scale
+    mismatch and not a refusal to score. Left alone it failed the whole contract,
+    and a live run showed how expensive that is: an evolution stage returned four
+    evolved candidates, four re-reviews and a ranking round, every candidate
+    scored 8 or 9 out of 10, and none of it validated. The parser then settled for
+    a nested object that happened to share the field name ``converged``, so the
+    stage recorded zero evolution records under the heading "Converged: true".
+
+    Rescaled rather than dropped, and recorded as a repair: 9 out of 10 is a
+    judgement the specialist made, and discarding it loses real information where
+    mapping it keeps the ordering intact.
+    """
+    low, high = _declared_bounds(info)
+    if low is None or high is None or not isinstance(value, (int, float)):
+        return value
+    if isinstance(value, bool) or low <= value <= high:
+        return value
+    if value < low or value > 100:
+        # Only the two scales anyone actually answers on. Past that the number is
+        # not a score on a wider scale, it is a different quantity in the wrong
+        # field, and clamping it to the top of the range would invent a judgement
+        # rather than translate one. Left to fail, which is what asks for a repair.
+        return value
+    source_high = 10 if value <= 10 else 100
+    scaled = low + (value - 1) * (high - low) / (source_high - 1)
+    scaled = min(high, max(low, round(scaled)))
+    repairs.append(f"{name} {value} -> {scaled} (answered on a 1-{source_high} scale)")
+    return scaled
+
+
 def _coerce_scalar(value: Any, annotation: Any, name: str, repairs: list[str]) -> Any:
     options = _literal_options(annotation)
     if options:
@@ -681,7 +724,12 @@ def _coerce(
         if get_origin(annotation) is dict and not isinstance(value, dict):
             repairs.append(f"{model.__name__}.{name}: dropped a non-mapping value")
             continue
-        coerced[name] = _coerce_scalar(value, annotation, name, repairs)
+        coerced[name] = _rescaled_to_bounds(
+            _coerce_scalar(value, annotation, name, repairs),
+            fields[name],
+            f"{model.__name__}.{name}",
+            repairs,
+        )
     return _fill_defaults(coerced, model, defaults, repairs)
 
 
@@ -705,6 +753,27 @@ def _fill_defaults(
         payload[name] = default(payload) if callable(default) else default
         repairs.append(f"{model.__name__}.{name}: filled from context")
     return payload
+
+
+def _is_foreign_object(payload: dict[str, Any], model: type[BaseModel]) -> bool:
+    """Whether this object belongs to some other contract than ``model``.
+
+    Measured by how much of it ``model`` can even name. An object most of whose
+    keys are unknown here is not a damaged instance of this contract, it is an
+    instance of a different one, and coercing it produces whatever the two
+    happen to share. An empty object names nothing and is foreign to everything.
+    """
+    if not payload:
+        return True
+    fields = model.model_fields
+    known = sum(
+        1
+        for key in payload
+        if key in fields
+        or _ALIASES.get(key.lower()) in fields
+        or key == "schema_version"
+    )
+    return known * 2 <= len(payload)
 
 
 def parse_contract(
@@ -749,6 +818,17 @@ def parse_contract(
             repairs.append("closed a truncated JSON object")
         payload, consumed = decoded
         if not isinstance(payload, dict):
+            continue
+        if _is_foreign_object(payload, model):
+            # A nested object belonging to some other contract, kept out rather
+            # than coerced into this one. Coercion drops what it does not
+            # recognize, so an inner TournamentState reduced to the single field
+            # the two contracts share -- ``converged`` -- and validated as a
+            # complete but empty EvolutionCycle. It beat nothing else, because
+            # the real payload had failed on a scoring scale, and a stage that
+            # produced four evolved candidates reported none under the heading
+            # "Converged: true". Skipping it lets the real error surface, which
+            # is what asks the specialist for a repair.
             continue
         attempts = (
             (payload, []),

@@ -11,7 +11,12 @@ from coscientist.agents import (
     output_contract,
 )
 from coscientist.contract_io import parse_contract, schema_instruction
-from coscientist.models import ApprovalProfile, CandidatePopulation, ReviewSet
+from coscientist.models import (
+    ApprovalProfile,
+    CandidatePopulation,
+    EvolutionCycle,
+    ReviewSet,
+)
 from coscientist.orchestration import CoScientistWorkflow
 from coscientist.parity import ROLE_CONTRACTS
 
@@ -216,3 +221,92 @@ def test_the_reported_error_describes_the_whole_answer_not_its_last_scrap():
     assert "candidates: missing" not in outcome.error
     # The population was found; what is missing is a field inside it.
     assert outcome.error.startswith("candidates.")
+
+
+def _evolution_response(score: int) -> str:
+    """The live shape: a full cycle whose candidates are scored out of ten."""
+    return json.dumps(
+        {
+            "records": [
+                {
+                    "parent_ids": ["cand_pmrb_ffa"],
+                    "candidate": {
+                        "id": "cand_pmrb_ffa_v2",
+                        "version": 2,
+                        "parent_ids": ["cand_pmrb_ffa"],
+                        "title": "Liposomal flufenamic acid restores colistin efficacy",
+                        "claim": "Encapsulating the PmrB inhibitor overcomes protein binding.",
+                        "rationale": "Liposomal delivery raises local free-drug concentration.",
+                        "mechanism_model": (
+                            "The liposome fuses with the outer membrane and delivers the "
+                            "inhibitor to the periplasm, blocking lipid A modification and "
+                            "restoring the membrane charge colistin depends on."
+                        ),
+                        "validation_protocol": (
+                            "A PK/PD-optimised murine pneumonia model with a dose-sparing "
+                            "colistin arm, read out on bacterial burden and renal markers "
+                            "against an unencapsulated comparator."
+                        ),
+                        "falsifier": "No burden reduction versus unencapsulated inhibitor.",
+                        "score_novelty": score,
+                        "score_feasibility": score,
+                    },
+                    "changes": ["Encapsulated the adjuvant."],
+                    "new_prediction": "Renal exposure falls while lung exposure rises.",
+                    "round_number": 1,
+                }
+            ],
+            "ranking_history": [
+                {
+                    "ratings": {"cand_pmrb_ffa_v2": 1232.0},
+                    "comparisons": [],
+                    "shortlist_ids": ["cand_pmrb_ffa_v2"],
+                    "swiss_rounds": 0,
+                    "top_round_robin_size": 4,
+                    "ranking_stable_rounds": 2,
+                    "score_movement": 0.01,
+                    "converged": True,
+                }
+            ],
+            "converged": True,
+            "stop_reason": "All candidates addressed their fatal flaws.",
+        }
+    )
+
+
+def test_a_score_answered_out_of_ten_does_not_discard_the_stage():
+    """An evolution stage reported zero records after doing all of the work.
+
+    Seen live: four evolved candidates, four re-reviews and a ranking round came
+    back with every candidate scored 8 or 9, against fields declared 1-5. The
+    cycle failed validation, and the parser settled for the nested ranking object
+    because it happened to share the field name ``converged`` -- so the panel read
+    "0 evolution records, 0 independent re-reviews, Converged: true".
+    """
+    outcome = parse_contract(_evolution_response(9), EvolutionCycle)
+
+    assert outcome.ok, outcome.error
+    assert len(outcome.value.records) == 1
+    assert outcome.value.stop_reason.startswith("All candidates")
+    # Rescaled onto the declared range rather than dropped: 9 of 10 is a judgement
+    # the specialist made, and the ordering survives the mapping.
+    assert outcome.value.records[0].candidate.score_novelty == 5
+    assert any("answered on a 1-10 scale" in repair for repair in outcome.repairs)
+
+
+def test_a_nested_object_of_another_contract_cannot_stand_in_for_the_answer():
+    """Coercion drops what it cannot name, which turns a stranger into an answer.
+
+    The inner ranking object shares exactly one field with EvolutionCycle. Coerced
+    against it, the other seven were dropped and what validated was a complete,
+    empty cycle carrying nothing but ``converged: true``. It won because the real
+    payload had failed, and a valid parse is what suppresses the repair retry --
+    so nothing ever asked the specialist to fix the scores.
+    """
+    broken = _evolution_response(900)  # Beyond any scale the repair rescales from.
+    outcome = parse_contract(broken, EvolutionCycle)
+
+    assert not outcome.ok
+    assert outcome.value is None
+    # And the error names the real fault, so the repair prompt can act on it.
+    assert "records." in outcome.error
