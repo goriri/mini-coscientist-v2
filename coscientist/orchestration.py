@@ -123,6 +123,40 @@ def _deep_research_enabled() -> bool:
     }
 
 
+def _uniquely_identified(
+    candidates: list[Candidate], agent: str, taken: set[str]
+) -> list[Candidate]:
+    """Rename candidates whose ids another generator has already handed out.
+
+    The four generation strategies are prompted separately and each numbers its
+    own output from one, so two of them return a ``cand_1`` for two unrelated
+    ideas. Nothing downstream told those two apart: the tournament matched a
+    candidate against itself three times out of eighteen, the ranking folded
+    eight ideas into six rows, and the shortlist printed ``cand_2`` twice under a
+    heading that said four candidates. Seen on a live production run.
+
+    A colliding id is namespaced to the strategy that wrote it, which is the only
+    thing distinguishing the two. Ids that do not collide are left alone, so the
+    ordinary run still reads ``cand_1``.
+    """
+    tag = agent.removeprefix("generation").strip("_") or "generation"
+    renamed: list[Candidate] = []
+    for candidate in candidates:
+        identifier = candidate.id
+        attempt = 1
+        while identifier in taken:
+            attempt += 1
+            suffix = tag if attempt == 2 else f"{tag}_{attempt}"
+            identifier = f"{candidate.id}_{suffix}"
+        taken.add(identifier)
+        renamed.append(
+            candidate
+            if identifier == candidate.id
+            else candidate.model_copy(update={"id": identifier})
+        )
+    return renamed
+
+
 class CoScientistWorkflow:
     """Supervisor state machine.
 
@@ -413,7 +447,8 @@ class CoScientistWorkflow:
     def _merged_generation_population(self, results) -> Artifact | None:
         """Fold the strategy generators' populations into the one the run ranks.
 
-        Duplicates are dropped on claim and rationale, and the field is then held
+        Duplicates are dropped on claim and rationale, ids are made unique across
+        the strategies, and the field is then held
         to ``budget.max_candidates``. The ceiling is not decoration: the ranking
         tournament plays three Swiss rounds over the whole field before the
         top-four final, so four generators that each over-produce turn a budgeted
@@ -425,6 +460,7 @@ class CoScientistWorkflow:
         """
         by_strategy: list[list[Candidate]] = []
         seen: set[tuple[str, str]] = set()
+        taken: set[str] = set()
         for result in results:
             artifact = result.artifact
             if artifact.schema_name != "CandidatePopulation" or not artifact.payload:
@@ -440,7 +476,9 @@ class CoScientistWorkflow:
                     seen.add(key)
                     distinct.append(candidate)
             if distinct:
-                by_strategy.append(distinct)
+                by_strategy.append(
+                    _uniquely_identified(distinct, artifact.agent, taken)
+                )
         if not by_strategy:
             return None
 

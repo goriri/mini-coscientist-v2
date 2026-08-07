@@ -372,6 +372,81 @@ def test_the_ceiling_thins_every_strategy_rather_than_dropping_the_last():
     assert kept == [f"s{index} {rank}" for rank in (0, 1) for index in range(4)]
 
 
+def _numbered_from_one(strategy: str, count: int):
+    """A generator that numbers its own output, the way the live ones do."""
+    from coscientist.models import Artifact
+
+    return Artifact(
+        stage="generate",
+        agent=f"generation_{strategy}",
+        content="",
+        schema_name="CandidatePopulation",
+        payload=CandidatePopulation(
+            candidates=[
+                Candidate(
+                    id=f"cand_{index}",
+                    title=f"{strategy} {index}",
+                    claim=f"{strategy} claim {index}",
+                    rationale=f"{strategy} rationale {index}",
+                    falsifier=f"{strategy} falsifier {index}",
+                    mechanism_model=f"{strategy} mechanism {index}",
+                    validation_protocol=f"{strategy} protocol {index}",
+                )
+                for index in range(1, count + 1)
+            ],
+            target_size=count,
+        ).model_dump(mode="json"),
+    )
+
+
+def test_two_strategies_that_both_numbered_from_one_stay_separately_addressable():
+    """Eight ideas reached the tournament under six ids on a live production run.
+
+    ``generation`` and ``generation_analogy_transfer`` each minted ``cand_1`` and
+    ``cand_2`` for unrelated claims. Downstream, three of eighteen matches were a
+    candidate against itself, the ranking showed six rows where generate and
+    reflect both showed eight, and the shortlist read ``cand_2, cand_2,
+    cand_evidence_1, cand_mechanism_1`` under a summary saying four candidates.
+    """
+    flow = _flow()
+    merged = flow._merged_generation_population(
+        [
+            _Result(_numbered_from_one("analogy_transfer", 2)),
+            _Result(_numbered_from_one("competing_explanation", 2)),
+        ]
+    )
+    population = CandidatePopulation.model_validate(merged.payload)
+
+    identifiers = [candidate.id for candidate in population.candidates]
+    assert len(identifiers) == 4
+    assert len(set(identifiers)) == 4
+    # The strategy that got there first keeps the plain id, so an ordinary run
+    # still reads cand_1; the collision is namespaced to whoever wrote it.
+    assert sorted(identifiers) == [
+        "cand_1",
+        "cand_1_competing_explanation",
+        "cand_2",
+        "cand_2_competing_explanation",
+    ]
+    # And renaming moved the id only -- every claim still reaches the tournament.
+    assert sorted(candidate.claim for candidate in population.candidates) == [
+        "analogy_transfer claim 1",
+        "analogy_transfer claim 2",
+        "competing_explanation claim 1",
+        "competing_explanation claim 2",
+    ]
+
+
+def test_a_population_that_reuses_an_id_is_refused_rather_than_ranked():
+    """The backstop under the merge: one id, one candidate, or the stage fails."""
+    population = CandidatePopulation.model_validate(_numbered_from_one("s0", 2).payload)
+    population.candidates.append(population.candidates[0].model_copy(deep=True))
+
+    with pytest.raises(NormalizationError) as excinfo:
+        validate_candidate_distinctness(population)
+    assert "cand_1" in str(excinfo.value)
+
+
 def test_a_claim_two_strategies_both_reached_is_carried_once():
     flow = _flow()
     duplicate = _population_artifact("s0", 2)

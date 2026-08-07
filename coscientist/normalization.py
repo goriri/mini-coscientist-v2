@@ -151,8 +151,27 @@ def _tokenize(text: str) -> set[str]:
 
 
 def validate_candidate_distinctness(population: CandidatePopulation) -> None:
-    """Ensure candidate population has mechanism and prediction diversity."""
+    """Ensure candidate population has distinct ids and mechanism diversity."""
     candidates = population.candidates
+    # Identity before content. Two candidates may legitimately be near-neighbours
+    # in wording, but two that share an id are one candidate to everything
+    # downstream: the tournament pairs it against itself, the ranking drops a row,
+    # and the shortlist counts a name twice. A population that reached here with
+    # a repeat came from a generator that numbered its own output without knowing
+    # what the others had numbered, and it cannot be reconciled here -- only the
+    # merge knows which strategy wrote which.
+    repeated = sorted(
+        {
+            candidate.id
+            for index, candidate in enumerate(candidates)
+            if candidate.id in {other.id for other in candidates[:index]}
+        }
+    )
+    if repeated:
+        raise NormalizationError(
+            f"Candidate population reuses candidate id(s) {', '.join(repeated)}; "
+            f"every candidate must be separately addressable."
+        )
     for i in range(len(candidates)):
         tokens_i = _tokenize(
             candidates[i].claim
