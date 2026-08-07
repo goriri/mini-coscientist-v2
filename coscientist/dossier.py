@@ -2319,14 +2319,20 @@ CHAPTER_SECTIONS = frozenset(
 _SUMMARY_CELL_CEILING = 140
 
 
-def _cell(text: str, ceiling: int = _SUMMARY_CELL_CEILING) -> str:
+def _cell(text: str, ceiling: int | None = _SUMMARY_CELL_CEILING) -> str:
     """One statement, short enough that the row it is in stays one screen wide.
 
     A pipe inside a cell ends the cell, so any that survived into a claim would
     silently split the row into columns the header has no names for.
+
+    ``ceiling=None`` prints the cell whole. Abbreviating what a row says is fine;
+    abbreviating what a row *is* is not, and this cut two candidate titles -- "ALD
+    Alumina Conformal Barrier for Transition Metal Dissolution…" -- so the reader
+    could not match the row to the section heading it summarises, in a report with
+    two ideas whose full names both open "Sacrificial H".
     """
     flat = " ".join(plain_text(text).split()).replace("|", "—")
-    if len(flat) <= ceiling:
+    if ceiling is None or len(flat) <= ceiling:
         return flat
     # On a word boundary. The bare slice cut inside words -- "improving capacity
     # reten…", "by the chemical red…" -- in five of the eight rows of one live
@@ -2372,7 +2378,7 @@ def _candidate_summary_table(briefs: Sequence) -> list[str]:
     for brief in briefs:
         shortlist = " ★" if brief.shortlisted else ""
         lines.append(
-            f"| {brief.rank} | **{_cell(brief.title, 70)}**{shortlist} "
+            f"| {brief.rank} | **{_cell(brief.title, None)}**{shortlist} "
             f"| {_cell(brief.strategy, 24)} "
             f"| {_cell(brief.facts.get('Core idea', ''))} "
             f"| {_cell(brief.facts.get('Falsifier', ''))} "

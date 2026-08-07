@@ -1637,8 +1637,11 @@ def test_a_rewrite_made_over_two_rounds_is_not_attributed_to_one():
     # The critiques run to a four-item semicolon series on a live run, and closing it
     # with ", and this is the cumulative result" hung the point of the sentence off
     # the end of a list the reader was still working through.
-    assert "and this is the cumulative result. The rounds addressed" in lead_in
-    critiques = lead_in.split("The rounds addressed, between them, ")[1]
+    assert (
+        "and this is the cumulative result. What the rounds were written against"
+        in lead_in
+    )
+    critiques = lead_in.split("What the rounds were written against, between them: ")[1]
     assert critiques.split(". ")[0].endswith("the inhalation risk")
 
 
@@ -1658,12 +1661,48 @@ def test_a_critique_recorded_with_its_remedy_stays_inside_the_sentence():
     lead_in, _, _ = _revised_form(record, _candidate("cand_a"))
 
     assert (
-        "The rounds addressed, between them, missing Structured Evaluation Table — "
-        "added to mechanism model; and incomplete Synthetic Routes — specified ALD "
-        "conditions." in lead_in
+        "What the rounds were written against, between them: missing Structured "
+        "Evaluation Table — added to mechanism model; and incomplete Synthetic "
+        "Routes — specified ALD conditions." in lead_in
     )
     assert "mechanism_model" not in lead_in
     assert ": Added to" not in lead_in
+
+
+def test_a_critique_that_is_a_whole_finding_is_not_spliced_into_a_noun_slot():
+    """ "to address" wants a noun phrase and the evolution stage records its critiques
+    as whole findings, so all four rewritten ideas opened "evolution rewrote the idea
+    in round two to address none of the validation protocols explicitly mention
+    randomization" -- which parses as the rewrite addressing none of them."""
+    from coscientist.narrative import _revised_form
+
+    record = _twice_revised()
+    record.evolution.records = record.evolution.records[1:]
+    record.evolution.records[0].critiques_addressed = [
+        "None of the validation protocols explicitly mention randomization.",
+        "None of the validation protocols explicitly mention blinding.",
+    ]
+
+    lead_in, _, _ = _revised_form(record, _candidate("cand_a"))
+
+    assert "to address none of the validation protocols" not in lead_in
+    assert (
+        "evolution rewrote the idea in round two, and this is what it was written "
+        "against: none of the validation protocols explicitly mention randomization"
+    ) in lead_in
+
+
+def test_a_rewrite_with_no_critique_on_the_record_keeps_the_noun_phrase():
+    """ "to address the reviews" is the one thing that still fits the slot."""
+    from coscientist.narrative import _revised_form
+
+    record = _twice_revised()
+    record.evolution.records = record.evolution.records[1:]
+    record.evolution.records[0].critiques_addressed = []
+
+    lead_in, _, _ = _revised_form(record, _candidate("cand_a"))
+
+    assert "evolution rewrote the idea in round two to address the reviews" in lead_in
 
 
 def test_a_rewrite_nobody_recommends_is_not_headed_as_a_recommendation():

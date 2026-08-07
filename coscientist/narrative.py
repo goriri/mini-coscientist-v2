@@ -3791,27 +3791,35 @@ def _revised_form(
     # happened in one -- with the round-one critiques left off the list it says the
     # rewrite was written to address.
     rounds = sorted({item.round_number for item in revisions})
-    addressed = _spliced(
-        _join(
-            [
-                _labelled_note(critique)
-                for critique in dict.fromkeys(
-                    critique
-                    for item in revisions
-                    for critique in item.critiques_addressed
-                )
-                if _states_a_critique(critique)
-            ],
-            fallback="the reviews",
+    critiques = [
+        _labelled_note(critique)
+        for critique in dict.fromkeys(
+            critique for item in revisions for critique in item.critiques_addressed
         )
-    )
+        if _states_a_critique(critique)
+    ]
+    addressed = _spliced(_join(critiques, fallback="the reviews"))
+    # "to address" and "the rounds addressed" both want a noun phrase, and the
+    # evolution stage records its critiques as whole findings. Spliced in, the live
+    # sentence read "evolution rewrote the idea in round two to address none of the
+    # validation protocols explicitly mention randomization" -- which parses as the
+    # rewrite addressing none of them, the opposite of what it says, and stood
+    # verbatim under all four rewritten ideas. A statement gets a colon; the fallback
+    # noun phrase, which is the only thing that still fits the slot, keeps the verb.
+    stated = bool(critiques)
     # "to address" hangs off the rewriting, not off the result of it. Appended after
     # the cumulative-result clause it read "evolution rewrote the idea in rounds one,
     # two and three, and this is the cumulative result to address unspecified effect
     # size" -- which says the result was produced in order to address the critique.
     written = (
-        f"evolution rewrote the idea in round {_number_word(rounds[0]).lower()} to "
-        f"address {addressed}"
+        (
+            f"evolution rewrote the idea in round {_number_word(rounds[0]).lower()}"
+            + (
+                f", and this is what it was written against: {addressed}"
+                if stated
+                else f" to address {addressed}"
+            )
+        )
         if len(rounds) == 1
         # The critiques are a semicolon series four items long on a live run, and
         # closing it with ", and this is the cumulative result" hung the point of the
@@ -3819,8 +3827,12 @@ def _revised_form(
         # list ends its own sentence instead.
         else "evolution rewrote the idea in rounds "
         + _names([_number_word(number).lower() for number in rounds])
-        + f", and this is the cumulative result. The rounds addressed, between "
-        f"them, {addressed}"
+        + ", and this is the cumulative result. "
+        + (
+            f"What the rounds were written against, between them: {addressed}"
+            if stated
+            else f"The rounds addressed, between them, {addressed}"
+        )
     )
     # That only the changed fields are printed is a fact about the layout and the same
     # under every rewritten idea, so it is stated in the preamble above the ideas. What
