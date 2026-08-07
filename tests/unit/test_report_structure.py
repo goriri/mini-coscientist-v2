@@ -5077,3 +5077,95 @@ def test_the_minority_lead_in_counts_the_entries_not_the_cases_it_distinguishes(
     assert "The remaining three entries are the inverse case" in both
     assert "two entries where a region rests on a single idea" in both
     assert "one entry where a region has more than one occupant" in both
+
+
+def test_one_finding_stated_at_three_lengths_is_one_finding():
+    """A live run printed the same finding about electrolyte standardisation three
+    times, in three different relation groups: once as the pass's own section heading
+    plus its first sentence, once as that sentence with the rest of the paragraph, and
+    once with both. The section then told the reader discovery had read each of them
+    differently, which is a fact about the merge and not about the literature."""
+    from coscientist.narrative import _EvidenceStatement, _merged_statements
+
+    heading = "B. Electrolyte Standardization (1M LiPF6 in EC:EMC 3:7 wt% + 2 wt% VC) "
+    opening = (
+        "Several studies within the current battery materials research utilize the "
+        "specified Gen2 baseline electrolyte formulation, consisting of 1M LiPF6 in "
+        "an ethylene carbonate (EC) and ethyl methyl carbonate (EMC) blend at a 3:7 "
+        "weight ratio, combined with 2 wt% vinylene carbonate (VC) additives."
+    )
+    rest = (
+        " However, none of the studies employing this exact standardized formulation "
+        "applied a 2-5 nm protective coating to evaluate capacity retention against "
+        "an uncoated control."
+    )
+    copies = [
+        (heading + opening, "supports", "https://x/1"),
+        (opening + rest, "contradicts", "https://x/2"),
+        (heading + opening + rest, "neutral", "https://x/3"),
+    ]
+
+    merged = _merged_statements(
+        [
+            _EvidenceStatement(text=text, urls=[url], facet="claim", relation=relation)
+            for text, relation, url in copies
+        ]
+    )
+
+    assert len(merged) == 1
+    # The fullest statement of it is the one printed, and no locator is lost.
+    assert merged[0].text == heading + opening + rest
+    assert merged[0].urls == ["https://x/3", "https://x/1", "https://x/2"]
+    assert merged[0].relation == "recorded_both_ways"
+
+
+def test_a_finding_and_the_same_finding_with_the_pass_s_own_aside_are_one():
+    """One pass wrote where it had read the thing into the sentence saying what it
+    found -- "(e.g., TUM investigations, https://mediatum.ub.tum.de/...)" -- and
+    another did not, so an exact match saw two findings and printed them apart."""
+    from coscientist.narrative import _EvidenceStatement, _merged_statements
+
+    bare = (
+        "Although 25 C is occasionally cited as a standard testing temperature for "
+        "general battery cycling, it is never paired with the n=5 sample size "
+        "constraint."
+    )
+    cited = (
+        "Although 25 C is occasionally cited as a standard testing temperature for "
+        "general battery cycling (e.g., TUM (Technical University of Munich) "
+        "investigations, https://mediatum.ub.tum.de/doc/1691934/1691934.pdf), it is "
+        "never paired with the n=5 sample size constraint."
+    )
+
+    merged = _merged_statements(
+        [
+            _EvidenceStatement(text=bare, urls=[], facet="claim", relation="neutral"),
+            _EvidenceStatement(text=cited, urls=[], facet="claim", relation="neutral"),
+        ]
+    )
+
+    assert len(merged) == 1
+    # The aside is dropped from the comparison, not from the page.
+    assert merged[0].text == cited
+
+
+def test_a_short_finding_inside_a_longer_one_is_left_alone():
+    """Containment is how a paragraph swallows its own first sentence. A clause short
+    enough to turn up inside an unrelated paragraph is not the same finding."""
+    from coscientist.narrative import _EvidenceStatement, _merged_statements
+
+    short = "Coatings raise impedance."
+    long = (
+        "Across the retrieved literature the consensus is unsettled, and one review "
+        "notes in passing that coatings raise impedance. under some deposition "
+        "conditions that were not otherwise characterised."
+    )
+
+    merged = _merged_statements(
+        [
+            _EvidenceStatement(text=short, urls=[], facet="claim", relation="supports"),
+            _EvidenceStatement(text=long, urls=[], facet="claim", relation="neutral"),
+        ]
+    )
+
+    assert len(merged) == 2

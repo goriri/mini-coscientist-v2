@@ -5998,6 +5998,37 @@ def _all_evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]
     return _merged_statements(statements)
 
 
+# Where the pass found the thing, written into the sentence that says what it
+# found: "(e.g., TUM (Technical University of Munich) investigations,
+# https://mediatum.ub.tum.de/doc/1691934/1691934.pdf)". One pass wrote it and
+# another did not, so the same sentence came back as two findings and was printed
+# in two different relation groups. The locator is kept -- it is in the entry's own
+# urls, and in the longer copy, which is the one the merge keeps.
+_PARENTHETICAL = re.compile(r"\s*\((?:[^()]|\([^()]*\))*\)")
+
+
+def _without_inline_citations(text: str) -> str:
+    """A finding with the pass's own asides about where it read it taken out."""
+
+    def drop(match: re.Match[str]) -> str:
+        inner = match.group(0).strip()[1:-1].strip().casefold()
+        if "http" in inner or inner.startswith(("e.g.", "eg.", "see ", "such as")):
+            return ""
+        return match.group(0)
+
+    return _PARENTHETICAL.sub(drop, text)
+
+
+def _finding_key(text: str) -> str:
+    """What two recorded statements must share to be the same finding."""
+    return _comparable(re.sub(r"\s+([,;:.])", r"\1", _without_inline_citations(text)))
+
+
+# Below this a key is too short to be safely read as contained in another: a
+# six-word finding can be a clause of a paragraph about something else.
+_CONTAINMENT_FLOOR = 8
+
+
 def _merged_statements(
     statements: Sequence[_EvidenceStatement],
 ) -> list[_EvidenceStatement]:
@@ -6011,6 +6042,14 @@ def _merged_statements(
     and said that discovery had read it as supporting the hypothesis and as arguing
     against it. Six more were the empty-field placeholder, printed as findings.
 
+    An exact match was too strict for what the passes actually return. A live run
+    printed one finding about electrolyte standardisation three times, in three
+    different relation groups: once as the pass's own section heading plus its first
+    sentence, once as that sentence with the rest of the paragraph, and once with
+    both. The report then told the reader that discovery had read each of them
+    differently. So a statement contained in a longer one is the same finding stated
+    at greater length, and the longer text is the one kept.
+
     Merging keeps every locator and every recorded scope, prefers the verified copy,
     and where the copies disagree about which way the finding cuts, says that instead
     of picking one.
@@ -6020,16 +6059,43 @@ def _merged_statements(
     for statement in statements:
         if not statement.text:
             continue
-        key = _comparable(statement.text)
+        key = _finding_key(statement.text)
         relations.setdefault(key, []).append(statement.relation)
         held = merged.get(key)
         if held is None:
-            merged[key] = replace(statement, urls=list(statement.urls))
+            merged[key] = replace(
+                statement, urls=list(statement.urls), scope=list(statement.scope)
+            )
             continue
         held.urls.extend(url for url in statement.urls if url not in held.urls)
         held.scope.extend(item for item in statement.scope if item not in held.scope)
         if statement.facet == "verified":
             held.facet = "verified"
+        # The copy that says more is the one to print: the asides the key drops are
+        # real text, and dropping them from the page as well would lose them.
+        if len(statement.text) > len(held.text):
+            held.text = statement.text
+    # Longest first, so a key contained in two others reaches the fullest statement
+    # of the finding rather than whichever middling copy came back first.
+    for key in sorted(merged, key=len):
+        if len(key.split()) < _CONTAINMENT_FLOOR:
+            continue
+        host = next(
+            (
+                other
+                for other in sorted(merged, key=len, reverse=True)
+                if other != key and key in other
+            ),
+            None,
+        )
+        if host is None:
+            continue
+        inner, outer = merged.pop(key), merged[host]
+        outer.urls.extend(url for url in inner.urls if url not in outer.urls)
+        outer.scope.extend(item for item in inner.scope if item not in outer.scope)
+        if inner.facet == "verified":
+            outer.facet = "verified"
+        relations[host].extend(relations.pop(key))
     for key, statement in merged.items():
         recorded = set(relations[key])
         if len(recorded) > 1:
