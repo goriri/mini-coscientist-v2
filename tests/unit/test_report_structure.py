@@ -5007,3 +5007,45 @@ def test_a_draft_a_researcher_edited_is_not_counted_as_a_stage_gate(
     # The edit is a fact about the run, so it is reported rather than dropped.
     assert "one draft was sent back for revision before being accepted" in approvals
     assert "(scoping the goal)" in approvals
+
+
+def test_a_claim_recorded_where_a_title_belongs_is_not_printed_as_a_paper_name():
+    """Entry 11 of a live reference list read "The most critical failure point in the
+    available scientific literature is the sample size requirement." -- the finding,
+    printed a second time as the name of the paper it was drawn from. Entry 20 was a
+    forty-word sentence about electrolyte formulations. Both came in from the evidence
+    stage, which records a statement and its source side by side."""
+    from coscientist.narrative import _reference_title
+
+    claim = SourceLead(
+        canonical_url="https://chemrxiv.org/doi/10.26434/chemrxiv.15001487",
+        title=(
+            "The most critical failure point in the available scientific literature "
+            "is the sample size requirement"
+        ),
+    )
+    assert _reference_title(claim) == "Untitled source on chemrxiv.org"
+
+    # A long title in the case a journal sets one in is a title, and stays.
+    for kept in (
+        "Advances in Coating Materials for Silicon-Based Lithium-Ion Battery Anodes",
+        "Recent advances in lithium metal protective strategies with a stable interface",
+        "Bulk properties and transport mechanisms of a solid state antiperovskite "
+        "Li-ion conductor Li3OCl: insights from first principles calculations",
+    ):
+        assert _reference_title(
+            SourceLead(canonical_url="https://x/1", title=kept)
+        ) == (kept)
+
+
+def test_an_entry_that_has_only_the_authors_says_it_has_no_title():
+    """ "22. Zhao et al." was a whole reference entry: the authors came out of a table
+    cell in a pass report and the title stayed in the next column."""
+    from coscientist.narrative import _reference_title
+
+    lead = SourceLead(
+        canonical_url="https://pubs.acs.org/aamick/article/16/10/13029/88607",
+        title="| Zhao et al",
+    )
+
+    assert _reference_title(lead) == ("Zhao et al., untitled source on pubs.acs.org")

@@ -586,9 +586,54 @@ def _without_search_chrome(title: str) -> str:
     return trimmed if len(trimmed.split()) >= 3 else title
 
 
+# Who wrote it, recorded where what it is called should be. A live reference list
+# printed "22. Zhao et al." as a whole entry, which cites a paper without naming
+# one -- the authors came out of a table cell in a pass report and the title stayed
+# in the next column. The name is worth keeping; passing it off as the title is not.
+_AUTHORS_ONLY = re.compile(
+    r"^[A-Z][A-Za-z'-]+(?:\s+(?:and|&)\s+[A-Z][A-Za-z'-]+)*"
+    r"\s+et\.?\s*al\.?(?:,?\s*\(?(?:19|20)\d{2}\)?)?$"
+)
+
+# A finding recorded where a title should be. Entry 11 of a live report read "The
+# most critical failure point in the available scientific literature is the sample
+# size requirement." -- the claim, printed a second time as though it were the name
+# of the paper it was drawn from, and entry 20 was a forty-word sentence about
+# electrolyte formulations. Both came in from the evidence stage, where a statement
+# and the source it cites are recorded side by side.
+#
+# Three conditions together, because any one of them alone catches real titles: a
+# clause verb of the kind a title has no room for, ten words or more, and sentence
+# case rather than the title case a journal sets a name in. Checked against the
+# sixty-three titles that run recorded, they select those two and nothing else.
+_CLAUSE_VERB = re.compile(
+    r"\b(?:is|are|was|were|has|have|had|utilizes?)\b", re.IGNORECASE
+)
+
+
+def _states_a_claim(title: str) -> bool:
+    """Whether what was stored as a title is a sentence about the field."""
+    words = title.split()
+    if len(words) < 10 or title.rstrip().endswith("?"):
+        return False
+    capitalised = sum(1 for word in words if word[:1].isupper())
+    return bool(_CLAUSE_VERB.search(title)) and capitalised / len(words) < 0.4
+
+
 def _reference_title(lead: SourceLead) -> str:
     """Prefer the annotation title: the canonical URL is a grounding redirect."""
     title = _without_search_chrome(" ".join(lead.title.split()))
+    if _states_a_claim(title):
+        # The claim is printed where the run recorded it as a finding. Here it would
+        # be the paper's name, which it is not, so the entry says what it has.
+        title = ""
+    elif _AUTHORS_ONLY.match(title):
+        # The authors lead, and what is missing is said rather than left to the
+        # reader to notice that the entry never names a document.
+        untitled = _untitled_on(_publisher_of(lead.canonical_url))
+        # The chrome cut takes the abbreviation's full stop with it, and "Zhao et al"
+        # is a typo where "Zhao et al." is a citation.
+        title = f"{title.rstrip('.')}., {untitled[:1].lower()}{untitled[1:]}"
     if not title:
         # A lead with no title still usually has a link, and the link names the
         # publisher. A live list printed "Untitled source lead." -- a reference
