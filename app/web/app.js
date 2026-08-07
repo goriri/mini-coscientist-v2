@@ -1203,6 +1203,165 @@ function evidenceProgressCopy(workflow) {
   }% coverage · ${metric["Source leads"] || 0} source leads · ${trust}`;
 }
 
+// What each gate is deciding about, and what pressing the button spends. A gate
+// whose primary button said "Accept & continue" told the researcher neither what
+// they were accepting nor that accepting the scope draft starts a billed
+// Deep Research wave that cannot be cancelled once it is running.
+const GATE_WORK = {
+  scope: {
+    draft: "research plan",
+    next: "Evidence",
+    starts:
+      "up to 8 Deep Research passes against the live literature. Billed, tens of minutes, and a pass cannot be cancelled once it starts.",
+    revises: "rewrites the plan. About a minute.",
+  },
+  evidence: {
+    draft: "evidence base",
+    next: "Generate",
+    starts: "four generator strategies write hypotheses. A few minutes.",
+    revises:
+      "sends discovery back for another look at the gaps. Minutes, and it may spend another Deep Research pass.",
+  },
+  generate: {
+    draft: "candidate hypotheses",
+    next: "Reflect",
+    starts: "seven reviewers read every candidate. A few minutes.",
+    revises: "writes a fresh set of candidates. A few minutes.",
+  },
+  reflect: {
+    draft: "review panel",
+    next: "Rank",
+    starts: "a Swiss tournament and a debated final round. A few minutes.",
+    revises: "re-runs the review panel. A few minutes.",
+  },
+  rank: {
+    draft: "ranking",
+    next: "Evolve",
+    starts:
+      "the shortlist is evolved and independently re-reviewed. A few minutes.",
+    revises: "re-runs the tournament. A few minutes.",
+  },
+  evolve: {
+    draft: "evolved shortlist",
+    next: "Proximity",
+    starts: "the surviving hypotheses are clustered. Under a minute.",
+    revises: "evolves the shortlist again. A few minutes.",
+  },
+  proximity: {
+    draft: "proximity map",
+    next: "Meta-review",
+    starts: "the meta-review synthesises the whole run. A few minutes.",
+    revises: "rebuilds the proximity map. Under a minute.",
+  },
+  meta_review: {
+    draft: "meta-review",
+    next: "Report",
+    starts: "the dossier is assembled. Under a minute.",
+    revises: "rewrites the meta-review. A few minutes.",
+  },
+  report: {
+    draft: "dossier",
+    next: "",
+    starts: "",
+    revises: "rewrites the dossier. A few minutes.",
+  },
+};
+
+function gateWork(stage) {
+  return (
+    GATE_WORK[stage] || {
+      draft: `${stageLabel(stage)} draft`,
+      next: "",
+      starts: "",
+      revises: "re-runs this stage.",
+    }
+  );
+}
+
+function plural(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+function gateBlockReasons(workflow, requirements, openFindings) {
+  // A disabled primary with no explanation reads as a broken button. Every
+  // reason it is disabled is nameable, and each one is answered somewhere on
+  // this same card.
+  const reasons = [];
+  if (openFindings.length)
+    reasons.push(`${plural(openFindings.length, "safety finding")} unanswered`);
+  if (requirements.length)
+    reasons.push(`${plural(requirements.length, "input reference")} still needed`);
+  if (workflow.pending_artifacts.length)
+    reasons.push(
+      `${plural(workflow.pending_artifacts.length, "specialist output")} still to approve`,
+    );
+  return reasons;
+}
+
+function approvalCardDraft(card) {
+  // Everything the researcher typed into this card and has not yet posted.
+  // Answering one governance finding rebuilds the card, and until this existed
+  // the rebuild wiped the half-written reasons in all the others.
+  if (!card) return null;
+  const active = document.activeElement;
+  const findings = {};
+  card.querySelectorAll(".governance-finding").forEach((node) => {
+    const name = node.querySelector(".governance-adjudicator");
+    const reason = node.querySelector(".governance-justification");
+    findings[node.dataset.reviewId] = {
+      adjudicator: name ? name.value : "",
+      justification: reason ? reason.value : "",
+      focused:
+        active === name
+          ? "adjudicator"
+          : active === reason
+            ? "justification"
+            : "",
+      caret: active === name || active === reason ? active.selectionStart : 0,
+    };
+  });
+  const editor = card.querySelector(".direct-editor");
+  const revision = card.querySelector(".revision-field");
+  return {
+    findings,
+    revision: revision ? revision.value : "",
+    revisionFocused: active === revision,
+    editorOpen: editor ? !editor.hidden : false,
+    editorText: card.querySelector(".direct-edit-field")?.value || "",
+  };
+}
+
+function restoreApprovalCardDraft(card, draft) {
+  if (!draft) return;
+  const revision = card.querySelector(".revision-field");
+  if (revision && draft.revision) revision.value = draft.revision;
+  const editor = card.querySelector(".direct-editor");
+  if (editor && draft.editorOpen) {
+    editor.hidden = false;
+    const field = card.querySelector(".direct-edit-field");
+    if (field && draft.editorText) field.value = draft.editorText;
+  }
+  card.querySelectorAll(".governance-finding").forEach((node) => {
+    const carried = draft.findings[node.dataset.reviewId];
+    if (!carried) return;
+    const name = node.querySelector(".governance-adjudicator");
+    const reason = node.querySelector(".governance-justification");
+    if (name && carried.adjudicator) name.value = carried.adjudicator;
+    if (reason && carried.justification) reason.value = carried.justification;
+    const target =
+      carried.focused === "adjudicator"
+        ? name
+        : carried.focused === "justification"
+          ? reason
+          : null;
+    if (!target) return;
+    target.focus();
+    const caret = Math.min(carried.caret, target.value.length);
+    target.setSelectionRange(caret, caret);
+  });
+  if (draft.revisionFocused && revision) revision.focus();
+}
+
 function renderApprovalCard(workflow) {
   const existing = document.querySelector(".approval-card:not(.resolved)");
   if (
@@ -1214,8 +1373,8 @@ function renderApprovalCard(workflow) {
   }
 
   const requirements = unresolvedRequirements(workflow);
-  const blockers = workflow.governance_blockers || [];
-  const artifactCount = workflow.pending_artifacts.length;
+  const findings = workflow.governance_blockers || [];
+  const openFindings = findings.filter((item) => !item.resolution);
   const decisionRequired = workflow.requires_human_approval;
   const operation = workflow.operation || { status: "idle", detail: "" };
   const operationActive = ["queued", "running"].includes(operation.status);
@@ -1242,12 +1401,28 @@ function renderApprovalCard(workflow) {
     existing.querySelector(".approval-badge").textContent = "In progress";
     return;
   }
-  if (existing) existing.remove();
 
-  const card = document.createElement("section");
+  // The same card, re-rendered in place, for as long as the governance block
+  // lasts. Each answer used to tear it down and append a new card holding the
+  // findings that were left, which read as the gate restarting and lost every
+  // reason that was part-typed in the others.
+  const stageKey = `${workflow.id}:${workflow.stage}`;
+  const reused =
+    existing &&
+    existing.dataset.stageKey === stageKey &&
+    existing.dataset.governanceGate === "true" &&
+    findings.length > 0;
+  const carried = reused ? approvalCardDraft(existing) : null;
+  if (existing && !reused) existing.remove();
+
+  const card = reused ? existing : document.createElement("section");
   card.className = "approval-card";
   card.dataset.workflowId = workflow.id;
   card.dataset.gateKey = gateKey;
+  card.dataset.stageKey = stageKey;
+  card.dataset.governanceGate = findings.length ? "true" : "false";
+  const work = gateWork(workflow.stage);
+  const blockReasons = gateBlockReasons(workflow, requirements, openFindings);
   card.innerHTML = `
     <div class="approval-card-head">
       <div>
@@ -1300,10 +1475,10 @@ function renderApprovalCard(workflow) {
         : ""
     }
     ${
-      blockers.length
+      findings.length
         ? `<div class="input-requirement governance-warning">
-            <strong>Safety and governance review recorded a fatal flaw</strong>
-            <p>Nothing advances until every finding below is answered. Withdrawing drops the hypothesis and rebuilds the population without it; overriding keeps it and accepts the flaw. Your name and your reason are recorded and reprinted in the dossier beside the flaw.</p>
+            <strong>Safety and governance review recorded ${plural(findings.length, "fatal flaw")}</strong>
+            <p>${findings.length - openFindings.length} of ${findings.length} answered. Nothing advances until every finding below is answered, one at a time and each in place. Withdrawing drops that hypothesis and rebuilds the population without it; overriding keeps it and accepts the flaw. Your name and your reason are recorded against that finding alone and reprinted in the dossier beside the flaw.</p>
           </div>`
         : ""
     }
@@ -1314,21 +1489,26 @@ function renderApprovalCard(workflow) {
         ? ""
         : `
           <div class="direct-editor" hidden>
-            <label>Directly edit this stage draft</label>
+            <label>Directly edit the ${escapeHtml(work.draft)}</label>
             <textarea class="direct-edit-field" rows="14"></textarea>
             <p>Your saved edit becomes a new auditable artifact version.</p>
-            <button class="save-edit" type="button" data-decision="edit">Save edited version</button>
+            <button class="save-edit" type="button" data-decision="edit">Save the edited ${escapeHtml(work.draft)}</button>
           </div>
-          <textarea class="revision-field" rows="2" placeholder="Or describe what the agent should revise…"></textarea>
+          <textarea class="revision-field" rows="2" placeholder="Or describe what the agent should change in the ${escapeHtml(work.draft)}…"></textarea>
+          ${
+            blockReasons.length
+              ? `<p class="gate-blocked">Accepting is blocked: ${escapeHtml(blockReasons.join(" · "))}. Each is answered on this card.</p>`
+              : work.starts
+                ? `<p class="gate-consequence">Accepting the ${escapeHtml(work.draft)} starts <strong>${escapeHtml(work.next)}</strong> — ${escapeHtml(work.starts)}</p>`
+                : ""
+          }
           <div class="approval-actions">
             <button class="primary" type="button" data-decision="accept" ${
-              requirements.length || artifactCount || blockers.length
-                ? "disabled"
-                : ""
-            }>Accept &amp; continue</button>
-            <button type="button" data-decision="toggle_edit">Edit draft directly</button>
-            <button type="button" data-decision="revise">Ask agent to revise</button>
-            <button class="danger" type="button" data-decision="stop">Stop workflow</button>
+              blockReasons.length ? "disabled" : ""
+            }>Accept the ${escapeHtml(work.draft)}${work.next ? ` &amp; run ${escapeHtml(work.next)}` : ""}</button>
+            <button type="button" data-decision="toggle_edit">Edit the ${escapeHtml(work.draft)} myself</button>
+            <button type="button" data-decision="revise" title="${escapeHtml(work.revises)}">Send the ${escapeHtml(work.draft)} back for revision</button>
+            <button class="danger" type="button" data-decision="stop">Stop this session</button>
           </div>
         `
     }
@@ -1356,12 +1536,10 @@ function renderApprovalCard(workflow) {
 
   const governanceList = card.querySelector(".governance-list");
   const adjudicator = rememberedAdjudicator();
-  blockers.forEach((item) => {
+  findings.forEach((item) => {
     const block = document.createElement("div");
-    block.className = "governance-finding";
     block.dataset.reviewId = item.review_id;
-    block.innerHTML = `
-      <strong>${escapeHtml(item.candidate_title)}</strong>
+    const flaws = `
       <p class="governance-reviewer">${escapeHtml(item.reviewer.replaceAll("_", " "))} · ${escapeHtml(item.candidate_id)}</p>
       <ul class="governance-flaws">
         ${item.fatal_flaws.map((flaw) => `<li>${escapeHtml(flaw)}</li>`).join("")}
@@ -1372,7 +1550,30 @@ function renderApprovalCard(workflow) {
               .map((objection) => `<li>${escapeHtml(objection)}</li>`)
               .join("")}</ul>`
           : ""
-      }
+      }`;
+    if (item.resolution) {
+      // Answered, and still on the card: collapsed to its verdict so the
+      // remaining work is what stands out, but never removed under the reader.
+      const withdrawn = item.resolution.action === "withdraw";
+      block.className = "governance-finding settled";
+      block.innerHTML = `
+        <details>
+          <summary>
+            <span class="governance-verdict ${withdrawn ? "withdrawn" : "overridden"}">${withdrawn ? "Withdrawn" : "Override recorded"}</span>
+            <span class="governance-settled-title">${escapeHtml(item.candidate_title)}</span>
+          </summary>
+          ${flaws}
+          <p class="governance-resolution"><strong>${escapeHtml(item.resolution.actor)}</strong>: ${escapeHtml(item.resolution.reason)}</p>
+        </details>
+      `;
+      governanceList.append(block);
+      return;
+    }
+    const others = openFindings.length - 1;
+    block.className = "governance-finding";
+    block.innerHTML = `
+      <strong>${escapeHtml(item.candidate_title)}</strong>
+      ${flaws}
       <label class="governance-label">Adjudicator
         <input class="governance-adjudicator" type="text" placeholder="Your name" value="${escapeHtml(adjudicator)}" />
       </label>
@@ -1380,8 +1581,13 @@ function renderApprovalCard(workflow) {
         <textarea class="governance-justification" rows="2" placeholder="Why this hypothesis is withdrawn, or why the flaw is acceptable…"></textarea>
       </label>
       <div class="input-actions">
-        <button type="button" data-decision="withdraw_hypothesis">Withdraw hypothesis</button>
-        <button class="danger" type="button" data-decision="override_governance">Override and accept the flaw</button>
+        <button type="button" data-decision="withdraw_hypothesis">Withdraw this hypothesis</button>
+        <button class="danger" type="button" data-decision="override_governance">Override this finding</button>
+        ${
+          others > 0
+            ? `<button class="ghost" type="button" data-decision="copy_reason">Copy this reason into the other ${others} — each still posts its own</button>`
+            : ""
+        }
       </div>
     `;
     governanceList.append(block);
@@ -1405,8 +1611,11 @@ function renderApprovalCard(workflow) {
   if (directEditField && workflow.pending_draft) {
     directEditField.value = workflow.pending_draft.content;
   }
-  card.addEventListener("click", handleDecisionClick);
-  elements.messages.append(card);
+  restoreApprovalCardDraft(card, carried);
+  if (!reused) {
+    card.addEventListener("click", handleDecisionClick);
+    elements.messages.append(card);
+  }
 }
 
 function stopWorkflowPolling() {
@@ -1712,6 +1921,31 @@ async function handleDecisionClick(event) {
     }
     return;
   }
+  if (action === "copy_reason") {
+    // Four findings on one run were four separate objections to the same
+    // hazard, and each had to be retyped in full. Copied rather than applied:
+    // every finding still posts its own reason, and every copy can be edited
+    // before it is posted.
+    const source = button.closest(".governance-finding");
+    const name = source.querySelector(".governance-adjudicator").value.trim();
+    const reason = source.querySelector(".governance-justification").value.trim();
+    if (!reason) {
+      toast("Write the reason here first, then copy it");
+      source.querySelector(".governance-justification").focus();
+      return;
+    }
+    let copied = 0;
+    card
+      .querySelectorAll(".governance-finding:not(.settled)")
+      .forEach((finding) => {
+        if (finding === source) return;
+        finding.querySelector(".governance-justification").value = reason;
+        if (name) finding.querySelector(".governance-adjudicator").value = name;
+        copied += 1;
+      });
+    toast(`Copied into ${copied} finding${copied === 1 ? "" : "s"} — edit before posting`);
+    return;
+  }
   const payload = { action };
   if (action === "revise") {
     payload.feedback = card.querySelector(".revision-field").value.trim();
@@ -1772,6 +2006,8 @@ async function handleDecisionClick(event) {
     }
   }
 
+  const inlineResolution =
+    action === "withdraw_hypothesis" || action === "override_governance";
   state.busy = true;
   card.querySelectorAll("button").forEach((item) => (item.disabled = true));
   setConnection(
@@ -1783,8 +2019,12 @@ async function handleDecisionClick(event) {
       `/sessions/${encodeURIComponent(state.workflowId)}/decisions`,
       { method: "POST", body: JSON.stringify(payload) },
     );
-    card.classList.add("resolved");
-    card.querySelector(".approval-badge").textContent = "Recorded";
+    if (!inlineResolution) {
+      // A governance answer settles one finding inside a card that is still
+      // being worked; retiring the card here is what spawned a second one.
+      card.classList.add("resolved");
+      card.querySelector(".approval-badge").textContent = "Recorded";
+    }
     renderWorkflow(workflow);
   } catch (error) {
     toast(

@@ -3,6 +3,18 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import {
+  assert,
+  delay,
+  openPage,
+  refuseOccupiedPort,
+  refuseOccupiedServer,
+  spawnBrowser,
+  waitFor,
+  waitForDebugging,
+  waitForServer,
+} from "./browser.mjs";
+
 const baseUrl = process.env.COSCIENTIST_E2E_URL || "http://127.0.0.1:8766";
 const chrome =
   process.env.CHROME_BIN ||
@@ -13,6 +25,7 @@ const startServer = process.env.COSCIENTIST_E2E_START_SERVER !== "false";
 let server = null;
 
 if (startServer) {
+  await refuseOccupiedServer(baseUrl);
   const parsed = new URL(baseUrl);
   server = spawn(
     "./.tools/bin/uv",
@@ -43,184 +56,13 @@ if (startServer) {
   );
 }
 
-// A second Chrome cannot bind a port the first one holds, and it exits
-// quietly when it tries. The run then attaches to whichever browser is
-// already there and drives someone else's tabs: two live runs against the
-// same service, one browser, and when the first run ended its browser went
-// with it and the second hung until its timeout. Ninety minutes and a
-// billed research session were lost to that before it was noticed.
-try {
-  const response = await fetch(
-    `http://127.0.0.1:${debuggingPort}/json/version`,
-  );
-  if (response.ok) {
-    throw new Error(
-      `A browser is already listening on the DevTools port ${debuggingPort}. ` +
-        "Another end-to-end run is probably in flight; stop it, or set " +
-        "CHROME_DEBUGGING_PORT to a free port for this one.",
-    );
-  }
-} catch (error) {
-  if (!/ECONNREFUSED|fetch failed/i.test(String(error))) throw error;
-}
-
-const browser = spawn(
-  chrome,
-  [
-    "--headless=new",
-    "--no-sandbox",
-    "--disable-gpu",
-    `--remote-debugging-port=${debuggingPort}`,
-    `--user-data-dir=${profile}`,
-    "about:blank",
-  ],
-  { stdio: "ignore" },
-);
-
-const delay = (milliseconds) =>
-  new Promise((resolve) => setTimeout(resolve, milliseconds));
-
-async function waitForServer() {
-  for (let attempt = 0; attempt < 300; attempt += 1) {
-    try {
-      const response = await fetch(baseUrl);
-      if (response.ok) return;
-    } catch {
-      // The ADK application is still attaching its A2A routes.
-    }
-    await delay(100);
-  }
-  throw new Error("The local Co-Scientist server did not become ready.");
-}
-
-async function waitForDebugging() {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
-    try {
-      const response = await fetch(
-        `http://127.0.0.1:${debuggingPort}/json/version`,
-      );
-      if (response.ok) return;
-    } catch {
-      // Chrome is still starting.
-    }
-    await delay(100);
-  }
-  throw new Error("Chrome DevTools endpoint did not become ready.");
-}
-
-// A DevTools call that never comes back used to wedge the whole run: the
-// promise had no deadline, so waitFor sat inside it and its own timeout could
-// never fire. One evaluation whose awaited fetch never settled left the run
-// idle for forty minutes -- no output, no failure, no CPU -- while the gate it
-// was waiting on had been on screen the whole time.
-const CALL_TIMEOUT_MILLISECONDS = 30000;
-
-class Cdp {
-  constructor(url) {
-    this.socket = new WebSocket(url);
-    this.nextId = 1;
-    this.pending = new Map();
-    this.socket.addEventListener("message", (event) => {
-      const message = JSON.parse(event.data);
-      if (!message.id) return;
-      const handler = this.pending.get(message.id);
-      if (!handler) return;
-      this.pending.delete(message.id);
-      clearTimeout(handler.timer);
-      if (message.error) handler.reject(new Error(message.error.message));
-      else handler.resolve(message.result);
-    });
-    const abandon = (reason) => {
-      for (const [id, handler] of this.pending) {
-        clearTimeout(handler.timer);
-        handler.reject(new Error(reason));
-        this.pending.delete(id);
-      }
-    };
-    this.socket.addEventListener("close", () =>
-      abandon("The DevTools connection closed mid-run."),
-    );
-    this.socket.addEventListener("error", () =>
-      abandon("The DevTools connection failed mid-run."),
-    );
-  }
-
-  async ready() {
-    if (this.socket.readyState === WebSocket.OPEN) return;
-    await new Promise((resolve, reject) => {
-      this.socket.addEventListener("open", resolve, { once: true });
-      this.socket.addEventListener("error", reject, { once: true });
-    });
-  }
-
-  call(method, params = {}) {
-    const id = this.nextId++;
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`${method} did not answer within 30 s.`));
-      }, CALL_TIMEOUT_MILLISECONDS);
-      this.pending.set(id, { resolve, reject, timer });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async evaluate(expression) {
-    const result = await this.call("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails) {
-      throw new Error(
-        result.exceptionDetails.text || "Browser evaluation failed.",
-      );
-    }
-    return result.result.value;
-  }
-}
-
-// Against the deployed service every stage is a real model call rather than
-// the integration stub, so the local budgets are an order of magnitude short.
-// The waits scale together; the assertions they guard do not change.
-const timeoutScale = Number(process.env.COSCIENTIST_E2E_TIMEOUT_SCALE || "1");
-
-async function waitFor(cdp, expression, message, timeout = 15000) {
-  timeout *= timeoutScale;
-  const started = Date.now();
-  let lastFailure = null;
-  while (Date.now() - started < timeout) {
-    try {
-      if (await cdp.evaluate(expression)) return;
-    } catch (error) {
-      // A single unanswered call is a hiccup to retry, not a verdict; the
-      // deadline above is what ends the wait either way. The last one is kept
-      // so a wait that only ever failed says why.
-      lastFailure = error;
-    }
-    await delay(100);
-  }
-  throw new Error(
-    lastFailure ? `${message} (${lastFailure.message})` : message,
-  );
-}
-
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
+await refuseOccupiedPort(debuggingPort);
+const browser = spawnBrowser(chrome, debuggingPort, profile);
 
 try {
-  await waitForServer();
-  await waitForDebugging();
-  const pageResponse = await fetch(
-    `http://127.0.0.1:${debuggingPort}/json/new?${encodeURIComponent(baseUrl)}`,
-    { method: "PUT" },
-  );
-  const page = await pageResponse.json();
-  const cdp = new Cdp(page.webSocketDebuggerUrl);
-  await cdp.ready();
-  await cdp.call("Runtime.enable");
-  await cdp.call("Page.enable");
+  await waitForServer(baseUrl);
+  await waitForDebugging(debuggingPort);
+  const cdp = await openPage(debuggingPort, baseUrl);
   await waitFor(
     cdp,
     "document.readyState === 'complete' && !!document.querySelector('#composer')",
@@ -414,17 +256,18 @@ try {
     // safety flaw was checked before the flaw arrived, skipped this loop, and
     // then spent its whole budget waiting for an accept button that governance
     // had already disabled. The two are one gate, so they are one wait.
+    let answeredFindings = 0;
     for (;;) {
       await waitFor(
         cdp,
-        `!!document.querySelector('.approval-card:not(.resolved) .governance-finding')
+        `!!document.querySelector('.approval-card:not(.resolved) .governance-finding:not(.settled)')
           || !!document.querySelector('.approval-card:not(.resolved) [data-decision="accept"]:not(:disabled)')`,
         `Approval gate ${gate + 1} was unavailable.`,
         30000,
       );
       if (
         !(await cdp.evaluate(
-          "!!document.querySelector('.approval-card:not(.resolved) .governance-finding')",
+          "!!document.querySelector('.approval-card:not(.resolved) .governance-finding:not(.settled)')",
         ))
       ) {
         break;
@@ -432,7 +275,11 @@ try {
       const reviewId = await cdp.evaluate(`(() => {
         const ask = window.confirm;
         window.confirm = () => true;
-        const finding = document.querySelector(".approval-card:not(.resolved) .governance-finding");
+        const card = document.querySelector(".approval-card:not(.resolved)");
+        // Stamped so the wait below can tell "the same card, re-rendered" from
+        // "a new card holding whatever was left", which is what it used to be.
+        card.dataset.e2eGovernanceCard = "1";
+        const finding = card.querySelector(".governance-finding:not(.settled)");
         finding.querySelector(".governance-adjudicator").value = "E2E Safety Officer";
         finding.querySelector(".governance-justification").value = "Automated end-to-end check; no bench work follows this run.";
         finding.querySelector('[data-decision="override_governance"]').click();
@@ -443,9 +290,33 @@ try {
       // time, so a session with two flaws stays blocked after the first.
       await waitFor(
         cdp,
-        `fetch("/api/research/sessions/${workflowId}").then(r => r.json()).then(w => !w.governance_blockers.some(item => item.review_id === ${JSON.stringify(reviewId)}))`,
+        `fetch("/api/research/sessions/${workflowId}").then(r => r.json()).then(w => !w.governance_blockers.some(item => item.review_id === ${JSON.stringify(reviewId)} && !item.resolution))`,
         `Governance finding ${reviewId} at gate ${gate + 1} could not be adjudicated.`,
         30000,
+      );
+      answeredFindings += 1;
+      // The card being worked either settles the finding in place or -- once the
+      // last one is answered and the block is over -- gives way to the next
+      // gate. What it must never do is what it used to: retire itself and append
+      // a second live card holding the findings that were left, losing every
+      // part-typed reason in them.
+      await waitFor(
+        cdp,
+        `(() => {
+          const card = document.querySelector('.approval-card[data-e2e-governance-card="1"]');
+          if (!card) return !document.querySelector(".governance-finding:not(.settled)");
+          return !card.classList.contains("resolved")
+            && card.querySelectorAll(".governance-finding.settled").length === ${answeredFindings};
+        })()`,
+        `Governance finding ${reviewId} was not settled in place on the card that answered it.`,
+        30000,
+      );
+      const liveCards = await cdp.evaluate(
+        'document.querySelectorAll(".approval-card:not(.resolved)").length',
+      );
+      assert(
+        liveCards <= 1,
+        `Answering a governance finding left ${liveCards} live approval cards.`,
       );
     }
     // Keyed to the tournament being on screen rather than to a gate number,

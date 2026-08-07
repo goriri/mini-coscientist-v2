@@ -1946,6 +1946,82 @@ button {
   border-color: rgb(155 59 40 / 45%);
 }
 
+.input-actions button.ghost {
+  border-style: dashed;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+/* An answered finding stays on the card, because it was answered on this card.
+   It loses the alarm colouring and folds down to its verdict so what is left to
+   do is what reads first. */
+.governance-finding.settled {
+  border-color: rgb(15 107 92 / 30%);
+  background: rgb(15 107 92 / 5%);
+}
+
+.governance-finding.settled summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  cursor: pointer;
+}
+
+.governance-settled-title {
+  font: 600 var(--text-md) var(--serif);
+}
+
+.governance-verdict {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.governance-verdict.withdrawn {
+  background: rgb(15 107 92 / 14%);
+  color: #0f6b5c;
+}
+
+.governance-verdict.overridden {
+  background: rgb(155 59 40 / 14%);
+  color: #9b3b28;
+}
+
+.governance-resolution {
+  margin: 8px 0 0;
+  padding-left: 10px;
+  border-left: 3px solid rgb(15 107 92 / 35%);
+  font-size: var(--text-sm);
+}
+
+/* Why the primary button is disabled, and what pressing it will spend. Both
+   used to be things the researcher could only find out by clicking. */
+.gate-blocked,
+.gate-consequence {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border-radius: 5px;
+  font-size: var(--text-sm);
+}
+
+.gate-blocked {
+  border: 1px solid rgb(155 59 40 / 35%);
+  background: rgb(155 59 40 / 6%);
+  color: #9b3b28;
+  font-weight: 650;
+}
+
+.gate-consequence {
+  border: 1px solid var(--line);
+  background: rgb(255 255 255 / 55%);
+  color: var(--muted);
+}
+
 .notify-toggle {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);

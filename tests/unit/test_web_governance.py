@@ -240,8 +240,61 @@ def test_a_finding_answered_while_others_remain_does_not_resume_the_run(blocked)
         actor=NAME,
     )
     assert snapshot["status"] == "governance_blocked"
-    assert [item["review_id"] for item in snapshot["governance_blockers"]] == ["rev_2"]
     assert not tasks.tasks
+    # Both findings are still on the card, and only one of them still blocks.
+    # Sending the open one alone is what made the browser tear the card down and
+    # rebuild it as a new card of what was left.
+    findings = snapshot["governance_blockers"]
+    assert [item["review_id"] for item in findings] == ["rev_1", "rev_2"]
+    assert findings[1]["resolution"] is None
+    assert findings[0]["resolution"] == {
+        "action": "override",
+        "actor": NAME,
+        "reason": "Accepted with a fume hood and a written control plan.",
+        "decided_at": findings[0]["resolution"]["decided_at"],
+    }
+    # And the answered finding still says which hypothesis it was about.
+    assert findings[0]["candidate_title"] == "Anneal the assembled electrode at 400 C"
+
+
+def test_a_withdrawn_finding_keeps_its_title_after_the_population_is_rewritten(
+    blocked,
+):
+    """Withdrawal rewrites the population without the candidate it dropped.
+
+    Titles were read from the live population only, so the row for the finding
+    that had just been answered fell back to a bare ``cand_2`` -- the identifier
+    the card exists to avoid making anyone reason from.
+    """
+    session = CoScientistWorkflow.load_from_ledger(
+        blocked, research_api._ledger()
+    ).session
+    reviews = ReviewSet.model_validate(session.artifacts[1].payload)
+    reviews.reviews.append(
+        CandidateReview(
+            id="rev_2",
+            candidate_id="cand_1",
+            criterion="safety_governance",
+            reviewer="ethics_safety_governance",
+            recommendation="reject",
+            fatal_flaws=["No thermal runaway screening is scheduled."],
+        )
+    )
+    session.artifacts[1].payload = reviews.model_dump(mode="json")
+    research_api._ledger().save(session, expected_version=session.version)
+
+    snapshot = _decide(
+        blocked,
+        action="withdraw_hypothesis",
+        review_id="rev_1",
+        feedback=REASON,
+        actor=NAME,
+    )
+
+    settled = snapshot["governance_blockers"][0]
+    assert settled["candidate_id"] == "cand_2"
+    assert settled["candidate_title"] == "Anneal the assembled electrode at 400 C"
+    assert settled["resolution"]["action"] == "withdraw"
 
 
 def test_a_stale_review_id_is_reported_rather_than_silently_ignored(blocked):

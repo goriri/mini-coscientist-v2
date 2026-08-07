@@ -379,8 +379,12 @@ Choose **Guided HITL** above the web composer, then select an approval cadence:
   safety, ethics, privacy, or institutional-approval blocks.
 
 At a human gate, the web UI displays the persisted stage and artifact version,
-completed task count, missing-input actions, and **Accept & continue**,
-**Edit draft directly**, **Ask agent to revise**, and **Stop workflow** controls.
+completed task count, missing-input actions, and four controls that name what
+they act on: **Accept the &lt;draft&gt; & run &lt;next stage&gt;**, **Edit the
+&lt;draft&gt; myself**, **Send the &lt;draft&gt; back for revision**, and **Stop
+this session**. A line above them states what accepting will spend — accepting
+the research plan starts a billed Deep Research wave — and, when the primary is
+disabled, names every reason it is blocked instead of leaving it dead.
 Initial framing, accepting, agent-requested revision, auto mode, and later-stage
 generation all return immediately while a progress card tracks background
 specialist work. A direct edit or agent revision creates a new artifact
@@ -436,6 +440,18 @@ It starts a deterministic local server and headless Chromium, revises and
 accepts a full milestone workflow, checks stable polling and structured stage
 cards, verifies browser/cloud deletion behavior and desktop/mobile scrolling,
 and writes a screenshot to `/tmp/coscientist-hitl-e2e.png`.
+
+The safety-governance card has its own check, because the offline provider never
+writes a fatal flaw and that path would otherwise only ever run in production:
+
+```bash
+node tests/e2e/web_governance_card.mjs
+```
+
+It seeds a session halted on three fatal findings, then answers them one at a
+time in the browser and holds that each settles in place on the same card —
+carrying its verdict, adjudicator and reason — while the reasons typed into the
+findings that are still open survive untouched.
 
 ## A2A endpoints
 

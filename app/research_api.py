@@ -23,7 +23,7 @@ from app.evidence_tasks import enqueue_evidence_step
 from coscientist.agents import A2AProvider, DeterministicProvider
 from coscientist.dossier import render_docx, render_pdf
 from coscientist.evidence import EvidenceStillRunning
-from coscientist.governance import latest_population, open_blockers
+from coscientist.governance import governance_blockers
 from coscientist.ledger import (
     ConcurrentSessionUpdate,
     PostgresResearchLedger,
@@ -220,36 +220,66 @@ def _stage_preview_metadata(workflow: CoScientistWorkflow) -> list[dict]:
     ]
 
 
+def _candidate_titles(workflow: CoScientistWorkflow) -> dict[str, str]:
+    """Titles for every candidate the session has ever held.
+
+    Every population, not only the live one: withdrawing a hypothesis rewrites
+    the population without it, and a finding that has just been answered still
+    has to be readable in the card that answered it.
+    """
+    titles: dict[str, str] = {}
+    for artifact in workflow.session.artifacts:
+        if artifact.schema_name != "CandidatePopulation" or not artifact.payload:
+            continue
+        for item in CandidatePopulation.model_validate(artifact.payload).candidates:
+            titles[item.id] = item.title or item.claim
+    return titles
+
+
 def _governance_blockers(workflow: CoScientistWorkflow) -> list[dict]:
-    """Every fatal safety finding still waiting for a human answer.
+    """Every fatal safety finding at a live governance block, answered or not.
 
     The flaw itself travels with the blocker, not just its id. A researcher is
     being asked to either drop a hypothesis or put their name to keeping one
     that a reviewer called dangerous, and that decision cannot be made from a
     review identifier.
+
+    Answered findings are carried too, with the answer attached, because only
+    the open ones block but all of them are what the researcher is working
+    through. Sending the open ones alone is what made the web card unusable: a
+    run with four findings tore the card down and rebuilt it as a new card of
+    three the moment the first was withdrawn, with no sign of the one just
+    answered and every part-typed reason in the others lost. Once the last
+    finding is answered the block is over and the list empties, so a cleared
+    gate does not carry its history into the next stage's card.
     """
-    blockers = open_blockers(workflow.session)
-    if not blockers:
+    findings = governance_blockers(workflow.session)
+    answered = {
+        item.review_id: item for item in workflow.session.governance_adjudications
+    }
+    if not findings or all(item.review_id in answered for item in findings):
         return []
-    population = latest_population(workflow.session)
-    claims: dict[str, str] = {}
-    if population is not None and population.payload:
-        claims = {
-            item.id: item.title or item.claim
-            for item in CandidatePopulation.model_validate(
-                population.payload
-            ).candidates
-        }
+    titles = _candidate_titles(workflow)
     return [
         {
             "review_id": item.review_id,
             "candidate_id": item.candidate_id,
-            "candidate_title": claims.get(item.candidate_id, item.candidate_id),
+            "candidate_title": titles.get(item.candidate_id, item.candidate_id),
             "reviewer": item.review.reviewer,
             "fatal_flaws": list(item.review.fatal_flaws),
             "objections": list(item.review.objections),
+            "resolution": (
+                {
+                    "action": decided.resolution,
+                    "actor": decided.adjudicator,
+                    "reason": decided.justification,
+                    "decided_at": decided.created_at,
+                }
+                if (decided := answered.get(item.review_id))
+                else None
+            ),
         }
-        for item in blockers
+        for item in findings
     ]
 
 
