@@ -407,11 +407,28 @@ try {
     // and it used to be the end of the run in the browser. Overriding rather
     // than withdrawing, so the population the later gates assert on is the one
     // the tournament ranked; confirm() is answered because CDP cannot.
-    while (
-      await cdp.evaluate(
-        "!!document.querySelector('.approval-card:not(.resolved) .governance-finding')",
-      )
-    ) {
+    //
+    // Waited for against the accept button rather than tested once ahead of it.
+    // The card is rendered when the stage produces its draft, and a governance
+    // finding lands on a later poll: a run whose reflect stage blocked on a real
+    // safety flaw was checked before the flaw arrived, skipped this loop, and
+    // then spent its whole budget waiting for an accept button that governance
+    // had already disabled. The two are one gate, so they are one wait.
+    for (;;) {
+      await waitFor(
+        cdp,
+        `!!document.querySelector('.approval-card:not(.resolved) .governance-finding')
+          || !!document.querySelector('.approval-card:not(.resolved) [data-decision="accept"]:not(:disabled)')`,
+        `Approval gate ${gate + 1} was unavailable.`,
+        30000,
+      );
+      if (
+        !(await cdp.evaluate(
+          "!!document.querySelector('.approval-card:not(.resolved) .governance-finding')",
+        ))
+      ) {
+        break;
+      }
       const reviewId = await cdp.evaluate(`(() => {
         const ask = window.confirm;
         window.confirm = () => true;
@@ -431,12 +448,6 @@ try {
         30000,
       );
     }
-    await waitFor(
-      cdp,
-      "!!document.querySelector('.approval-card:not(.resolved) [data-decision=\"accept\"]:not(:disabled)')",
-      `Approval gate ${gate + 1} was unavailable.`,
-      30000,
-    );
     // Keyed to the tournament being on screen rather than to a gate number,
     // which only held while the count of gates was assumed to be fixed.
     if (
