@@ -704,9 +704,11 @@ _REFERENCE_QUALIFIERS = {
         "settled."
     ),
     "inaccurate": (
-        "Every source below failed the check against the document it names: it was "
-        "retracted, or it could not be retrieved. Nothing in this report is grounded "
-        "by them."
+        # "or it could not be retrieved" used to be here, and being unable to open a
+        # page is not a finding about the paper behind it. What the qualifier now
+        # marks is retraction and only retraction.
+        "Every source below names a document that has since been retracted. Nothing "
+        "in this report is grounded by them."
     ),
     "disputed": (
         "Every source below was found to be disputed by the check against the "

@@ -689,6 +689,41 @@ def test_a_source_qualified_once_is_qualified_at_every_later_citation_of_it():
     )
 
 
+def test_a_source_nobody_could_open_is_not_marked_as_a_finding_that_is_false():
+    """Fifteen findings on a live run carried "(inaccurate)" beside the marker while
+    their own reference entries, five hundred lines below, read "Could not be
+    retrieved when this run went back to it" -- the marker calling the finding false
+    and the entry saying only that nobody could open the page."""
+    from coscientist.models import EvidenceClaim, EvidencePacket, SourceRecord
+    from coscientist.narrative import _claim_annotations
+
+    def _annotated(status: str) -> str | None:
+        return _claim_annotations(
+            EvidencePacket(
+                question="Can a coating help?",
+                sources=[
+                    SourceRecord(id="s1", url="https://example.org/1", title="Paper")
+                ],
+                claims=[
+                    EvidenceClaim(
+                        id="c1",
+                        claim="A coating raises retention.",
+                        source_id="s1",
+                        verification_status=status,
+                        confidence=0.9,
+                    )
+                ],
+            )
+        ).get("https://example.org/1")
+
+    assert _annotated("retracted") == "inaccurate"
+    assert _annotated("inaccessible") == "unsupported"
+    assert _annotated("discovered_unverified") == "unsupported"
+    # A confident verified check earns no qualifier at all, which is the point of
+    # them: they mark the exceptions.
+    assert _annotated("verified") is None
+
+
 def test_two_sources_the_search_left_untitled_are_not_folded_into_one():
     """ "Untitled source on mdpi.com" names a publisher, not a document."""
     registry = CitationRegistry(

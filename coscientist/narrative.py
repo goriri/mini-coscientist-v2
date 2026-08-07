@@ -1819,7 +1819,14 @@ def _claim_annotations(evidence: EvidencePacket | None) -> dict[str, str]:
             # coatings degrade ionic conductivity -- as doubtful, when the only thing
             # true of it is that it argues against the hypothesis. Which way a finding
             # cuts is stated in prose where it is used; it is not a source qualifier.
-            if claim.verification_status in {"retracted", "inaccessible"}:
+            # Retracted only. An inaccessible source is one the run went back to
+            # and could not get, which establishes nothing about the claim it
+            # carries -- and this printed "(inaccurate)" beside fifteen findings
+            # whose own reference entries read "Could not be retrieved when this
+            # run went back to it", the marker calling the finding false and the
+            # entry five hundred lines below saying only that nobody could open the
+            # page. Unretrieved belongs with unchecked: nothing read, nothing shown.
+            if claim.verification_status == "retracted":
                 verdict = "inaccurate"
             elif claim.verification_status in {"verified", "corrected"}:
                 verdict = "" if claim.confidence >= 0.8 else "leaning accurate"
