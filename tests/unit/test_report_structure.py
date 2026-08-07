@@ -5169,3 +5169,37 @@ def test_a_short_finding_inside_a_longer_one_is_left_alone():
     )
 
     assert len(merged) == 2
+
+
+def test_a_section_heading_flattened_onto_a_finding_is_punctuated_not_run_on():
+    """The pass writes Markdown and records findings cut from it. Where the cut began
+    at a heading the hashes went and the words did not, so a live Key Findings list
+    opened "B. Electrolyte Standardization (...) Several studies within" -- two
+    sentences printed as one, reading as neither."""
+    from coscientist.narrative import _with_heading_separated
+
+    assert _with_heading_separated(
+        "B. Electrolyte Standardization (1M LiPF6 in EC:EMC 3:7 wt% + 2 wt% VC) "
+        "Several studies utilize the specified baseline."
+    ) == (
+        "Electrolyte Standardization (1M LiPF6 in EC:EMC 3:7 wt% + 2 wt% VC): "
+        "Several studies utilize the specified baseline."
+    )
+    assert _with_heading_separated(
+        "A. Sample Size (n = 5) The most critical failure point is the sample size."
+    ) == ("Sample Size (n = 5): The most critical failure point is the sample size.")
+
+
+def test_a_finding_that_is_not_a_flattened_heading_is_left_as_it_was():
+    """The boundary is only findable where the heading ends on a bracket. Anything
+    else is left alone rather than cut at a guess."""
+    from coscientist.narrative import _with_heading_separated
+
+    intact = [
+        "A 3 nm coating (deposited by ALD) improves retention at 500 cycles.",
+        "C. Coating Thickness Several studies report a 2 nm floor.",
+        "The coating (2 to 5 nm) raises the impedance of the cell.",
+    ]
+
+    for text in intact:
+        assert _with_heading_separated(text) == text

@@ -363,25 +363,32 @@ def test_reviews_that_did_not_score_alike_still_report_both_ends():
     assert "span 2 to 5 of five" in lines[0]
 
 
-def test_a_falsifier_settles_a_disagreement_only_where_the_reviews_disagree():
-    lines, _ = _coherence(
+def test_what_a_recorded_falsifier_is_for_is_said_once_above_the_ideas():
+    """It was said under each idea instead, in the standing note's own words: four of
+    eight ideas closed on a sentence stating no fact about the idea it closed."""
+    from coscientist.narrative import COHERENCE_FALSIFIER_NOTE
+
+    lines, notes = _coherence(
         [_review("Feasibility", 2), _review("Correctness", 5)],
         {"Falsifier": "No capacity difference at 500 cycles."},
     )
 
-    assert "settle the disagreement between the reviews above" in lines[-1]
+    assert COHERENCE_FALSIFIER_NOTE in notes
+    assert not any("falsifier" in line.lower() for line in lines)
 
 
-def test_a_falsifier_under_agreeing_reviews_tests_the_reading_they_share():
+def test_a_falsifier_under_agreeing_reviews_names_no_disagreement():
     """ "the disagreement between the reviews above" printed two lines under "They
     agree" -- the sentence named a dispute the paragraph above had just denied."""
-    lines, _ = _coherence(
+    from coscientist.narrative import COHERENCE_FALSIFIER_NOTE
+
+    lines, notes = _coherence(
         [_review("Correctness", 4), _review("Feasibility", 4)],
         {"Falsifier": "No capacity difference at 500 cycles."},
     )
 
-    assert "put the reading they share to the test" in lines[-1]
-    assert "disagreement" not in lines[-1]
+    assert COHERENCE_FALSIFIER_NOTE in notes
+    assert not any("disagreement" in line for line in lines)
 
 
 def test_reviews_that_score_alike_but_ask_for_different_things_still_disagree():
@@ -393,7 +400,7 @@ def test_reviews_that_score_alike_but_ask_for_different_things_still_disagree():
         {"Falsifier": "No capacity difference at 500 cycles."},
     )
 
-    assert "settle the disagreement between the reviews above" in lines[-1]
+    assert "the recommendations do not" in lines[0]
 
 
 def test_agreeing_reviews_with_no_falsifier_are_not_told_they_disagree():

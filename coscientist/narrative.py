@@ -4676,10 +4676,11 @@ COHERENCE_EVIDENCE_NOTE = (
     "the idea, but not until there is agreement on what the idea is built on."
 )
 COHERENCE_FALSIFIER_NOTE = (
-    "Where a falsifier is recorded, that is what settles a disagreement: the "
-    "specialist set it down against its own idea, and it names a result that would "
-    "end the idea rather than amend it, which is what makes the reviews above it "
-    "decidable at all."
+    "Where a falsifier is recorded, that is what settles a disagreement between the "
+    "reviews of an idea, and what puts to the test the reading they share where they "
+    "agree: the specialist set it down against its own idea, and it names a result "
+    "that would end the idea rather than amend it, which is what makes the reviews "
+    "above it decidable at all. Each idea states its own falsifier under Description."
 )
 # Printed in this order whichever idea first raised them, so that the general case
 # precedes the exception it is qualified by.
@@ -4844,13 +4845,11 @@ def _coherence(
         )
         notes.append(COHERENCE_EVIDENCE_NOTE)
     elif _stated(facts, "Falsifier"):
-        lines.append(
-            "The falsifier stated under Description is what would settle the "
-            "disagreement between the reviews above."
-            if disputed
-            else "The falsifier stated under Description is what would put the "
-            "reading they share to the test."
-        )
+        # Nothing is printed here. What this said -- that the falsifier stated under
+        # Description is what would settle the disagreement -- is the standing note
+        # word for word, and it closed four of the eight ideas on a live run with a
+        # sentence carrying no fact about the idea it closed. The note says it once
+        # above them all; that this idea has a falsifier is under its Description.
         notes.append(COHERENCE_FALSIFIER_NOTE)
     else:
         lines.append(
@@ -5884,6 +5883,30 @@ def _without_pipeline_markup(text: str) -> str:
     return _PASS_CITE_RE.sub("", _FACET_TAG_RE.sub("", text))
 
 
+# The enumerator its list gave it, the heading, and the parenthetical the heading ends
+# on. The closing bracket is what makes the boundary safe to find: a heading with no
+# parenthetical is left alone rather than guessed at, since the only other way to tell
+# where "Coating Thickness" stops and "Several studies" starts is to read them.
+_FLATTENED_HEADING = re.compile(
+    r"^\s*(?:[A-Z]|\d{1,2}|[IVX]{1,4})[.)]\s+"
+    r"(?P<label>[A-Z][^()]{0,60}?\([^()]{1,80}\))\s+"
+    r"(?=[A-Z])"
+)
+
+
+def _with_heading_separated(text: str) -> str:
+    """A finding with the section heading above it no longer glued to its first word.
+
+    A pass writes its report in Markdown and records its findings as plain strings
+    cut from it. Where the cut began at a heading, the hashes went and the words did
+    not: a live run printed "B. Electrolyte Standardization (1M LiPF6 in EC:EMC 3:7
+    wt% + 2 wt% VC) Several studies within the current battery materials research
+    utilize..." as one sentence, which is two and reads as neither. The heading says
+    what the finding is about, so it is kept and punctuated rather than dropped.
+    """
+    return _FLATTENED_HEADING.sub(lambda match: f"{match.group('label')}: ", text)
+
+
 def _folded_title(text: str) -> str:
     """A title or a sentence reduced to what makes two of them the same one."""
     return " ".join(text.split()).rstrip(".").casefold()
@@ -5964,7 +5987,10 @@ def _all_evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]
                     # not a finding, and six of the fifty-five Main Research
                     # Directions on a live run read "Not stated by the specialist."
                     text=_sentence(
-                        _without_pipeline_markup(statement.text), fallback=""
+                        _with_heading_separated(
+                            _without_pipeline_markup(statement.text)
+                        ),
+                        fallback="",
                     ),
                     urls=list(statement.source_urls),
                     facet=statement.facet,
@@ -5986,7 +6012,10 @@ def _all_evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]
                 # and once as the evidence stage recorded it, and the merge below
                 # keys on the text: a tag left on one copy and not the other makes
                 # two findings of one.
-                text=_sentence(_without_pipeline_markup(claim.claim), fallback=""),
+                text=_sentence(
+                    _with_heading_separated(_without_pipeline_markup(claim.claim)),
+                    fallback="",
+                ),
                 urls=[source.url] if source else [],
                 facet="verified"
                 if claim.verification_status == "verified"
