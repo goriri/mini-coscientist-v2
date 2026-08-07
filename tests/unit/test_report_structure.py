@@ -1565,6 +1565,57 @@ def test_a_specialist_that_produced_nothing_is_not_credited_with_the_stage(
     assert "see Literature discovery above" in row, "the row must point, not re-explain"
 
 
+def _with_a_backfilled_review(session: Session) -> str:
+    """One review of the top idea replaced by the placeholder the run backfills.
+
+    That is the live shape: a reviewer answers for most of the ideas, the rest are
+    filled in from the fixed template, and the stage is still recorded as the
+    specialist's own because most of it was.
+    """
+    artifact = next(
+        item for item in session.artifacts if item.schema_name == "ReviewSet"
+    )
+    artifact.payload["reviews"][0]["stood_in"] = True
+    return artifact.payload["reviews"][0]["candidate_id"]
+
+
+def test_a_review_no_reviewer_wrote_is_not_printed_as_that_reviewers_judgement(
+    rich_session: Session,
+):
+    """The rank-1 idea of a live run carried a feasibility review that was parity's
+    fixed template verbatim -- scored, counted in the ranking, and printed under the
+    idea in the same prose as the three a reviewer had written."""
+    _with_a_backfilled_review(rich_session)
+
+    report = compile_dossier(rich_session)
+
+    assert "review of this idea was written" in report
+    assert "the verdict and score below are the placeholder's" in report
+
+
+def test_a_backfilled_review_is_disclosed_where_the_run_says_nothing_was_substituted(
+    rich_session: Session,
+):
+    """Provenance said "no stage falling back to a fixed template" over a report that
+    printed one, because the substitution was inside a stage rather than of it."""
+    _with_a_backfilled_review(rich_session)
+
+    report = compile_dossier(rich_session)
+
+    assert "no stage falling back to a fixed template" not in report
+    assert "The review stage's answer was accepted with one review missing" in report
+    assert "Reviews that no reviewer wrote" in report
+
+
+def test_a_run_whose_reviewers_answered_for_every_idea_carries_no_such_warning(
+    rich_session: Session,
+):
+    report = compile_dossier(rich_session)
+
+    assert "Reviews that no reviewer wrote" not in report
+    assert "review of this idea was written" not in report
+
+
 def _discovery_line(session: Session) -> str:
     """The sentence that says how the Deep Research stage went."""
     block = compile_dossier(session)

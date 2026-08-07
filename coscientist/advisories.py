@@ -81,6 +81,7 @@ def run_advisories(
         *_broken_grounding_advisory(briefs),
         *_waived_gate_advisory(record),
         *_templated_stage_advisory(record),
+        *_stood_in_review_advisory(record),
         *_mechanical_overview_advisory(overview),
         *_automatic_approval_advisory(record),
         _standing_limits_advisory(record),
@@ -333,6 +334,51 @@ def _templated_stage_advisory(record: ResearchRecord) -> list[Advisory]:
                 + ("stage" if one else "stages")
                 + " before relying on it. What each stage produced is itemised under "
                 "Provenance."
+            ),
+        )
+    ]
+
+
+def _stood_in_review_advisory(record: ResearchRecord) -> list[Advisory]:
+    """A review nobody wrote, printed under an idea as though somebody had.
+
+    Filed next to the templated-stage warning above because it is the same substitution
+    at a smaller grain, and the stage-level warning does not catch it: a reviewer that
+    answers for seven of eight ideas has its stage recorded as the specialist's own.
+    On a live run the one backfilled review landed on the rank-1 idea, carried the
+    lowest score that idea received, and the conclusion under it sent the reader to
+    that review as the one to read before commissioning the work.
+    """
+    stood = record.stood_in_reviews
+    if not stood:
+        return []
+    one = len(stood) == 1
+    affected = _joined_titles(
+        sorted({record.ranked_title(review.candidate_id) for review in stood}),
+        fallback="no idea",
+    )
+    return [
+        Advisory(
+            title="Reviews that no reviewer wrote",
+            body=(
+                _capitalised(_plural(len(stood), "review"))
+                + " printed in this report "
+                + ("was" if one else "were")
+                + " filled in from a fixed template rather than written by a reviewer, "
+                + ("on " if one else "across ")
+                + affected
+                + ". A reviewer answered for some of the ideas and not others, and the "
+                "run backfilled the rest so that every idea carries the same sections. "
+                + ("The placeholder states" if one else "The placeholders state")
+                + " nothing about the "
+                + ("idea it sits" if one else "ideas they sit")
+                + " under, but "
+                + ("its verdict and score" if one else "their verdicts and scores")
+                + " entered the score spreads, the averages and the ranking as though "
+                "a reviewer had set them down. Each is named where it is printed. Any "
+                "idea named here is unreviewed on that criterion rather than weak on "
+                "it, and the criterion should be re-run before the ordering is relied "
+                "upon."
             ),
         )
     ]

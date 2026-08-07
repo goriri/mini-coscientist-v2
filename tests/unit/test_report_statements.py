@@ -11,6 +11,8 @@ direction restating the run's own question was listed as a direction to pursue.
 
 from __future__ import annotations
 
+import dataclasses
+
 from coscientist.models import (
     DiscoveryManifest,
     DiscoveryNarrative,
@@ -432,6 +434,53 @@ def test_what_a_bottom_evidence_review_means_is_left_to_the_standing_note():
     )
     assert COHERENCE_EVIDENCE_NOTE in notes
     assert "the disagreement is about the grounding" in COHERENCE_EVIDENCE_NOTE
+
+
+# --- a review nobody wrote is not a judgement of the idea it sits under -------
+
+
+def test_a_review_that_stood_in_for_a_reviewer_is_named_as_a_placeholder():
+    """The rank-1 idea of a live run carried a feasibility review no reviewer wrote,
+    scored, counted in its span and printed as one of the four judgements of it."""
+    from coscientist.narrative import COHERENCE_STOOD_IN_NOTE
+
+    lines, notes = _coherence(
+        [
+            _review("Correctness", 5),
+            dataclasses.replace(_review("Feasibility", 3), stood_in=True),
+        ],
+        {},
+    )
+
+    said = " ".join(lines)
+    assert "The feasibility review is a placeholder" in said
+    assert "nobody reviewed it on that criterion" in said
+    assert COHERENCE_STOOD_IN_NOTE in notes
+
+
+def test_reviews_a_reviewer_wrote_are_not_called_placeholders():
+    from coscientist.narrative import COHERENCE_STOOD_IN_NOTE
+
+    lines, notes = _coherence(
+        [_review("Correctness", 5), _review("Feasibility", 3)], {}
+    )
+
+    assert not any("placeholder" in line for line in lines)
+    assert COHERENCE_STOOD_IN_NOTE not in notes
+
+
+def test_a_placeholders_objection_is_not_counted_as_one_nobody_answered():
+    """ "One review raised one objection and recorded no response to it -- the
+    Feasibility review" was printed about a sentence no reviewer wrote."""
+    stood = dataclasses.replace(
+        _review("Feasibility", 3),
+        objections=["The candidate's feasibility is not established."],
+        stood_in=True,
+    )
+
+    lines, _ = _coherence([_review("Correctness", 5), stood], {})
+
+    assert not any("recorded no response" in line for line in lines)
 
 
 # --- a table the specialist appended is its table, not the mechanism ----------

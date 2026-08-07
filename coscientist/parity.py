@@ -743,9 +743,15 @@ def parsed_review_set(
         )
     if not aligned:
         return fallback
+    # Marked where it is backfilled, and only here. A set returned whole is already
+    # recorded as a deterministic fallback by the caller; a set the specialist mostly
+    # wrote carries no such flag, so before this the eighth review was indistinguishable
+    # from the seven a reviewer had written and the report printed it as one of them.
     return ReviewSet(
         reviews=[
-            aligned.get(review.candidate_id, review) for review in fallback.reviews
+            aligned.get(review.candidate_id)
+            or review.model_copy(update={"stood_in": True})
+            for review in fallback.reviews
         ]
     )
 

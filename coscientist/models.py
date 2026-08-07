@@ -645,6 +645,16 @@ class CandidateReview(Contract):
     reviewer: str
     evidence_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    stood_in: bool = False
+    """Whether this review is the fixed placeholder written for a skipped idea.
+
+    A reviewer that answers for seven of eight ideas has its seven kept and the
+    eighth backfilled, because discarding the set over one missing id costs more
+    than it saves. Nothing recorded which was which, so a live run printed a
+    placeholder as the rank-1 idea's feasibility review -- with a score, a stated
+    confidence of 0.45 and an objection -- and the conclusion under it sent the
+    reader to that review as the one to read before commissioning the work.
+    """
 
 
 class ReviewSet(Contract):

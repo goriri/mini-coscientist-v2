@@ -887,6 +887,27 @@ def _review_block(
             )
             continue
         for review in reviews:
+            # A placeholder's findings and objection say the same nothing under every
+            # idea a reviewer skipped, and printed as prose they read as this idea's
+            # review. What is printed instead is that nobody wrote one. The verdict and
+            # score stay, because they went into the averages and the ranking and the
+            # reader has to be able to reconcile the arithmetic above with them.
+            if review.stood_in:
+                lines.extend(
+                    [
+                        f"No {section.lower()} review of this idea was written. This "
+                        "is the fixed placeholder the run puts in a reviewer's place "
+                        "where it answered for some ideas and not others: the verdict "
+                        "and score below are the placeholder's, and they entered the "
+                        "averages, the spread and the ranking as though a reviewer had "
+                        "set them down.",
+                        "",
+                    ]
+                )
+                lines.extend(
+                    [f"Answer: {review.answer}", "", f"Score: {review.score}", ""]
+                )
+                continue
             # Who the reviewer is and what it asked are the same under every idea, so
             # where more than one idea carries the pair it is stated once above them
             # all and this section opens straight onto what the review found.
@@ -2259,7 +2280,37 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
                 "",
             ]
         )
-    if not record.fallback_stages and not record.repaired_stages:
+    # A stage whose answer was mostly the specialist's own is recorded as the
+    # specialist's own, whole. Where the reviewer skipped an idea and the run filled the
+    # gap from a template, the substitution is real, is printed under an idea, and is
+    # nowhere in the table above -- so the count is stated here rather than left to the
+    # reader to notice one review at a time.
+    stood_in = record.stood_in_reviews
+    if stood_in:
+        one = len(stood_in) == 1
+        lines.extend(
+            [
+                "The review stage's answer was accepted with "
+                + (
+                    "one review missing"
+                    if one
+                    else f"{_number_word(len(stood_in)).lower()} reviews missing"
+                )
+                + ": a reviewer answered for some of the ideas and not others, and "
+                + ("the gap was" if one else "the gaps were")
+                + " filled from the same fixed template a whole stage falls back to. "
+                + ("That review carries" if one else "Those reviews carry")
+                + " a verdict and a score that entered the averages, the spreads and "
+                "the ranking, and "
+                + ("it is named" if one else "each is named")
+                + " where "
+                + ("it is" if one else "they are")
+                + " printed. The stage is listed above as the specialist's own "
+                "because the rest of it was.",
+                "",
+            ]
+        )
+    if not record.fallback_stages and not record.repaired_stages and not stood_in:
         # "nothing substituted" was printed unconditionally, directly under a table
         # whose evidence row was produced by the stand-in for a specialist that never
         # ran. A template substitution is not the only kind there is, so the sentence

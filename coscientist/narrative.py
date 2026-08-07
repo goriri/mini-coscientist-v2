@@ -665,6 +665,13 @@ class IdeaReview:
     score: int
     recommendation: str = ""
     """What the reviewer asked for, kept unworded so agreement can be counted."""
+    stood_in: bool = False
+    """Whether no reviewer judged this idea on this criterion and a placeholder stands.
+
+    Carried to the page because everything derived from it -- the score, the span, the
+    average, the lowest review the conclusion sends the reader to -- reads as a
+    judgement of the idea, and a placeholder is not one.
+    """
     fatal_flaws: list[str] = field(default_factory=list)
     """The findings the reviewer judged disqualifying, as distinct from its objections.
 
@@ -1767,6 +1774,18 @@ class ResearchRecord:
             for review in review_set.reviews
             if self.ranked_id(review.candidate_id) in live
         ]
+
+    @property
+    def stood_in_reviews(self) -> list[CandidateReview]:
+        """Printed reviews that no reviewer wrote, backfilled from a fixed template.
+
+        A reviewer that answers for seven of eight ideas keeps its seven and has the
+        eighth filled in, which is a substitution the provenance table does not record:
+        the stage is marked as the specialist's own because most of it was. Counted off
+        the printed reviews rather than the stored ones, so it agrees with what the
+        reader can actually turn to.
+        """
+        return [review for review in self.shown_reviews if review.stood_in]
 
     def cluster_of(self, candidate_id: str) -> list[str]:
         """The ranked ideas sharing this idea's region, itself included."""
@@ -3902,7 +3921,11 @@ def _revised_form(
         )
         + f", and it is not the form ranked above: {written}. "
         + (
-            f"The rewrite leaves {_series([label.lower() for label in unchanged])} "
+            # With the article. These are the names of the fields printed under the
+            # idea, and read into a sentence without one they stopped being English:
+            # "The rewrite leaves falsifier unchanged", "The rewrite leaves core idea,
+            # mechanism and rationale, falsifier, and go/no-go tests unchanged".
+            f"The rewrite leaves the {_series([label.lower() for label in unchanged])} "
             "unchanged."
             if unchanged
             else "The rewrite changed every field of the idea."
@@ -4157,10 +4180,20 @@ def _conclusion(
         # printed in below and the order the Coherence subsection names them in. Sorted
         # alphabetically, this sentence and that one listed the same three reviews in
         # two different orders on the same page.
-        sections = list(
-            dict.fromkeys(
-                review.section.lower() for review in reviews if review.score == floor
-            )
+        lowest = [review for review in reviews if review.score == floor]
+        sections = list(dict.fromkeys(review.section.lower() for review in lowest))
+        # A placeholder is not a review to read. Sending a reader to one as the thing
+        # to read before commissioning the work is the worst place this substitution
+        # can surface, and on a live run it is where it surfaced: the rank-1 idea's
+        # lowest score was the placeholder's.
+        placeholder = (
+            ""
+            if not any(review.stood_in for review in lowest)
+            else " That score is a placeholder's rather than a reviewer's, which "
+            + ("the review names" if len(lowest) == 1 else "the reviews name")
+            + " where "
+            + ("it is" if len(lowest) == 1 else "they are")
+            + " printed; on this dimension the idea is unreviewed rather than weak."
         )
         weakest = (
             f" The lowest score it received is {floor} of five, from the "
@@ -4174,7 +4207,7 @@ def _conclusion(
             + ("both" if len(sections) == 2 else "all")
             + " printed in full below: they are what to read before any of the "
             "above is commissioned."
-        )
+        ) + placeholder
     # The bench work is a test of the idea. An accepted fatal flaw is not something a
     # test can return a verdict on -- it was allowed to stand by a person, and it goes
     # on standing whatever the cells do. Saying what the next move reaches has to say
@@ -4648,6 +4681,7 @@ def _idea_reviews(record: ResearchRecord, candidate_id: str) -> list[IdeaReview]
                     answer=_review_answer(review),
                     score=score,
                     recommendation=review.recommendation,
+                    stood_in=review.stood_in,
                 )
             )
     order = {name: index for index, name in enumerate(REVIEW_SECTIONS)}
@@ -4682,6 +4716,14 @@ COHERENCE_FALSIFIER_NOTE = (
     "that would end the idea rather than amend it, which is what makes the reviews "
     "above it decidable at all. Each idea states its own falsifier under Description."
 )
+COHERENCE_STOOD_IN_NOTE = (
+    "Where a reviewer answered for some of the ideas and not others, the run writes a "
+    "fixed placeholder in place of the review it did not write, so that every idea "
+    "carries the same sections. A placeholder states nothing about the idea it sits "
+    "under, and its verdict and score went into that idea's span, its average and the "
+    "ranking as though a reviewer had set them down. Each is named under the idea it "
+    "stands in for."
+)
 # Printed in this order whichever idea first raised them, so that the general case
 # precedes the exception it is qualified by.
 _COHERENCE_NOTES = (
@@ -4689,6 +4731,7 @@ _COHERENCE_NOTES = (
     COHERENCE_DISQUALIFICATION_NOTE,
     COHERENCE_EVIDENCE_NOTE,
     COHERENCE_FALSIFIER_NOTE,
+    COHERENCE_STOOD_IN_NOTE,
 )
 
 
@@ -4796,13 +4839,40 @@ def _coherence(
         + (", " if spread > 1 else ". ")
         + agreement
     ]
+    # Said first, because every number in the sentence above is partly this one's and
+    # the reader has just been given a span, an agreement and a count that a review
+    # nobody wrote helped decide.
+    stood = [review for review in reviews if review.stood_in]
+    if stood:
+        sections = _names([review.section.lower() for review in stood])
+        one = len(stood) == 1
+        lines.append(
+            f"The {sections} "
+            + ("review is a placeholder" if one else "reviews are placeholders")
+            + " rather than "
+            + ("a judgement" if one else "judgements")
+            + " of this idea: nobody reviewed it on "
+            + ("that criterion" if one else "those criteria")
+            + ", and the "
+            + ("score" if one else "scores")
+            + " counted in the span above "
+            + ("is the placeholder's" if one else "are the placeholders'")
+            + "."
+        )
+        notes.append(COHERENCE_STOOD_IN_NOTE)
     # Counted per review, not per objection. Subtracting the two list lengths asserted
     # a pairing the record does not carry, and the difference it produced was reported
     # as a number of unanswered objections that no reviewer had left unanswered.
+    # A placeholder's objection is not an unanswered objection. It carries one under
+    # every idea a reviewer skipped, and counted here it printed "one review raised one
+    # objection and recorded no response to it -- the Feasibility review" about a
+    # sentence no reviewer wrote and nothing was owed a response to.
     silent = [
         review
         for review in reviews
-        if review.objections and not any(item.strip() for item in review.rebuttals)
+        if review.objections
+        and not review.stood_in
+        and not any(item.strip() for item in review.rebuttals)
     ]
     if silent:
         objections = sum(len(review.objections) for review in silent)
@@ -4878,6 +4948,11 @@ def _objections_raised(reviews: Sequence[IdeaReview]) -> list[tuple[str, str, bo
     """
     raised: dict[str, tuple[str, bool]] = {}
     for review in reviews:
+        # A placeholder's objection is fixed text, and printed here it becomes a
+        # numbered item attributed to a review nobody wrote, in the one section of the
+        # idea written to be checked item by item.
+        if review.stood_in:
+            continue
         responded = any(item.strip() for item in review.rebuttals)
         for objection in review.objections:
             # The same objection raised twice keeps whichever mention drew a response.

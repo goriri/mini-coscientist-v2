@@ -134,6 +134,62 @@ def test_a_review_set_keeps_the_reviews_a_specialist_actually_wrote():
     assert outcome.repairs
 
 
+def _population_session():
+    """A session run far enough to have candidates for a reviewer to skip."""
+    flow = CoScientistWorkflow(
+        "Can a protective coating improve battery cycle life?",
+        approval_profile=ApprovalProfile.AUTO,
+    )
+    while not any(
+        artifact.schema_name == "CandidatePopulation"
+        for artifact in flow.session.artifacts
+    ):
+        # The offline evidence stage meets no verification floor, and the gate in front
+        # of generation is the one that stops the run rather than the reviews this
+        # exercises. The waiver is only available while that stage is the current one.
+        if flow.stage == "evidence":
+            flow.accept_exploratory_evidence()
+        flow.accept(flow.preview(), automatic=True)
+    return flow.session
+
+
+def test_a_review_backfilled_for_a_skipped_idea_is_marked_as_one():
+    """A reviewer answering for some ideas and not others keeps its answers and has
+    the rest filled in from the template. Nothing recorded which was which, so a live
+    run printed the placeholder as the rank-1 idea's feasibility review -- with a
+    score, a stated confidence and an objection -- and the conclusion under it sent the
+    reader to that review as the one to read before commissioning the work."""
+    from coscientist.parity import parsed_review_set, review_set
+
+    session = _population_session()
+    fallback = review_set(session, "methods_statistics")
+    assert len(fallback.reviews) > 1, "the fixture needs more than one idea to skip"
+    written = ReviewSet(
+        reviews=[
+            fallback.reviews[0].model_copy(
+                update={"findings": ["The bench protocol is costed and staffed."]}
+            )
+        ]
+    )
+
+    merged = parsed_review_set(session, "methods_statistics", written, fallback)
+
+    assert len(merged.reviews) == len(fallback.reviews)
+    assert not merged.reviews[0].stood_in, "a review the specialist wrote is its own"
+    assert all(review.stood_in for review in merged.reviews[1:])
+
+
+def test_a_review_set_the_specialist_wrote_in_full_is_marked_nowhere():
+    from coscientist.parity import parsed_review_set, review_set
+
+    session = _population_session()
+    fallback = review_set(session, "methods_statistics")
+
+    merged = parsed_review_set(session, "methods_statistics", fallback, fallback)
+
+    assert not any(review.stood_in for review in merged.reviews)
+
+
 def test_the_reported_error_describes_the_whole_answer_not_its_last_scrap():
     """A generator's real fault was reported as the innermost object's fault.
 

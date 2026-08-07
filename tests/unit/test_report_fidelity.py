@@ -290,6 +290,23 @@ def test_a_rewrite_every_criterion_saw_again_says_nothing_about_what_was_missed(
     assert "not run again" not in lead_in
 
 
+def test_the_fields_a_rewrite_left_alone_are_named_as_english_not_as_labels():
+    """These are the names of the sections printed under the idea, and read into a
+    sentence without an article they stopped being English: a live dossier printed
+    "The rewrite leaves falsifier unchanged"."""
+    from coscientist.narrative import _revised_form
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evolution = EvolutionCycle(records=[_evolved("cand_a_v2", "cand_a", 2)])
+    _trace_lineage(record, {"cand_a"})
+
+    lead_in, _, unchanged = _revised_form(record, _candidate("cand_a"))
+
+    assert unchanged
+    assert "leaves the " in lead_in
+    assert "leaves falsifier" not in lead_in
+
+
 def test_clusters_with_one_mechanism_between_them_are_not_said_to_each_have_one():
     """A fallback clustering writes the same sentence into every cluster it makes.
 
