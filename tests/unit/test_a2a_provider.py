@@ -1,9 +1,17 @@
+import asyncio
+
 import httpx
 import pytest
 from a2a.client.errors import A2AClientHTTPError
 
 from app.app_utils.a2a import default_app_url
-from coscientist.agents import A2A_TRANSPORT_ATTEMPTS, A2AProvider
+from coscientist.agents import (
+    A2A_TRANSPORT_ATTEMPTS,
+    A2AProvider,
+    EmptyA2AStream,
+    _as_empty_stream,
+    _worth_redialling,
+)
 
 
 def test_a2a_provider_removes_exact_and_trailing_prompt_echoes():
@@ -115,3 +123,86 @@ def test_an_error_about_what_was_asked_is_not_asked_again(monkeypatch, error):
     with pytest.raises(type(error)):
         provider.complete(role="ranking", prompt="x")
     assert len(calls) == 1
+
+
+# --- a stream that sends nothing at all ---------------------------------------
+
+
+def _interpreter_substituted_error() -> RuntimeError:
+    """The RuntimeError CPython puts in place of an escaped StopAsyncIteration.
+
+    Raised by CPython here rather than constructed by hand. That the interpreter
+    hangs the original off ``__cause__`` is the whole basis for recognising this
+    failure, and a hand-built exception would only assert the assumption against
+    a copy of itself.
+    """
+
+    async def sends_nothing():
+        return
+        yield  # unreachable, and what makes this a generator
+
+    async def reads_the_first_event():
+        # What a2a's BaseClient.send_message does at the top of a stream.
+        yield await anext(sends_nothing())
+
+    async def run() -> RuntimeError:
+        try:
+            async for _ in reads_the_first_event():
+                pass
+        except RuntimeError as error:
+            return error
+        raise AssertionError("CPython did not substitute a RuntimeError")
+
+    return asyncio.run(run())
+
+
+def test_a_stream_that_closes_before_its_first_event_is_dialled_again():
+    """A live generate stage failed under "async generator raised
+    StopAsyncIteration" -- an hour and twenty-four dollars of Deep Research
+    behind it -- which names a protocol violation in a library the researcher
+    does not have and says nothing about what went wrong."""
+    substituted = _interpreter_substituted_error()
+    assert "async generator raised StopAsyncIteration" in str(substituted)
+
+    empty = _as_empty_stream("ranking", substituted)
+
+    assert empty is not None
+    assert "closed its event stream without sending anything" in str(empty)
+    assert _worth_redialling(empty)
+
+
+def test_a_runtime_error_that_is_not_an_empty_stream_is_left_alone():
+    assert _as_empty_stream("ranking", RuntimeError("no text artifact")) is None
+
+
+def test_the_provider_reports_an_empty_stream_as_the_specialist_sending_nothing(
+    monkeypatch,
+):
+    """Placed where the exception actually surfaces: inside the ``async for``."""
+    import a2a.client
+
+    class _Client:
+        async def send_message(self, message):
+            async def sends_nothing():
+                return
+                yield  # unreachable
+
+            yield await anext(sends_nothing())
+
+    async def _connect(agent, **kwargs):
+        return _Client()
+
+    monkeypatch.setattr(a2a.client.ClientFactory, "connect", _connect)
+    provider = A2AProvider(base_url="https://example.invalid")
+
+    with pytest.raises(EmptyA2AStream, match="without sending anything"):
+        asyncio.run(provider._complete(role="ranking", prompt="x"))
+
+
+def test_an_empty_stream_is_retried_and_the_stage_survives_it(monkeypatch):
+    provider, calls = _dialled(
+        monkeypatch, EmptyA2AStream("nothing came back"), "the specialist's answer"
+    )
+
+    assert provider.complete(role="ranking", prompt="x") == "the specialist's answer"
+    assert len(calls) == 2

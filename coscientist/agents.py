@@ -337,6 +337,34 @@ A2A_REDIAL_SECONDS = float(os.environ.get("COSCIENTIST_A2A_REDIAL_SECONDS", "5")
 """The wait before the second attempt; the third waits twice as long again."""
 
 
+class EmptyA2AStream(RuntimeError):
+    """A specialist's event stream closed before it sent a single event."""
+
+
+def _as_empty_stream(role: str, error: RuntimeError) -> EmptyA2AStream | None:
+    """The same failure as a dropped read, wearing the interpreter's clothes.
+
+    The A2A client reads the first event with a bare ``anext``. When the far side
+    closes the stream having sent nothing, that ``anext`` raises StopAsyncIteration
+    inside an async generator, and PEP 525 has the interpreter replace it with
+    ``RuntimeError: async generator raised StopAsyncIteration``. That reached a
+    live run: the generate stage failed under that sentence, which names a
+    protocol violation in somebody else's library and says nothing about what
+    happened, an hour and twenty-four dollars of Deep Research behind it.
+
+    What happened was that the server-side turn died before its first event --
+    on that run because the session database refused it a connection -- so
+    nothing was received and dialling again duplicates nothing. Matched on the
+    cause rather than the message, which is the interpreter's wording to change.
+    """
+    if not isinstance(error.__cause__, StopAsyncIteration):
+        return None
+    return EmptyA2AStream(
+        f"A2A specialist '{role}' closed its event stream without sending "
+        "anything, so its turn produced no answer to keep."
+    )
+
+
 def _worth_redialling(error: Exception) -> bool:
     """Whether the call failed on the wire rather than on what was asked of it.
 
@@ -348,6 +376,8 @@ def _worth_redialling(error: Exception) -> bool:
     import httpx
     from a2a.client.errors import A2AClientHTTPError
 
+    if isinstance(error, EmptyA2AStream):
+        return True
     if isinstance(error, A2AClientHTTPError):
         return error.status_code >= 500
     return isinstance(error, httpx.TransportError)
@@ -415,13 +445,19 @@ class A2AProvider:
             )
             responses: list[str] = []
             grounding_urls: list[str] = []
-            async for result in client.send_message(message):
-                payload = result[0] if isinstance(result, tuple) else result
-                dumped = payload.model_dump(mode="json", exclude_none=True)
-                texts = self._texts(dumped)
-                if texts:
-                    responses = texts
-                grounding_urls.extend(self._urls(dumped))
+            try:
+                async for result in client.send_message(message):
+                    payload = result[0] if isinstance(result, tuple) else result
+                    dumped = payload.model_dump(mode="json", exclude_none=True)
+                    texts = self._texts(dumped)
+                    if texts:
+                        responses = texts
+                    grounding_urls.extend(self._urls(dumped))
+            except RuntimeError as error:
+                empty = _as_empty_stream(role, error)
+                if empty is None:
+                    raise
+                raise empty from error
             resolved = await resolve_grounding_urls(
                 dict.fromkeys(grounding_urls), client=http_client
             )

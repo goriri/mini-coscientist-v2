@@ -208,10 +208,10 @@ def test_the_connection_share_is_configurable_for_a_bigger_server(monkeypatch):
     assert _pool_max_size() == DEFAULT_POOL_MAX_SIZE
 
 
-def test_the_adk_engines_take_a_share_of_the_same_server():
-    """The two SQLAlchemy engines draw on the ceiling the ledger draws on.
+def test_the_adk_engine_takes_a_share_of_the_same_server():
+    """The SQLAlchemy engine draws on the ceiling the ledger draws on.
 
-    SQLAlchemy holds five and overflows to fifteen by default, and there are two
+    SQLAlchemy holds five and overflows to fifteen by default, and there were two
     engines here: thirty from one process, against a budget of twenty-two shared
     with every other instance of the service.
     """
@@ -222,3 +222,38 @@ def test_the_adk_engines_take_a_share_of_the_same_server():
     assert postgres["pool_pre_ping"] is True
     # SQLite has no server and no ceiling, and its pool arguments differ.
     assert _engine_options("sqlite+aiosqlite:///runtime.db") == {}
+
+
+def test_two_instances_at_peak_leave_the_server_connections_to_spare():
+    """Eleven per process was called room for a second instance. Two elevens is
+    the whole budget, and a tie is not room: a live run lost it, the session
+    database refused the A2A server a connection mid-turn, and the generate stage
+    failed behind an hour of Deep Research."""
+    from app.app_utils.services import _engine_options
+    from coscientist.ledger import DEFAULT_POOL_MAX_SIZE
+
+    engine = _engine_options("postgresql+asyncpg://user@/coscientist")
+    per_process = engine["pool_size"] + engine["max_overflow"] + DEFAULT_POOL_MAX_SIZE
+    # Twenty-five on a db-f1-micro, three reserved for the superuser.
+    assert 2 * per_process <= 22 - 4
+
+
+def test_the_session_service_and_the_task_store_share_one_engine(monkeypatch):
+    """Two engines against the same server is two pools where one will do."""
+    import app.app_utils.services as services
+
+    monkeypatch.setattr(
+        services, "_database_url", lambda: "postgresql+asyncpg://user@/coscientist"
+    )
+    services._shared_engine.cache_clear()
+    services.get_session_service.cache_clear()
+    services.get_task_store.cache_clear()
+    monkeypatch.delenv("SESSION_SERVICE_URI", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_AGENT_ENGINE_ID", raising=False)
+    try:
+        assert services.get_session_service().db_engine is services._shared_engine()
+        assert services.get_task_store().engine is services._shared_engine()
+    finally:
+        services._shared_engine.cache_clear()
+        services.get_session_service.cache_clear()
+        services.get_task_store.cache_clear()

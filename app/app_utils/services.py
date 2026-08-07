@@ -64,15 +64,35 @@ def _database_url() -> str:
 
 
 # Every pool in this process draws on one server's connection ceiling, and that
-# ceiling is twenty-five on the machine this runs against. SQLAlchemy defaults to
-# five held plus ten overflow per engine, and there are two engines here beside
-# the research ledger's own pool -- thirty-five from one process against a
-# twenty-two-connection budget. The exports stage of a live run collected the
-# resulting "remaining connection slots are reserved" 500. These are shares of
-# that budget: raise them with the server's max_connections, not before it.
+# ceiling is twenty-five on the machine this runs against, three of them reserved
+# for the superuser. SQLAlchemy defaults to five held plus ten overflow per
+# engine, and there were two engines here beside the research ledger's own pool
+# -- thirty-five from one process against a twenty-two-connection budget. The
+# exports stage of a live run collected the resulting "remaining connection slots
+# are reserved" 500.
+#
+# Rationing them left eleven per process, which the note here called room for a
+# second instance. Two instances of eleven is twenty-two, and twenty-two of
+# twenty-two is not room, it is a tie -- pool_recycle and pool_pre_ping both
+# replace a connection, and a replacement overlaps its predecessor for as long as
+# the old one takes to close. The tie lost: with exactly two instances up, the
+# session database refused a connection to the A2A server mid-turn, which closed
+# the specialist's event stream having sent nothing and failed the generate stage
+# of a run with an hour and twenty-four dollars of Deep Research behind it.
+#
+# So the two engines are now one, shared by the session service and the task
+# store (see ``get_task_store``), and it holds two rather than four. Peak is five
+# here plus three in the ledger: eight per process, sixteen at the two instances
+# that were up, six spare. Steady state is three, because an overflow connection
+# is closed when it is handed back.
+#
+# What this still does not do is bound instances times pool. Nothing in the
+# process knows how many instances are up, maxScale is ten, and three at peak
+# would be twenty-four. These are shares of the server's budget: raise them with
+# its max_connections, not before it.
 _ENGINE_POOL = {
     "pool_size": 2,
-    "max_overflow": 2,
+    "max_overflow": 3,
     # Cloud SQL closes an idle connection without telling the holder.
     "pool_pre_ping": True,
     "pool_recycle": 1800,
@@ -82,6 +102,20 @@ _ENGINE_POOL = {
 def _engine_options(url: str) -> dict:
     """Pool settings for a server that has them, and none for SQLite, which has not."""
     return {} if url.startswith("sqlite") else dict(_ENGINE_POOL)
+
+
+@functools.cache
+def _shared_engine():
+    """One engine for every pool in this process that talks to the same server.
+
+    SQLite gets none: it has no connection ceiling to ration, and ADK attaches a
+    foreign-key pragma to an engine it builds itself and not to one handed to it,
+    so the local runtime keeps the engine ADK makes.
+    """
+    url = _database_url()
+    if url.startswith("sqlite"):
+        return None
+    return create_async_engine(url, **_engine_options(url))
 
 
 @functools.cache
@@ -102,6 +136,8 @@ def get_session_service():
             or os.environ.get("GOOGLE_CLOUD_LOCATION"),
             agent_engine_id=agent_engine_id,
         )
+    if engine := _shared_engine():
+        return DatabaseSessionService(db_engine=engine)
     url = _database_url()
     return DatabaseSessionService(db_url=url, **_engine_options(url))
 
@@ -110,7 +146,7 @@ def get_session_service():
 def get_task_store():
     """Durable A2A task store shared by the generated JSON-RPC surface."""
     url = _database_url()
-    engine = create_async_engine(url, **_engine_options(url))
+    engine = _shared_engine() or create_async_engine(url, **_engine_options(url))
     return DatabaseTaskStore(engine=engine, create_table=True)
 
 
