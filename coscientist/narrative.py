@@ -6766,6 +6766,33 @@ def _section_three(record: ResearchRecord) -> _Draft:
         # their sizes as two, two and one over four ideas -- and printed the same
         # hypothesis under two different converging pairs further down, each pair
         # described as the two ideas resting on a single shared mechanism.
+        # And it may leave an idea out of every cluster. The paragraph opens "Mapping
+        # the generated ideas back onto the problem" and its sizes totalled four over
+        # a field of eight -- clustering had run on the shortlist -- so a reader
+        # totalling the clusters counts half the ideas and the closing sentence about
+        # what a cluster costs a portfolio silently does not reach the other half.
+        placed = {candidate_id for group in members for candidate_id in group}
+        unplaced = [
+            ranked
+            for ranked in dict.fromkeys(
+                record.ranked_id(candidate.id) for candidate in record.candidates
+            )
+            if ranked not in placed
+        ]
+        if unplaced:
+            core.append(
+                _opening(len(unplaced), "idea was", "ideas were")
+                + " not placed under any of "
+                + ("this cluster" if len(clusters) == 1 else "these clusters")
+                + ": "
+                + _joined_titles(
+                    [record.ranked_title(item) for item in unplaced], fallback="none"
+                )
+                + ". What a shared mechanism costs a portfolio is said of the "
+                "clusters above and is not said of "
+                + ("it" if len(unplaced) == 1 else "them")
+                + "."
+            )
         repeated = [
             candidate_id
             for candidate_id, count in Counter(

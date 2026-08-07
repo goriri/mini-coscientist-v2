@@ -3261,6 +3261,64 @@ def test_an_idea_placed_under_two_mechanisms_is_said_to_be_counted_twice():
     assert "more than one cluster" not in "\n".join(_section_three(record).core)
 
 
+def test_an_idea_under_no_cluster_at_all_is_named_rather_than_left_out():
+    """The paragraph opens "Mapping the generated ideas back onto the problem" and a
+    live run gave its cluster sizes as two, one and one over a field of eight --
+    clustering had run on the shortlist. A reader totalling the clusters counts half
+    the ideas, and the closing sentence about what a shared mechanism costs a
+    portfolio silently does not reach the other half."""
+    from coscientist.models import (
+        Candidate,
+        CandidatePopulation,
+        ResearchCluster,
+        ResearchLandscape,
+    )
+    from coscientist.narrative import ResearchRecord, _section_three
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.titles = {
+        "cand_a": "A Thin Alumina Coating",
+        "cand_b": "A Thin Zirconia Coating",
+        "cand_c": "A Doped Cathode Surface",
+    }
+    record.population = CandidatePopulation(
+        candidates=[
+            Candidate(
+                id=name,
+                title=record.titles[name],
+                claim=f"{name} raises retention.",
+                rationale="Because the coating blocks the reaction.",
+                mechanism_model="The coating blocks the reaction that drives fade.",
+                validation_protocol="Coin cells against an uncoated control.",
+                falsifier="Retention does not improve.",
+            )
+            for name in ("cand_a", "cand_b", "cand_c")
+        ]
+    )
+    record.landscape = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Physical Barrier Coatings",
+                candidate_ids=["cand_a", "cand_b"],
+                shared_mechanism="A coating suppresses the interfacial reaction.",
+                shared_outcome="Retention holds past five hundred cycles.",
+            )
+        ]
+    )
+
+    printed = "\n".join(_section_three(record).core)
+
+    assert (
+        "One idea was not placed under any of this cluster: A Doped Cathode Surface."
+        in printed
+    )
+    assert "is not said of it" in printed
+
+    # And a run where the clustering reached every idea says nothing at all.
+    record.landscape.clusters[0].candidate_ids = ["cand_a", "cand_b", "cand_c"]
+    assert "not placed under any of" not in "\n".join(_section_three(record).core)
+
+
 def test_an_overlapping_idea_is_named_by_the_title_the_report_gave_it():
     """Clustering runs after evolution and may name a revision. A live report said
     "one idea appears in more than one cluster: A 2.5 nm ALD-deposited LiNbO3 Coating
