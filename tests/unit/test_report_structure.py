@@ -5049,3 +5049,31 @@ def test_an_entry_that_has_only_the_authors_says_it_has_no_title():
     )
 
     assert _reference_title(lead) == ("Zhao et al., untitled source on pubs.acs.org")
+
+
+def test_the_minority_lead_in_counts_the_entries_not_the_cases_it_distinguishes():
+    """ "The remaining entries are the inverse case, a protected minority: one where a
+    region rests on a single idea" stood over two bullets on a live run. "one where"
+    opens a list of the cases the run tells apart, and a reader counting what the
+    sentence promises finds one entry against the two below it."""
+    from coscientist.narrative import _ConnectionCounts, connections_lead_in
+
+    two_alike = connections_lead_in(_ConnectionCounts(converging=1, sole_minority=2))
+    assert "The remaining two entries are the inverse case" in two_alike
+    assert "one where a region rests" not in two_alike
+    assert "in each, a region rests on a single idea" in two_alike
+    assert "They are about how thinly a region is covered" in two_alike
+
+    alone = connections_lead_in(_ConnectionCounts(converging=1, sole_minority=1))
+    assert "The remaining entry is the inverse case" in alone
+    assert "minority: a region rests on a single idea" in alone
+    assert "It is about how thinly a region is covered" in alone
+
+    # Two cases really present is the one place a list of cases belongs, and then
+    # each is counted so the two counts add up to the entries below.
+    both = connections_lead_in(
+        _ConnectionCounts(converging=1, sole_minority=2, shared_minority=1)
+    )
+    assert "The remaining three entries are the inverse case" in both
+    assert "two entries where a region rests on a single idea" in both
+    assert "one entry where a region has more than one occupant" in both

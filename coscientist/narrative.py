@@ -9856,17 +9856,31 @@ def connections_lead_in(counts: _ConnectionCounts) -> str:
         # covered, which is the same subject read the other way round. How thinly
         # differs per entry, and a lead-in that generalises over both cases states
         # of one of them the opposite of what its own bullet says.
-        cover = []
-        if counts.sole_minority:
-            cover.append(
-                "one where a region rests on a single idea, so dropping it closes "
-                "the region rather than narrowing it"
+        #
+        # The two cases are counted, not enumerated as kinds. "one where a region
+        # rests on a single idea" opened a list of kinds, and where both entries were
+        # of the same kind it stood over two bullets promising one -- the sentence
+        # counting the cases the run distinguishes while the reader counts entries.
+        # Where only one case occurs there is no list to open, and the clause is the
+        # description of every entry below rather than of one of them.
+        sole = (
+            "a region rests on a single idea, so dropping it closes the region "
+            "rather than narrowing it"
+        )
+        shared = (
+            "a region has more than one occupant but few enough that they would "
+            "likely fail together"
+        )
+        if counts.sole_minority and counts.shared_minority:
+            cover = (
+                f"{_plural(counts.sole_minority, 'entry', 'entries')} where {sole}, "
+                f"and {_plural(counts.shared_minority, 'entry', 'entries')} where "
+                f"{shared}"
             )
-        if counts.shared_minority:
-            cover.append(
-                "one where a region has more than one occupant but few enough that "
-                "they would likely fail together"
-            )
+        elif counts.sole_minority:
+            cover = sole if counts.minority == 1 else f"in each, {sole}"
+        else:
+            cover = shared if counts.minority == 1 else f"in each, {shared}"
         # Singular where there is one of them. "The remaining entries are the inverse
         # case ... They are about how thinly a region is covered" stood over a single
         # bullet, and a reader who counts what a plural promises finds one entry.
@@ -9874,10 +9888,10 @@ def connections_lead_in(counts: _ConnectionCounts) -> str:
             (
                 "The remaining entry is the inverse case, a protected minority: "
                 if counts.minority == 1
-                else "The remaining entries are the inverse case, a protected "
-                "minority: "
+                else f"The remaining {_number_word(counts.minority).lower()} entries "
+                "are the inverse case, a protected minority: "
             )
-            + _series(cover)
+            + cover
             + ". "
             + ("It is" if counts.minority == 1 else "They are")
             + " about how thinly a region is covered rather than about any one "
