@@ -784,11 +784,15 @@ def test_an_entry_that_failed_verification_is_not_counted_as_one_nobody_checked(
 
     said = _cited_reference_standing(record)
 
+    # Five standings, not four. The entry whose own line reads "Not checked against
+    # the document: only its catalogue record was reached" was counted here under
+    # "records where a statement came from and no more", which says nobody looked it
+    # up: somebody did, and got as far as the catalogue.
     assert said.startswith(
         "Of seven entries below, three were retrieved and checked against the "
-        "document they name, two record where a statement came from and no more, "
-        "one was looked for and could not be retrieved at all, and one names a "
-        "document that has since been retracted."
+        "document they name, one was found in a catalogue and not read, one records "
+        "where a statement came from and no more, one was looked for and could not "
+        "be retrieved at all, and one names a document that has since been retracted."
     )
     assert "the other four entries record" not in said
 

@@ -230,7 +230,34 @@ def _standing(*statuses: str) -> ResearchRecord:
 
 def test_the_reference_standing_says_nothing_was_checked_when_nothing_was():
     said = _reference_standing(_standing("discovered_unverified", "metadata_verified"))
+    assert said.startswith("None of them is a verified reference")
+    # And it still separates the one somebody looked up from the one nobody did.
+    assert "one was found in a catalogue and not read" in said
+    assert "one records where a statement came from and no more" in said
+
+
+def test_a_corpus_nobody_looked_at_is_still_said_to_be_leads_and_nothing_worse():
+    """The plain wording is right where it is the whole truth, and only there."""
+    said = _reference_standing(
+        _standing("discovered_unverified", "discovered_unverified")
+    )
     assert said.startswith("Every one of them is a lead")
+
+
+def test_a_source_the_run_went_back_to_and_could_not_get_is_not_one_it_never_read():
+    """ "For the remaining sixty-seven sources ... inspecting the original ... remains
+    outstanding" stood over a corpus of which fifteen cited entries two hundred lines
+    below read "Could not be retrieved when this run went back to it". A reader told
+    the rest is merely unread overstates what is left to recover from it."""
+    said = _reference_standing(
+        _standing("verified", "discovered_unverified", "inaccessible", "retracted")
+    )
+
+    assert "remains outstanding" not in said
+    assert "Of the remaining three sources" in said
+    assert "one records where a statement came from and no more" in said
+    assert "one was looked for and could not be retrieved at all" in said
+    assert "one names a document that has since been retracted" in said
 
 
 def test_the_reference_standing_says_everything_was_checked_when_it_was():

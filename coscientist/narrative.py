@@ -15,6 +15,7 @@ import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from decimal import ROUND_HALF_UP, Decimal
 from itertools import pairwise
 from typing import Any, Literal
 
@@ -395,6 +396,38 @@ class CitationRegistry:
         return statuses["retracted"], statuses["inaccessible"]
 
     @property
+    def cited_by_catalogue(self) -> int:
+        """Cited entries whose catalogue record was reached and document was not.
+
+        Its own entry prints "Not checked against the document: only its catalogue
+        record was reached", and the sentence over the list counted it under "records
+        where a statement came from and no more", which says nobody looked it up.
+        """
+        return sum(
+            1
+            for url in self._ordered
+            if self._leads[url].verification_status == "metadata_verified"
+        )
+
+    @property
+    def corpus_discredited(self) -> tuple[int, int, int]:
+        """The same three standings over every lead, not only the cited ones.
+
+        The corpus sentence had one bucket for everything short of verified and
+        described it as inspection not yet attempted. Fifteen of the entries printed
+        two hundred lines below say the run went back to the document and could not
+        get it, which is a failure of verification rather than the absence of one,
+        and a reader told the corpus is merely unread will overstate what is left to
+        recover from it.
+        """
+        statuses = Counter(lead.verification_status for lead in self._leads.values())
+        return (
+            statuses["retracted"],
+            statuses["inaccessible"],
+            statuses["metadata_verified"],
+        )
+
+    @property
     def universal_qualifier(self) -> str:
         """The qualifier that holds of every cited source, if one does.
 
@@ -752,20 +785,24 @@ DEEP_DIVE_PREAMBLE = (
     "For the same reason no item there claims to have been answered: where a review "
     "responded at all, the responses are printed under Reviews, and which objection "
     "each one reaches is left to the reader to judge.",
-    # A debated match has two participants and each of them has a section, so the
-    # exchange is printed twice and a reader meeting the second copy takes it for an
-    # editing fault. It is not one -- the debaters argue in slots, and each printing
-    # resolves the slots to "this idea" and "the opposing idea" from its own section's
-    # side, so the two copies read as opposite arguments. Saying so once is cheaper
-    # than either abbreviating the loser's section or leaving the reader to work it
-    # out from a transcript that appears to contradict the one they just read.
-    "A debate appears under both of the ideas that fought it, each time argued from "
-    "that section's side: the same exchange, read from the opposite end. The verdict "
-    "and the rating change under it are the same in both places. A judge argues its "
-    "verdict in the closing turn of the exchange, so where the verdict under a debate "
-    "carries nothing further, its reasoning is that closing turn rather than missing; "
-    "where the judge reasoned somewhere other than in the exchange, the verdict "
-    "carries that reasoning, and where it recorded none the verdict says so.",
+    # A debated match has two participants and each of them has a section, so a reader
+    # meets the same match twice and has to be told what is repeated and what is not.
+    #
+    # This described the renderer of two versions ago, which printed the transcript in
+    # both chapters: it promised a second copy the report does not contain, and it
+    # said the verdict is the same in both places, five hundred lines above the same
+    # match printed as a win under one idea and a loss under the other. Both halves
+    # were wrong in the direction that costs the reader time -- they go looking for a
+    # transcript that is not there, and read the second verdict as a contradiction.
+    "A debated match is one exchange, reproduced in full under the first of the two "
+    "ideas to reach it; under the other is a pointer to where it stands. The verdict "
+    "and the rating change are stated in both chapters, each from that section's "
+    "side, so the match a reader meets as a win under one idea is the same match they "
+    "meet as a loss under the other. A judge argues its verdict in the closing turn "
+    "of the exchange, so where the verdict under a debate carries nothing further, "
+    "its reasoning is that closing turn rather than missing; where the judge reasoned "
+    "somewhere other than in the exchange, the verdict carries that reasoning, and "
+    "where it recorded none the verdict says so.",
 )
 
 # What introduces an idea's check list when the list came from its reviews. It is the
@@ -4273,7 +4310,7 @@ def _summary_sections(
                 # "3.6 of five across 5 reviews" spells one small number and prints
                 # the other as a digit inside a single clause. The mean is data and
                 # stays a figure; the two counts around it are prose.
-                f", averaging {mean:.1f} of five across "
+                f", averaging {_one_decimal(mean)} of five across "
                 f"{_number_word(len(scores)).lower()} "
                 + ("review." if len(scores) == 1 else "reviews.")
                 if scores
@@ -6034,6 +6071,19 @@ _TEEN_WORDS = "Thirteen Fourteen Fifteen Sixteen Seventeen Eighteen Nineteen".sp
 _TENS_WORDS = "Twenty Thirty Forty Fifty Sixty Seventy Eighty Ninety".split()
 
 
+def _one_decimal(value: float) -> str:
+    """A mean to one place, rounded half away from zero rather than to even.
+
+    Python rounds a half to the nearest even digit, so two adjacent bullets stating
+    the same shape of tie went opposite ways: six fives and two twos is 4.25 and was
+    printed 4.2, six fives and two fours is 4.75 and was printed 4.8. The sentence
+    states the distribution it averaged, so a reader who adds it up gets a different
+    number from the one beside it, and impact was reported a tenth below its own
+    figures against a safety score that was not.
+    """
+    return str(Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
 def _number_word(count: int) -> str:
     """A number as a word, capitalised for the start of a sentence.
 
@@ -7310,8 +7360,8 @@ def _section_six(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft:
                 f"{_plural(len(at_top), 'idea')} at the top of it."
             )
         core.append(
-            f"On {criterion.lower()}, the ideas averaged {average:.1f} out of five. "
-            + body
+            f"On {criterion.lower()}, the ideas averaged {_one_decimal(average)} out of "
+            "five. " + body
         )
     if by_criterion:
         core.append(_separating_criteria(separating, level))
@@ -7721,11 +7771,15 @@ def _open_flaw_consequence(record: ResearchRecord, ids: Sequence[str]) -> str:
 
 
 def _cited_entry_standings(
-    checked: int, unchecked: int, inaccessible: int, retracted: int
+    checked: int,
+    unchecked: int,
+    inaccessible: int,
+    retracted: int,
+    catalogue: int = 0,
 ) -> list[str]:
     """One clause per kind of standing the entries below carry, in falling order.
 
-    Four kinds, not two. Merely-unchecked is the mildest of the three that are not
+    Five kinds, not two. Merely-unchecked is the mildest of the four that are not
     verified, and it was the only one the sentence had a clause for.
     """
     clauses = []
@@ -7735,6 +7789,16 @@ def _cited_entry_standings(
             + ("was" if checked == 1 else "were")
             + " retrieved and checked against the document "
             + ("it names" if checked == 1 else "they name")
+        )
+    # An entry reading "Not checked against the document: only its catalogue record
+    # was reached" was counted here as recording where a statement came from and no
+    # more, which says nobody looked it up. Somebody did, and got as far as the
+    # catalogue.
+    if catalogue:
+        clauses.append(
+            f"{_number_word(catalogue).lower()} "
+            + ("was" if catalogue == 1 else "were")
+            + " found in a catalogue and not read"
         )
     if unchecked:
         clauses.append(
@@ -7783,7 +7847,8 @@ def _cited_reference_standing(record: ResearchRecord) -> str:
     if not total:
         return ""
     retracted, inaccessible = record.citations.cited_discredited
-    unchecked = total - checked - retracted - inaccessible
+    catalogue = record.citations.cited_by_catalogue
+    unchecked = total - checked - retracted - inaccessible - catalogue
     if checked == total:
         return (
             "The one entry below was retrieved and checked against the document it "
@@ -7805,7 +7870,11 @@ def _cited_reference_standing(record: ResearchRecord) -> str:
     # -- two failures of verification reported as verification not yet attempted.
     return (
         f"Of {_plural(total, 'entry')} below, "
-        + _series(_cited_entry_standings(checked, unchecked, inaccessible, retracted))
+        + _series(
+            _cited_entry_standings(
+                checked, unchecked, inaccessible, retracted, catalogue
+            )
+        )
         + "."
         + _STANDING_IS_MARKED
     )
@@ -7821,13 +7890,41 @@ def _reference_standing(record: ResearchRecord) -> str:
     two sentences described the same sources.
     """
     checked, total = record.citations.verification_standing
+    retracted, inaccessible, catalogue = record.citations.corpus_discredited
+    unchecked = total - checked - retracted - inaccessible - catalogue
     outstanding = (
         "the workflow recorded where a statement came from, but inspecting the "
         "original and confirming that it says what is attributed to it remains "
         "outstanding"
     )
-    if not total or not checked:
+
+    # A source the run went back to and could not get is not a source nobody has
+    # looked at yet. This had one clause for everything short of verified and it said
+    # the milder of the two, over a corpus of which fifteen cited entries two hundred
+    # lines below read "Could not be retrieved when this run went back to it". A
+    # reader told the rest is merely unread overstates what is left to recover.
+    def _shortfall(count: int) -> str:
+        opening = _opening(count, "source")
+        lowered = f"{opening[:1].lower()}{opening[1:]}"
+        if not (retracted or inaccessible or catalogue):
+            return f"For the remaining {lowered}, {outstanding}."
+        return (
+            f"Of the remaining {lowered}, "
+            + _series(
+                _cited_entry_standings(0, unchecked, inaccessible, retracted, catalogue)
+            )
+            + "."
+        )
+
+    if not total:
         return f"Every one of them is a lead rather than a verified reference: {outstanding}."
+    if not checked:
+        if not (retracted or inaccessible or catalogue):
+            return (
+                "Every one of them is a lead rather than a verified reference: "
+                f"{outstanding}."
+            )
+        return "None of them is a verified reference. " + _shortfall(total)
     if checked == total:
         return (
             "Every one of them was retrieved and checked against the document it "
@@ -7848,7 +7945,6 @@ def _reference_standing(record: ResearchRecord) -> str:
     # _plural does, and this sentence spells its other two counts because they open
     # clauses: "Twenty-five of the eighty were retrieved ... For the remaining 55
     # sources" is one sentence writing the same kind of number two ways.
-    remaining = _opening(total - checked, "source")
     return (
         f"{_number_word(checked)} of the {_number_word(total).lower()} "
         # "One of the three were retrieved and checked against the document they
@@ -7857,7 +7953,8 @@ def _reference_standing(record: ResearchRecord) -> str:
         + ("was" if checked == 1 else "were")
         + " retrieved and checked against the document "
         + ("it names" if checked == 1 else "they name")
-        + f". For the remaining {remaining[:1].lower()}{remaining[1:]}, {outstanding}."
+        + ". "
+        + _shortfall(total - checked)
         + reconciled
         # Only the cited sources are listed anywhere in this report, so pointing at
         # a per-source record for all of them pointed at a list that does not exist.
@@ -8740,7 +8837,7 @@ def _review_summary(briefs: Sequence[IdeaBrief]) -> list[str]:
         for review in brief.reviews:
             scores.setdefault(review.section, []).append(review.score)
     summary = [
-        f"{criterion}: mean {sum(values) / len(values):.1f} of five across "
+        f"{criterion}: mean {_one_decimal(sum(values) / len(values))} of five across "
         f"{_plural(len(values), 'review')}, range {min(values)} to {max(values)}."
         for criterion, values in scores.items()
     ]
@@ -9421,12 +9518,25 @@ def _minority_note(record: ResearchRecord, candidate_id: str) -> str:
     # report makes, and this said so of two ideas section nine recommends by name.
     # Where the two lists disagree the disagreement is the fact, and it is stated in
     # both sections that carry half of it rather than a third time here.
-    if listed and ranked_id in set(_recommended_ids(record)):
+    recommended = ranked_id in set(_recommended_ids(record))
+    if listed and recommended:
         return (
             f"{note} The meta-review excluded it and then recommended carrying it: "
             "what that disagreement leaves open is set out with the recommendation "
             "itself. Protection keeps the region open for a future run and settles "
             "nothing about acting on this idea."
+        )
+    # The guard above asked only about the exclusion list, and a recorded flaw the
+    # meta-review never acted on is not on it. So of the two ideas section nine
+    # recommends by name while saying they carry a fatal flaw, both were told here
+    # that they are "outside any recommendation this report makes" -- the report
+    # contradicting itself across eight lines, over the recommendation a reader acts on.
+    if faulted and recommended:
+        return (
+            f"{note} A reviewer recorded a fatal flaw against it and the meta-review "
+            "recommended carrying it even so: what the recommendation is subject to "
+            "is set out with the recommendation itself. Protection keeps the region "
+            "open for a future run and settles nothing about acting on this idea."
         )
     if faulted or listed:
         if faulted and listed:

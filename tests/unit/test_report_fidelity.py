@@ -1436,6 +1436,24 @@ def test_one_flaw_reached_by_two_reviews_is_one_finding():
     assert checks[0][0] == "Fatal flaw recorded by the correctness review"
 
 
+def test_the_guide_describes_the_debate_rendering_the_report_actually_produces():
+    """It described the renderer of two versions ago. "A debate appears under both of
+    the ideas that fought it" promised a second transcript the report does not print
+    -- the second chapter carries a pointer -- and "the verdict ... the same in both
+    places" stood five hundred lines above the same match printed as a win under one
+    idea and a loss under the other."""
+    from coscientist.narrative import DEEP_DIVE_PREAMBLE
+
+    guide = " ".join(DEEP_DIVE_PREAMBLE)
+
+    assert "A debate appears under both of the ideas that fought it" not in guide
+    assert "reproduced in full under the first of the two ideas to reach it" in guide
+    assert "under the other is a pointer to where it stands" in guide
+    # And the verdicts are stated as what they are: opposite ends of one match.
+    assert "a win under one idea is the same match they meet as a loss" in guide
+    assert "the same in both places" not in guide
+
+
 def test_what_an_untested_objection_is_worth_is_said_once_over_all_of_them():
     """The reading guide states it above the ideas, over every list it is true of.
     Critical Flaws restated it verbatim under six of eight ideas -- forty words each,
@@ -2230,6 +2248,40 @@ def test_an_idea_on_both_of_the_meta_reviews_lists_is_reported_as_on_both():
     )
 
 
+def test_a_recommended_idea_carrying_an_unacted_flaw_is_not_put_outside_them_all():
+    """The guard above asked only about the exclusion list, and a flaw the meta-review
+    never acted on is not on it. So both ideas section nine recommends by name while
+    saying they carry a fatal flaw were told here, eight lines later, that they are
+    outside any recommendation the report makes."""
+    from coscientist.models import CandidatePopulation, DossierManifest, ReviewSet
+    from coscientist.narrative import _minority_note
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.population = CandidatePopulation(
+        candidates=[_candidate("cand_a"), _candidate("cand_b")]
+    )
+    record.titles = {"cand_a": "A coating", "cand_b": "A pre-coating"}
+    record.reviews = [
+        ReviewSet(
+            reviews=[
+                _review("cand_a", fatal_flaws=["It replicates a published study."])
+            ]
+        )
+    ]
+    # Recommended, and on no exclusion list: the meta-review did not act on the flaw.
+    record.manifest = DossierManifest(
+        title="Dossier",
+        sections=[],
+        recommendation_candidate_ids=["cand_a"],
+    )
+
+    note = _minority_note(record, "cand_a")
+    assert "outside any recommendation this report makes" not in note
+    assert "recommended carrying it even so" in note
+    # An idea nobody recommended and nobody faulted gets neither sentence.
+    assert "recommended carrying it even so" not in _minority_note(record, "cand_b")
+
+
 def _section_one_core(record: ResearchRecord) -> str:
     from coscientist.narrative import _section_one
 
@@ -2372,6 +2424,41 @@ def test_what_sits_at_the_top_of_a_spread_is_an_idea_not_a_review():
     # One criterion is one judgement, and the count and the noun have to agree even
     # where no live run reaches the singular.
     assert "compresses one separate judgement into one number" in six
+
+
+def test_a_mean_ending_in_a_half_is_not_rounded_to_the_nearest_even_digit():
+    """Two adjacent bullets stating the same shape of tie went opposite ways: six
+    fives and two twos is 4.25 and printed 4.2, six fives and two fours is 4.75 and
+    printed 4.8. Each sentence states the distribution it averaged, so a reader who
+    adds it up gets a different number from the one beside it."""
+    from coscientist.narrative import _section_six
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    briefs = [
+        _brief(
+            name,
+            [
+                _idea_review(section="Impact", score=impact),
+                _idea_review(section="Safety", score=safety),
+            ],
+        )
+        for name, impact, safety in (
+            ("A", 5, 5),
+            ("B", 5, 5),
+            ("C", 5, 5),
+            ("D", 5, 5),
+            ("E", 5, 5),
+            ("F", 5, 5),
+            ("G", 2, 4),
+            ("H", 2, 4),
+        )
+    ]
+
+    six = " ".join(_section_six(record, briefs).core)
+
+    assert "the ideas averaged 4.3 out of five" in six, "34/8 is 4.25, not 4.2"
+    assert "the ideas averaged 4.8 out of five" in six
+    assert "4.2 out of five" not in six
 
 
 def test_a_criterion_that_separates_nothing_says_so_once():
