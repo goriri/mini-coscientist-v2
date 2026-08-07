@@ -40,7 +40,13 @@ from coscientist.debate import (
 )
 from coscientist.models import ApprovalProfile, TournamentState
 from coscientist.orchestration import CoScientistWorkflow
-from coscientist.parity import DEFAULT_ELO, ELO_K, population_from_artifacts
+from coscientist.parity import (
+    DEFAULT_ELO,
+    ELO_K,
+    population_from_artifacts,
+    tournament_facts,
+    tournament_state,
+)
 
 QUESTION = "Can a protective coating improve lithium-ion battery cycle life?"
 
@@ -235,7 +241,8 @@ def test_the_swiss_rounds_are_cheap_and_every_finalist_pair_debates():
     session = _ranked_session()
     provider = _JudgeProvider()
     state, _ = run_debate_tournament(session, provider, max_workers=4)
-    assert len(provider.prompts) == len(state.comparisons)
+    # One call per match, plus the single closing call that writes the briefing.
+    assert len(provider.prompts) == len(state.comparisons) + 1
     swiss = [
         comparison for comparison in state.comparisons if comparison.round_number <= 3
     ]
@@ -746,3 +753,114 @@ def test_a_budget_too_small_for_any_swiss_round_still_seeds_the_finals():
     session.budget.max_pairwise_comparisons = 1
     state, _ = run_debate_tournament(session, _JudgeProvider(), max_workers=4)
     assert state.swiss_rounds == 1
+
+
+class _BriefingJudge(_JudgeProvider):
+    """Answers each match with a verdict and the closing prompt with prose."""
+
+    def __init__(self, briefing: str):
+        super().__init__()
+        self.briefing = briefing
+
+    def complete(self, *, role: str, prompt: str) -> str:
+        if "Write the briefing a researcher reads" not in prompt:
+            return super().complete(role=role, prompt=prompt)
+        with self._lock:
+            self.prompts.append(prompt)
+        return self.briefing
+
+
+BRIEFING = (
+    "The coating hypothesis separated on falsifiability rather than on impact: "
+    "it is the only one of the four whose failure condition the reviews can "
+    "check without new equipment. Second and third place are eleven points "
+    "apart, which is a third of one match, so treat that order as unsettled."
+)
+
+
+def test_the_judge_writes_the_briefing_the_standings_table_cannot():
+    """A ranking that reports only ratings reports that it happened, not what it found.
+
+    The closing call is made after the last match so the judge is reading the
+    tournament it played, and it is handed the standings and its own decisive
+    rationales so the prose cannot contradict the numbers beside it.
+    """
+    provider = _BriefingJudge(BRIEFING)
+    state, transcript = run_debate_tournament(
+        _ranked_session(), provider, max_workers=4
+    )
+
+    assert state.briefing == BRIEFING
+    assert state.briefing_author == "judge"
+    assert "## What the tournament found" in transcript
+    assert BRIEFING in transcript
+    closing = next(
+        prompt
+        for prompt in provider.prompts
+        if "Write the briefing a researcher reads" in prompt
+    )
+    # The judge is briefing on the tournament that was played, so the final
+    # standings and the matches it decided them on are both in front of it.
+    assert "Final standings:" in closing
+    assert "Closest neighbours in the order:" in closing
+    assert closing.count("\n- ") >= 4
+
+
+def test_a_briefing_that_is_still_a_match_verdict_is_refused():
+    """The closing prompt catches a judge that answers it like an eighteenth match.
+
+    "better idea: 1" against a whole tournament names a hypothesis by its
+    position in a match that is not being played. Printed under "what the
+    tournament found" it would read as the verdict on the field.
+    """
+    state, transcript = run_debate_tournament(
+        _ranked_session(), _JudgeProvider(), max_workers=4
+    )
+
+    assert state.briefing_author == "computed"
+    assert "better idea" not in state.briefing
+    assert "Final standings:" in state.briefing
+    # And the appendix does not print the fallback under a heading that would
+    # claim the judge wrote it; the standings table is three lines below.
+    assert "## What the tournament found" not in transcript
+
+
+def test_a_briefing_the_judge_could_not_write_does_not_lose_the_tournament():
+    """The ratings are final before the closing call, so its failure costs a paragraph."""
+
+    class _FailsAtTheEnd(_JudgeProvider):
+        def complete(self, *, role: str, prompt: str) -> str:
+            if "Write the briefing a researcher reads" in prompt:
+                raise RuntimeError("the model refused the closing call")
+            return super().complete(role=role, prompt=prompt)
+
+    state, _ = run_debate_tournament(_ranked_session(), _FailsAtTheEnd(), max_workers=4)
+
+    assert len(state.comparisons) == 18
+    assert state.shortlist_ids
+    assert state.briefing_author == "computed"
+    assert "Final standings:" in state.briefing
+
+
+def test_the_offline_tournament_is_briefed_without_being_attributed_to_a_judge():
+    """Arithmetic decided it, so nothing here read the hypotheses."""
+    state = tournament_state(_ranked_session())
+
+    assert state.briefing_author == "computed"
+    assert "Final standings:" in state.briefing
+    assert "matches" in state.briefing
+
+
+def test_the_briefing_does_not_multiply_out_the_unmeasured_movement_sentinel():
+    """1.0 is "no earlier round to measure against", not a rating that fell to zero.
+
+    A live report multiplied the sentinel out and told its reader the final
+    round moved a rating by about 1200 points.
+    """
+    facts = tournament_facts(
+        TournamentState(ratings={"cand_a": 1200.0}, score_movement=1.0),
+        {"cand_a": "A protective coating extends cycle life"},
+    )
+
+    assert "not measured" in facts
+    assert "1200 points" not in facts

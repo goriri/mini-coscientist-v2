@@ -334,6 +334,8 @@ try {
         shortlistCards: document.querySelectorAll('[data-presentation-stage="rank"] .candidate-card.shortlisted').length,
         technicalClosed: !document.querySelector('[data-presentation-stage="rank"] .technical-details').open,
         rawJsonVisible: document.querySelector('[data-presentation-stage="rank"] .message-copy pre:not([hidden])') !== null,
+        briefing: document.querySelector('[data-presentation-stage="rank"] .tournament-briefing')?.textContent.trim() || "",
+        briefingSourced: !!document.querySelector('[data-presentation-stage="rank"] .briefing-source'),
       }))()`);
       assert(
         rankingPresentation.rankingRows === 8,
@@ -347,6 +349,18 @@ try {
       assert(
         rankingPresentation.technicalClosed,
         "Technical JSON must be collapsed by default.",
+      );
+      // Tournament details opened on collapsed rounds and nothing else, so what
+      // the ranking decided was only readable by opening all of them.
+      assert(
+        rankingPresentation.briefing.includes("Final standings"),
+        "Tournament details must open on a briefing, not on the rounds alone.",
+      );
+      // The stub judges by arithmetic, so the briefing is computed and has to
+      // say so rather than pass for a judge's reading of the hypotheses.
+      assert(
+        rankingPresentation.briefingSourced,
+        "A computed briefing must name itself as computed.",
       );
     }
     await cdp.evaluate(

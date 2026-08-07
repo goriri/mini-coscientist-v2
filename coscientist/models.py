@@ -693,6 +693,17 @@ class TournamentState(Contract):
     ranking_stable_rounds: int = 0
     score_movement: float = 1.0
     converged: bool = False
+    # What the tournament decided, in the judge's own words. Eighteen match
+    # rationales behind a fold and four numbers above it told a reader the
+    # ranking happened without telling them what it found: which candidate
+    # separated from the field, on what, and where the order is too close to
+    # act on. Written after the last match, by the model that judged them.
+    briefing: str = ""
+    # Who wrote it. The fallback is arithmetic over the match record: true, but
+    # not a reading of the hypotheses, and it repeats the standings table it
+    # would sit under. Surfaces that can only afford one of the two need to know
+    # which one they are holding.
+    briefing_author: Literal["judge", "computed"] = "computed"
 
 
 class EvolutionRecord(Contract):

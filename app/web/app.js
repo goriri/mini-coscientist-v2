@@ -437,6 +437,17 @@ function renderStagePresentation(presentation, rawText = "") {
           .join("")}
       </div>`
     : "";
+  // The tournament in prose, above the matches rather than after them. A reader
+  // who opened "Tournament details" met eighteen collapsed rounds and had to
+  // read all of them to learn what the ranking had decided. When the judge did
+  // not write one the fallback is arithmetic over the same matches, and it says
+  // so: it is not a reading of the hypotheses and must not pass for one.
+  const briefing = presentation.briefing
+    ? `<div class="tournament-briefing">
+         ${presentation.briefing_author === "judge" ? "" : '<p class="briefing-source">Computed from the match record — the judge did not write a summary for this run.</p>'}
+         ${formatPlainText(presentation.briefing)}
+       </div>`
+    : "";
   const comparisons = (presentation.comparison_rounds || [])
     .map(
       (round) => `
@@ -498,7 +509,7 @@ function renderStagePresentation(presentation, rawText = "") {
       ${metrics ? `<div class="presentation-metrics">${metrics}</div>` : ""}
       ${ranking}
       ${presentation.candidates?.length ? `<div class="candidate-grid">${presentation.candidates.map(renderCandidateCard).join("")}</div>` : ""}
-      ${comparisons ? `<section class="comparison-list"><h4>Tournament details</h4>${comparisons}</section>` : ""}
+      ${comparisons || briefing ? `<section class="comparison-list"><h4>Tournament details</h4>${briefing}${comparisons}</section>` : ""}
       ${evolution ? `<div class="evolution-list">${evolution}</div>` : ""}
       ${clusters ? `<div class="cluster-grid">${clusters}</div>` : ""}
       ${recommendations ? `<div class="recommendation-grid">${recommendations}</div>` : ""}

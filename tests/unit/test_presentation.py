@@ -46,6 +46,12 @@ def test_every_stage_has_a_structured_human_presentation():
     assert all(item["claim"] for item in ranked["ranking"])
     assert all(candidate["rationale"] for candidate in ranked["candidates"])
     assert ranked["comparison_rounds"]
+    # The panel showed four numbers and the rounds behind a fold, which says a
+    # ranking happened without saying what it decided. The author travels with
+    # the text: this run was decided by arithmetic, and the briefing must not be
+    # read as a judge's verdict on the field.
+    assert "Final standings:" in ranked["briefing"]
+    assert ranked["briefing_author"] == "computed"
 
     evolved = presentations["evolve"]
     assert evolved is not None

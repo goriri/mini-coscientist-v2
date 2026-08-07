@@ -6,7 +6,7 @@ import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from itertools import combinations
+from itertools import combinations, pairwise
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -771,6 +771,74 @@ def _candidate_score(candidate: Candidate, reviews: list[CandidateReview]) -> fl
     return score
 
 
+def short_claim(candidate: Candidate, limit: int = 110) -> str:
+    """A hypothesis named by what it claims, short enough to sit in a list."""
+    claim = " ".join(candidate.claim.split())
+    return claim if len(claim) <= limit else f"{claim[: limit - 1].rstrip()}…"
+
+
+def tournament_facts(state: TournamentState, titles: dict[str, str]) -> str:
+    """The arithmetic of a finished tournament, in sentences.
+
+    Two readers need exactly this text: the judge, which is handed it as the
+    ground truth its closing briefing must not contradict, and the researcher,
+    who gets it as the briefing itself when no judge wrote one -- an offline run
+    has no judge, and a live one can fail on the closing call after the ratings
+    are already final. Every sentence is a fact about matches that were played,
+    so it is honest prose whoever it comes from, and it never claims a
+    judgement the tournament did not make.
+
+    Lives here rather than in ``debate`` because the deterministic tournament
+    below needs it too, and ``debate`` imports this module.
+    """
+    ordered = sorted(state.ratings.items(), key=lambda item: (-item[1], item[0]))
+    decided = sum(1 for item in state.comparisons if item.winner_id)
+    debated = sum(1 for item in state.comparisons if item.judge == "llm_debate")
+    total = len(state.comparisons)
+    lines = [
+        f"Field: {len(state.ratings)} hypotheses, {total} matches "
+        f"({decided} decided, {total - decided} drawn for want of a verdict"
+        + (
+            f"; {debated} judged by full debate rather than single-turn comparison"
+            if debated
+            else ""
+        )
+        + ").",
+        f"Every hypothesis started at {DEFAULT_ELO:.0f} Elo and a decided match "
+        f"moves the pair by up to {ELO_K:.0f} points, so a gap narrower than "
+        f"{ELO_K:.0f} is inside a single match.",
+        "Final standings:",
+    ]
+    leader = ordered[0][1] if ordered else DEFAULT_ELO
+    for rank, (candidate_id, rating) in enumerate(ordered, 1):
+        lines.append(
+            f"  {rank}. {titles.get(candidate_id, candidate_id)} — {rating:.0f} Elo"
+            + ("" if rank == 1 else f", {leader - rating:.0f} behind the leader")
+            + (" (shortlisted)" if candidate_id in state.shortlist_ids else "")
+        )
+    adjacent = list(pairwise(ordered))
+    if adjacent:
+        (above, above_rating), (below, below_rating) = min(
+            adjacent, key=lambda pair: pair[0][1] - pair[1][1]
+        )
+        lines.append(
+            f"Closest neighbours in the order: {titles.get(above, above)} over "
+            f"{titles.get(below, below)} by {above_rating - below_rating:.0f} Elo."
+        )
+    movement = (
+        f"{state.score_movement * DEFAULT_ELO:.0f} points"
+        if state.score_movement < UNMEASURED_MOVEMENT
+        else "not measured"
+    )
+    lines.append(
+        f"Stability: {state.ranking_stable_rounds} consecutive rounds left the "
+        f"order unchanged, final-round rating movement was {movement}, and the "
+        "convergence rule of two stable rounds under five per cent movement was "
+        + ("met." if state.converged else "not met.")
+    )
+    return "\n".join(lines)
+
+
 def tournament_state(session: Session) -> TournamentState:
     population = population_from_artifacts(session.artifacts)
     reviews = [
@@ -874,7 +942,7 @@ def tournament_state(session: Session) -> TournamentState:
         standings_history.append(standings())
     stable = stable_rounds(standings_history)
     movement = score_movement(rating_history)
-    return TournamentState(
+    state = TournamentState(
         ratings=ratings,
         comparisons=comparisons,
         shortlist_ids=standings()[:TOP_FOUR],
@@ -884,6 +952,16 @@ def tournament_state(session: Session) -> TournamentState:
         # deterministically and a run judged by a model are called converged on
         # the same terms rather than one of them never being called it at all.
         converged=stable >= 2 and movement < SETTLED_MOVEMENT,
+    )
+    # The computed briefing, not a judge's: this tournament was decided by
+    # arithmetic, and there is nothing here that read the hypotheses.
+    return state.model_copy(
+        update={
+            "briefing": tournament_facts(
+                state,
+                {item.id: short_claim(item) for item in candidates},
+            )
+        }
     )
 
 

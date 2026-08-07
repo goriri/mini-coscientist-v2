@@ -20,6 +20,7 @@ import pytest
 from coscientist.advisories import AUTO_APPROVAL_WARNING
 from coscientist.dossier import (
     CHAPTER_SECTIONS,
+    SUMMARY_TABLE_HEADING,
     _cell,
     _match_summary,
     _verdict_line,
@@ -5321,3 +5322,53 @@ def test_a_finding_that_is_not_a_flattened_heading_is_left_as_it_was():
 
     for text in intact:
         assert _with_heading_separated(text) == text
+
+
+def _briefed(session: Session, briefing: str, author: str) -> str:
+    for artifact in session.artifacts:
+        if artifact.schema_name == "TournamentState":
+            artifact.payload["briefing"] = briefing
+            artifact.payload["briefing_author"] = author
+    return compile_dossier(session)
+
+
+JUDGE_BRIEFING = (
+    "The coating idea separated from the field on falsifiability rather than on "
+    "impact: it is the only finalist whose failure condition the reviews can "
+    "check without new equipment. Second and third are eleven points apart, a "
+    "third of one match, so that order should be treated as unsettled."
+)
+
+
+def test_the_judges_reading_of_the_tournament_sits_under_the_ranked_table(
+    rich_session: Session,
+):
+    """A column of Elo says which idea finished ahead, not what decided it.
+
+    The reader of the summary table is choosing between eight ideas on one page,
+    and the gaps in that column are the part they cannot interpret alone: the
+    judge that played the matches says which of them are too narrow to read
+    anything into.
+    """
+    report = _briefed(rich_session, JUDGE_BRIEFING, "judge")
+
+    summary = report.split(SUMMARY_TABLE_HEADING)[1].split("\n## ")[0]
+    assert "**What the tournament found.**" in summary
+    assert JUDGE_BRIEFING in summary
+
+
+def test_the_computed_fallback_does_not_restate_the_table_it_sits_under(
+    rich_session: Session,
+):
+    """Arithmetic over the match record is true and is not a briefing.
+
+    It is the standings table in sentences, printed directly below the standings
+    table, and it would carry the authority of a judge's reading while saying
+    nothing the row above it does not.
+    """
+    computed = "Field: 6 hypotheses, 6 matches (6 decided, 0 drawn).\nFinal standings:"
+
+    report = _briefed(rich_session, computed, "computed")
+
+    assert "**What the tournament found.**" not in report
+    assert "Final standings:" not in report

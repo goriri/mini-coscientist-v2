@@ -715,6 +715,13 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
             {"round": number, "comparisons": comparisons}
             for number, comparisons in sorted(rounds.items())
         ]
+        # What the tournament found, ahead of the matches that found it. Without
+        # it the panel offered four numbers and eighteen collapsed rationales:
+        # enough to see that a ranking happened, not enough to see what it said.
+        # The author travels with it, because a computed fallback restating the
+        # standings must not be read as the judge's verdict on the field.
+        result["briefing"] = tournament.briefing
+        result["briefing_author"] = tournament.briefing_author
         result["metrics"] = [
             {"label": "Pairwise comparisons", "value": len(tournament.comparisons)},
             {"label": "Stable rounds", "value": tournament.ranking_stable_rounds},

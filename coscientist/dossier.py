@@ -2375,7 +2375,15 @@ def compile_dossier(session: Session) -> str:
         # because a reader who wants one idea should not have to read the manual
         # to find out which one. Everything in the row is in the idea's own
         # section below; the row is the handle for reaching it.
-        lines += _candidate_summary_table(briefs)
+        # The judge's reading only. The computed fallback is this same table in
+        # sentences, and printing it directly under the table it restates would
+        # cost a paragraph to say nothing new.
+        lines += _candidate_summary_table(
+            briefs,
+            record.tournament.briefing
+            if record.tournament and record.tournament.briefing_author == "judge"
+            else "",
+        )
         # Under a heading of its own, at the level of the sections around it. The
         # manual used to run on unheaded from the bottom of the summary table to
         # the first idea -- fourteen paragraphs a reader had no way to recognise
@@ -2466,7 +2474,7 @@ def _cell(text: str, ceiling: int | None = _SUMMARY_CELL_CEILING) -> str:
     return head.rstrip(" ,;.:—-([") + "…"
 
 
-def _candidate_summary_table(briefs: Sequence) -> list[str]:
+def _candidate_summary_table(briefs: Sequence, briefing: str = "") -> list[str]:
     """Every idea on one page, in the order the tournament ranked them.
 
     The deep-dive half opened on eight sections of roughly a hundred and fifty
@@ -2507,6 +2515,11 @@ def _candidate_summary_table(briefs: Sequence) -> list[str]:
             "",
         ]
     )
+    if briefing:
+        # A column of ratings says which idea finished ahead; it does not say what
+        # the matches decided it on, or which of these gaps is too narrow to read
+        # anything into. The judge that played the tournament says both here.
+        lines.extend(["**What the tournament found.** " + briefing.strip(), ""])
     return lines
 
 

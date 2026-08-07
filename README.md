@@ -88,7 +88,7 @@ scope
   → iterative Deep Research evidence discovery and source verification
   → candidate generation
   → five independent correctness, novelty, methods, impact, and governance reviews
-  → three-round Swiss/Elo ranking and top-four round robin
+  → three-round Swiss/Elo ranking, top-four round robin, and a closing briefing from the judge
   → shortlist evolution and mandatory re-review flag
   → proximity and diversity analysis
   → meta-review

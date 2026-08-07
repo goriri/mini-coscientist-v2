@@ -40,7 +40,9 @@ from .parity import (
     SETTLED_MOVEMENT,
     population_from_artifacts,
     score_movement,
+    short_claim,
     stable_rounds,
+    tournament_facts,
 )
 
 
@@ -708,8 +710,7 @@ _RATIONALE_LABEL_RE = re.compile(
 
 
 def _title(candidate: Candidate, limit: int = 110) -> str:
-    claim = " ".join(candidate.claim.split())
-    return claim if len(claim) <= limit else f"{claim[: limit - 1].rstrip()}…"
+    return short_claim(candidate, limit)
 
 
 def _bullets(label: str, items: list[str]) -> list[str]:
@@ -1047,6 +1048,110 @@ def _affordable_swiss_rounds(field: int, comparisons: int) -> int:
     return max(1, min(SWISS_ROUNDS, (comparisons - finals) // per_round))
 
 
+# ---------------------------------------------------------------------------
+# Tournament briefing
+# ---------------------------------------------------------------------------
+
+# Section 9.3 gives the judge no closing prompt: the tournament ends when the
+# last match ends. What reached the reader was four numbers and eighteen match
+# rationales behind a fold, which says the ranking happened without saying what
+# it found. This asks the same judge, holding the same preferences, to say it.
+BRIEFING_PROMPT = """You have just finished judging every match of a ranking tournament over competing hypotheses for one research goal.
+
+Goal: {goal}
+
+The preferences you judged against: {preferences}
+
+How the tournament came out:
+{facts}
+
+What you said in the decisive matches:
+{rationales}
+
+Write the briefing a researcher reads before acting on this ranking. Three to six sentences of plain prose: no headings, no bullet points, no numbered list, and do not restate the ratings table -- it is on the same page.
+
+Say what separated the leading hypothesis from the field, and on which of the preferences above it separated. Say which places in the order are too close to act on, so a reader does not treat a two-point gap as a finding. Say anything the matches exposed that a ranking cannot show on its own -- a leader carrying an unresolved flaw, a low-rated hypothesis that won on one preference and lost on the rest, a field that differs less than its spread suggests.
+
+Judge only on the matches recorded above; do not credit anything not stated there. Do not name a new winner, do not recommend next steps, and do not end with a verdict line."""
+
+# Enough of each decisive match to carry its reasoning, without spending the
+# whole context on the round robin.
+_BRIEFING_RATIONALE_LIMIT = 900
+_BRIEFING_RATIONALES = 6
+
+
+def _briefing_rationales(state: TournamentState, titles: dict[str, str]) -> list[str]:
+    """The matches worth quoting back: the debates first, then the widest swings."""
+    ranked = sorted(
+        state.comparisons,
+        key=lambda comparison: (
+            comparison.judge != "llm_debate",
+            -abs(
+                comparison.elo_after.get(comparison.candidate_a_id, 0.0)
+                - comparison.elo_before.get(comparison.candidate_a_id, 0.0)
+            ),
+        ),
+    )
+    quoted = []
+    for comparison in ranked[:_BRIEFING_RATIONALES]:
+        winner = comparison.winner_id
+        outcome = (
+            f"{titles.get(winner, winner)} won"
+            if winner
+            else "no verdict was reached, recorded as a draw"
+        )
+        rationale = " ".join(comparison.rationale.split())
+        if len(rationale) > _BRIEFING_RATIONALE_LIMIT:
+            rationale = f"{rationale[: _BRIEFING_RATIONALE_LIMIT - 1].rstrip()}…"
+        quoted.append(
+            f"- {titles.get(comparison.candidate_a_id, comparison.candidate_a_id)}"
+            f" vs {titles.get(comparison.candidate_b_id, comparison.candidate_b_id)}"
+            f": {outcome}. {rationale}"
+        )
+    return quoted
+
+
+# A briefing shorter than this is not a reading of eighteen matches; it is a
+# model declining to answer at length, and the computed facts say more.
+_MIN_BRIEFING_WORDS = 20
+
+
+def write_briefing(
+    state: TournamentState,
+    context: JudgeContext,
+    titles: dict[str, str],
+    provider: _Completer,
+) -> tuple[str, str]:
+    """Ask the judge what its own tournament found, in prose.
+
+    Returns the text and who wrote it. It falls back to the computed facts
+    whenever the answer cannot be the judge's reading of the matches: an offline
+    provider answers the ranking role with a fixture, and a response still
+    carrying a verdict terminator is a judgement of one match that the closing
+    prompt happened to catch. Attributing either to the judge would be claiming
+    a reading nobody made, which is why the author comes back with the text.
+    """
+    facts = tournament_facts(state, titles)
+    if getattr(provider, "deterministic", False) or not state.comparisons:
+        return facts, "computed"
+    prompt = context.language_preamble + _render(
+        BRIEFING_PROMPT,
+        goal=context.goal,
+        preferences=context.preferences,
+        facts=facts,
+        rationales="\n".join(_briefing_rationales(state, titles)),
+    )
+    try:
+        answer = provider.complete(role=JUDGE_ROLE, prompt=prompt).strip()
+    except Exception:
+        # The tournament is played and its ratings are recorded; losing the
+        # closing paragraph must not lose the stage with them.
+        return facts, "computed"
+    if len(answer.split()) < _MIN_BRIEFING_WORDS or _TERMINATOR_RE.search(answer):
+        return facts, "computed"
+    return answer, "judge"
+
+
 def run_debate_tournament(
     session: Session,
     provider: _Completer,
@@ -1160,6 +1265,11 @@ def run_debate_tournament(
         # score movement.
         converged=stable >= 2 and movement < SETTLED_MOVEMENT,
     )
+    # One extra call, made once the ratings are final so the judge is reading
+    # the tournament it played rather than predicting it.
+    titles = {candidate.id: _title(candidate) for candidate in candidates}
+    briefing, author = write_briefing(state, context, titles, provider)
+    state = state.model_copy(update={"briefing": briefing, "briefing_author": author})
     return state, render_transcript(session, records, state, provider)
 
 
@@ -1212,6 +1322,12 @@ def render_transcript(
         "it is not a calibrated probability and must not be averaged as one.",
         "",
     ]
+    if state.briefing and state.briefing_author == "judge":
+        # Ahead of the matches, not after them: a reader who stops at the first
+        # screen of an eighteen-match appendix should still leave knowing what
+        # the tournament decided. Only the judge's own reading goes here -- the
+        # computed fallback is the standings table three lines further down.
+        lines.extend(["## What the tournament found", "", state.briefing, ""])
     current_round: int | None = None
     for index, record in enumerate(records, 1):
         match = record.match

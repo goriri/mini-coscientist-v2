@@ -1168,6 +1168,31 @@ button {
   border-radius: 5px;
 }
 
+/* The briefing is the part of this section a reader is meant to read, so it is
+   set as prose rather than as another collapsed row. */
+.tournament-briefing {
+  margin-bottom: 12px;
+  padding: 11px 13px;
+  border-left: 2px solid var(--teal);
+  background: var(--paper);
+}
+
+.tournament-briefing p {
+  margin: 0 0 8px;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.tournament-briefing p:last-child {
+  margin-bottom: 0;
+}
+
+.tournament-briefing .briefing-source {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-style: italic;
+}
+
 .comparison-round p {
   margin-top: 9px;
   padding-top: 9px;
