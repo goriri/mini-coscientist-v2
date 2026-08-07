@@ -1569,6 +1569,56 @@ def test_the_discovery_sentence_counts_its_passes_in_one_notation(
     assert line.startswith("Deep Research ran two passes, of which one completed, ")
 
 
+def test_a_source_the_search_never_returned_is_accounted_for_where_it_is_counted(
+    rich_session: Session,
+):
+    """The appendix said "returned 86 source leads" and the Knowledge Summary, twenty-
+    two hundred lines above it, said "the literature search returned eighty-eight
+    leads". Same search, two counts. The difference was two sources the evidence stage
+    carried in, which the corpus admits so a claim resting on one can be numbered --
+    recorded nowhere but in the code."""
+    packet = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "EvidencePacket"
+    )
+    packet.payload["sources"].append(
+        {
+            "id": "source_carried",
+            "url": "https://example.org/carried-by-the-evidence-stage",
+            "title": "A Paper The Search Did Not Return",
+            "verification_status": "verified",
+        }
+    )
+
+    report = compile_dossier(rich_session)
+    discovery = report.split("## Literature discovery", 1)[1].split("\n## ")[0]
+    searched = len(
+        next(
+            artifact
+            for artifact in rich_session.artifacts
+            if artifact.schema_name == "DiscoveryManifest"
+        ).payload["source_leads"]
+    )
+
+    from coscientist.narrative import _plural
+
+    assert f"returned {_plural(searched, 'source lead')}" in discovery
+    assert "one further source was carried in from the evidence stage" in discovery
+    # Both counts through the same helper: "returned eight source leads" beside
+    # "the corpus is 9 leads" is one quantity written two ways.
+    assert f"the corpus is {_plural(searched + 1, 'lead')}" in discovery
+
+
+def test_a_search_that_found_the_whole_corpus_is_not_told_it_found_less(
+    rich_session: Session,
+):
+    """There is nothing to reconcile when nothing was carried in."""
+    discovery = compile_dossier(rich_session).split("## Literature discovery", 1)[1]
+
+    assert "carried in from the evidence stage" not in discovery.split("\n## ")[0]
+
+
 def test_a_stage_repeated_with_the_same_answer_is_one_row_and_a_count(
     rich_session: Session,
 ):

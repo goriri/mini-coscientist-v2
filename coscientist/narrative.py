@@ -8486,10 +8486,27 @@ def _post_evolution_reordering(
         )
     )
     # Two orders are compared, so there is nothing to say unless both are orders.
-    if len(settled) < 2 or len(ranked) < 2 or settled == ranked:
+    if len(settled) < 2 or len(ranked) < 2:
         return ""
+    evolution = getattr(record, "evolution", None)
+    rounds = len(evolution.ranking_history if evolution else [])
+    subject = "That round" if rounds == 1 else "Those rounds"
+    possessive = "its" if rounds == 1 else "their"
+    # Agreement is a result, and it used to be printed as silence. The sentence
+    # before this one tells a reader that three further ranking rounds were run on
+    # the rewrites; their matches are nowhere in this report, and on a live run
+    # nothing else was said about them either -- so the only ranking a reader could
+    # act on was the one section four printed, of text that is not what is being
+    # recommended. That the rounds left that order standing is the thing they
+    # wanted to know.
+    if settled == ranked:
+        return (
+            f"{subject} did not reproduce {possessive} matches here and did not "
+            "disturb the order: ranked on the revised text, the recommended ideas "
+            "come out in the order section four puts them in."
+        )
     return (
-        "That round did not agree with section four about the order. Ranked on the "
+        f"{subject} did not agree with section four about the order. Ranked on the "
         "revised text they come out "
         + _joined_titles([record.title_for(item) for item in settled])
         # A full stop between the two orders, not a semicolon. _joined_titles separates

@@ -3350,9 +3350,11 @@ def test_the_two_orders_a_reordering_reports_are_set_as_two_sentences():
     assert "; ranked on the proposals" not in said
     assert max(len(part.split()) for part in said.split(". ")) < 45
 
-    # The section says nothing at all when the two rounds agree, which is the common
-    # case: a reader is told about a reordering only when there was one.
-    assert not _post_evolution_reordering(
+    # Agreement used to be printed as silence, and it is a result. The sentence
+    # before this one tells a reader three further ranking rounds were run on the
+    # rewrites; their matches are not in the report, so with nothing said here the
+    # only order a reader could act on ranked text that is not what is recommended.
+    agreed = _post_evolution_reordering(
         SimpleNamespace(
             post_evolution_order=["a", "b", "c"],
             title_for=titles.get,
@@ -3361,6 +3363,8 @@ def test_the_two_orders_a_reordering_reports_are_set_as_two_sentences():
         ["a", "b", "c"],
         briefs,
     )
+    assert "did not reproduce their matches here" in agreed
+    assert "the order section four puts them in" in agreed
 
 
 # --- a recorded reason has to stand on its own -------------------------------

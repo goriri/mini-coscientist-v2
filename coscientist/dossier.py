@@ -1904,9 +1904,44 @@ def _discovery_provenance(record: ResearchRecord) -> list[str]:
                 ),
             ]
         )
+    lines.extend(_carried_from_the_evidence_stage(record, leads))
     lines.extend(_sources_per_pass(record))
     lines.append("")
     return lines
+
+
+def _carried_from_the_evidence_stage(record: ResearchRecord, leads: int) -> list[str]:
+    """Why the corpus can be bigger than what the search returned.
+
+    The evidence packet carries sources of its own, and any the search did not
+    already list are added to the corpus so that a claim resting on one can be
+    numbered and followed. Nothing said so. This paragraph read "returned 86 source
+    leads" and the Knowledge Summary, twenty-two hundred lines above it, read "the
+    literature search returned eighty-eight leads" -- the same search, two counts, and
+    the two sources that account for the difference recorded only in the code.
+
+    Compared before the folding, not after. The registry keys on the document, so its
+    own total is what the leads resolve to; subtracting the search's raw count from
+    that would have made the two sources carried in look like one.
+    """
+    _, documents = record.citations.verification_standing
+    corpus = documents + record.citations.folded_duplicates
+    carried = corpus - leads
+    if carried <= 0:
+        return []
+    it = "it" if carried == 1 else "them"
+    return [
+        "",
+        f"The corpus is larger than that: {_plural(carried, 'further source')} "
+        f"{'was' if carried == 1 else 'were'} carried in from the evidence stage, "
+        f"which listed {it} against a claim without this search having returned {it}. "
+        # Through _plural, like every other count in this paragraph. Writing it
+        # straight would have put "returned eight source leads" and "the corpus is
+        # 9 leads" in adjacent sentences, the same quantity in two notations.
+        f"Counted with {'that' if carried == 1 else 'those'}, the corpus is "
+        f"{_plural(corpus, 'lead')}, which is the count the Knowledge Summary and "
+        "the reference list work from.",
+    ]
 
 
 def _sources_per_pass(record: ResearchRecord) -> list[str]:
