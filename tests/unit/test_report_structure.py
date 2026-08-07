@@ -4963,3 +4963,47 @@ def test_a_source_name_is_matched_however_the_reference_list_trims_it():
     assert not _states_a_finding("Atomic Layer Deposition - MDPI", titles)
     assert _states_a_finding("Atomic layer deposition raised the impedance.", titles)
     assert _folded_title(" A  Title. ") == "a title"
+
+
+def test_a_draft_a_researcher_edited_is_not_counted_as_a_stage_gate(
+    rich_session: Session,
+):
+    """Every decision was counted, so a live run reported "nine gate decisions" two
+    lines under "Stages completed: 8 of 8". The ninth was a researcher's edit to the
+    scope draft, which opens a gate rather than closing one."""
+    rich_session.decisions.append(
+        HumanDecision(
+            action=DecisionAction.REVISE,
+            stage="scope",
+            actor="web_researcher",
+            automatic=False,
+            session_version=1,
+        )
+    )
+    for stage, automatic in (
+        ("scope", False),
+        ("evidence", True),
+        ("generate", True),
+        ("rank", False),
+    ):
+        rich_session.decisions.append(
+            HumanDecision(
+                action=DecisionAction.ACCEPT,
+                stage=stage,
+                actor="milestone_auto_policy" if automatic else "web_researcher",
+                automatic=automatic,
+                session_version=1,
+            )
+        )
+
+    facts = _run_block(compile_dossier(rich_session))
+    approvals = next(line for line in facts if line.startswith("- Approvals:"))
+
+    assert "four stage gates" in approvals
+    assert "two of this run's four stage gates were accepted automatically" in approvals
+    # Not "the rest": the second count is stated so the arithmetic can be checked.
+    assert "the other two by a person" in approvals
+    assert "gate decision" not in approvals
+    # The edit is a fact about the run, so it is reported rather than dropped.
+    assert "one draft was sent back for revision before being accepted" in approvals
+    assert "(scoping the goal)" in approvals

@@ -79,6 +79,7 @@ from .narrative import (
     _opening,
     _plural,
     _sentence,
+    _stage_words,
     build_idea_briefs,
     evidence_integrity_cases,
     evidence_integrity_ideas,
@@ -1677,32 +1678,54 @@ def _approval_fact(session: Session) -> str:
     under Research Goal, and pointed at from here.
     """
     profile = f"the {session.approval_profile} approval profile"
-    decisions = session.decisions
-    automatic = [decision for decision in decisions if decision.automatic]
-    if not decisions:
+    # A gate is an acceptance. Every decision was counted here, and a run whose
+    # scope draft a researcher edited before accepting it therefore reported "nine
+    # gate decisions" two lines under "Stages completed: 8 of 8" -- the ninth being
+    # that edit, which opened a gate rather than closing one. The count is off the
+    # acceptances, which is one per stage, and the revisions are their own sentence
+    # because sending a draft back is a fact about the run worth having.
+    accepted = [
+        decision for decision in session.decisions if decision.action == "accept"
+    ]
+    automatic = [decision for decision in accepted if decision.automatic]
+    revised = [
+        decision for decision in session.decisions if decision.action == "revise"
+    ]
+    sent_back = ""
+    if revised:
+        stages = _listed(_stage_words({decision.stage for decision in revised}))
+        sent_back = (
+            f", and {_plural(len(revised), 'draft')} "
+            f"{'was' if len(revised) == 1 else 'were'} sent back for revision before "
+            f"being accepted ({stages})"
+        )
+    if not accepted:
         return (
             f"Approvals: {profile} was in force and this run recorded no stage "
-            "acceptance at all"
+            "acceptance at all" + sent_back
         )
-    if len(automatic) == len(decisions):
+    if len(automatic) == len(accepted):
         return (
             f"Approvals: every stage gate in this run was accepted automatically "
             f"under {profile}, so acceptance here records a well-formed payload "
             f"rather than a person's agreement — the warning headed {AUTO_APPROVAL_WARNING} "
-            "says what it does not amount to"
+            "says what it does not amount to" + sent_back
         )
     if not automatic:
-        return f"Approvals: every stage gate in this run was accepted by a person under {profile}"
+        return (
+            "Approvals: every stage gate in this run was accepted by a person under "
+            f"{profile}" + sent_back
+        )
     # "3 of this run's nine stage gates" set one count as a digit and the other as a
-    # word, and a run with nine of them stood two lines under "Stages completed: 8 of
-    # 8". They are gate decisions rather than stages: a stage re-run after a
-    # withdrawal is gated again, so the two counts can differ and the line has to say
-    # which of the two it is counting.
+    # word. Both are spelled, and the second count is stated rather than left as "the
+    # rest", so a reader can check the arithmetic against the stage count above.
     return (
         f"Approvals: {_number_word(len(automatic)).lower()} of this run's "
-        f"{_plural(len(decisions), 'gate decision')} were recorded automatically "
-        f"under {profile} and the rest by a person — the warning headed "
-        f"{AUTO_APPROVAL_WARNING} above names the automatic ones"
+        f"{_plural(len(accepted), 'stage gate')} were accepted automatically under "
+        f"{profile} and the other "
+        f"{_number_word(len(accepted) - len(automatic)).lower()} by a person — the "
+        f"warning headed {AUTO_APPROVAL_WARNING} above names the automatic ones"
+        + sent_back
     )
 
 

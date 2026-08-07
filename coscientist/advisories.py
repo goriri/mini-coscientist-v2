@@ -364,7 +364,14 @@ def _mechanical_overview_advisory(
 
 def _automatic_approval_advisory(record: ResearchRecord) -> list[Advisory]:
     session = record.session
-    automatic = [decision for decision in session.decisions if decision.automatic]
+    # Acceptances only. A gate is closed by an acceptance, and counting every
+    # automatic decision would let a revision the policy recorded stand in this
+    # warning as a stage nobody read.
+    automatic = [
+        decision
+        for decision in session.decisions
+        if decision.automatic and decision.action == "accept"
+    ]
     if not automatic:
         return []
     return [
