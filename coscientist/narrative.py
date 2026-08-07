@@ -9199,12 +9199,33 @@ def _fit_word_budget(
 
 def _review_summary(briefs: Sequence[IdeaBrief]) -> list[str]:
     scores: dict[str, list[int]] = {}
+    # Per criterion, because that is the grain this list is printed at: a placeholder
+    # is one idea's missing review, and the line a reader meets it in is the criterion
+    # it was missing from. On a live run one of the eight feasibility scores was a
+    # placeholder's and it was the top of the range, so "range 2 to 3" put a number
+    # nobody had judged at one end of the only spread this chapter gives.
+    stood: dict[str, int] = {}
     for brief in briefs:
         for review in brief.reviews:
             scores.setdefault(review.section, []).append(review.score)
+            if review.stood_in:
+                stood[review.section] = stood.get(review.section, 0) + 1
     summary = [
         f"{criterion}: mean {_one_decimal(sum(values) / len(values))} of five across "
         f"{_plural(len(values), 'review')}, range {min(values)} to {max(values)}."
+        + (
+            ""
+            if criterion not in stood
+            else (
+                " One of those is a placeholder"
+                if stood[criterion] == 1
+                else f" {_number_word(stood[criterion])} of those are placeholders"
+            )
+            + " rather than a reviewer's judgement, counted in the mean and the range "
+            "as though it were one; the "
+            + ("idea it stands under is" if stood[criterion] == 1 else "ideas are")
+            + " named under Warnings and Limitations."
+        )
         for criterion, values in scores.items()
     ]
     if not summary:

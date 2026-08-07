@@ -1614,6 +1614,30 @@ def test_a_run_whose_reviewers_answered_for_every_idea_carries_no_such_warning(
 
     assert "Reviews that no reviewer wrote" not in report
     assert "review of this idea was written" not in report
+    assert "is a placeholder" not in report
+
+
+def test_a_criterions_mean_and_range_say_when_a_placeholder_is_inside_them(
+    rich_session: Session,
+):
+    """The one place the report gives a spread per criterion, and on a live run the
+    top of the feasibility range was the placeholder's score rather than anybody's
+    judgement."""
+    from coscientist.narrative import _review_summary
+
+    _with_a_backfilled_review(rich_session)
+    briefs = build_idea_briefs(load_record(rich_session))
+    stood = next(
+        review for brief in briefs for review in brief.reviews if review.stood_in
+    )
+
+    lines = _review_summary(briefs)
+    line = next(item for item in lines if item.startswith(f"{stood.section}:"))
+
+    assert "One of those is a placeholder" in line
+    assert "counted in the mean and the range" in line
+    # Only the criterion the reviewer skipped. The other four were answered in full.
+    assert sum("placeholder" in item for item in lines) == 1
 
 
 def _discovery_line(session: Session) -> str:
