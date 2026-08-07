@@ -7685,10 +7685,16 @@ _FLAW_CONSEQUENCES = {
     "prior to any protocol built on that claim",
     "Feasibility": "the design cannot be executed as specified, so the protocol has "
     "to be rewritten before it can be costed",
-    "Novelty": "what it decides is whether the work is worth doing rather than "
-    "whether it may be done",
-    "Impact": "what it decides is whether the work is worth doing rather than whether "
-    "it may be done",
+    # Both of these say the work may be done and question whether it is worth doing,
+    # and they used to say it in the same seventeen words. Printed side by side over
+    # an idea both reviews faulted, the sentence read "the impact review's, which
+    # means X; and the novelty review's, which means X" -- one gloss twice, which
+    # tells a reader the two reviews found the same thing. They did not: one is about
+    # what is already published, the other about what the answer would be worth.
+    "Novelty": "what it faults is how much the answer would add to what is already "
+    "published, not whether the work can be done",
+    "Impact": "what it faults is how much the answer would be worth once it is in "
+    "hand, not whether the work can be done",
 }
 
 

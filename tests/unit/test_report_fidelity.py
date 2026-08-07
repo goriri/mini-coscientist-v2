@@ -2051,7 +2051,7 @@ def test_an_open_flaw_says_what_it_stops_in_the_terms_of_the_review_that_raised_
         )
     ]
     consequence = _open_flaw_consequence(record, ["cand_a"])
-    assert "whether the work is worth doing" in consequence
+    assert "not whether the work can be done" in consequence
     assert "may begin" not in consequence
 
     record.reviews = [
@@ -2066,6 +2066,38 @@ def test_an_open_flaw_says_what_it_stops_in_the_terms_of_the_review_that_raised_
         )
     ]
     assert "no work on it may begin" in _open_flaw_consequence(record, ["cand_a"])
+
+
+def test_two_reviews_that_found_different_things_are_not_glossed_the_same_way():
+    """A live report read "the impact review's, which means what it decides is whether
+    the work is worth doing rather than whether it may be done; and the novelty
+    review's, which means what it decides is whether the work is worth doing rather
+    than whether it may be done" -- one gloss printed twice, which tells a reader the
+    two reviews found the same thing. One is about what is already published, the
+    other about what the answer would be worth."""
+    from coscientist.narrative import _open_flaw_consequence
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.population = CandidatePopulation(candidates=[_candidate("cand_a")])
+    record.reviews = [
+        ReviewSet(
+            reviews=[
+                _review(
+                    "cand_a",
+                    criterion=criterion,
+                    fatal_flaws=[f"The {criterion} case is not made."],
+                )
+                for criterion in ("novelty", "impact_safety")
+            ]
+        )
+    ]
+    consequence = _open_flaw_consequence(record, ["cand_a"])
+
+    def _gloss(review: str) -> str:
+        said = consequence.split(f"the {review} review's, which means ")[1]
+        return said.split(";")[0].split(". Nothing in this run")[0].strip()
+
+    assert _gloss("novelty") != _gloss("impact")
 
 
 def test_a_recommended_ideas_open_flaw_points_at_the_section_that_prints_it():
