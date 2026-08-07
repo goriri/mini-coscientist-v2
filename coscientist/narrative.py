@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal
 from itertools import pairwise
@@ -5839,7 +5839,76 @@ def _without_pipeline_markup(text: str) -> str:
     return _PASS_CITE_RE.sub("", _FACET_TAG_RE.sub("", text))
 
 
+def _folded_title(text: str) -> str:
+    """A title or a sentence reduced to what makes two of them the same one."""
+    return " ".join(text.split()).rstrip(".").casefold()
+
+
+def _states_a_finding(text: str, titles: Container[str]) -> bool:
+    """Whether a recorded statement says something, or is markup or a bare citation.
+
+    Two kinds of non-finding reached a live Key Findings list, in a section whose own
+    lead-in calls what follows "the material the generator worked from".
+
+    One was a markdown table, printed a row at a time: "| Evaluated Literature &
+    Source URL | Coating Thickness (2-5 nm) | Electrolyte ... |" stood as a finding,
+    header pipes and all, between two sentences of prose.
+
+    The other was a source's own name recorded as though the name were a claim --
+    "NextGenBat aalto.fi", "MIT review closed and decision final - For Better
+    Science", nine of them -- which states nothing about the field and is, verbatim,
+    the entry a reader can already read in the reference list. Matched against the
+    title as discovery stored it, hostname and all, which is what the statement text
+    is a copy of; the reference list is where that hostname gets cut.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("|") and stripped.count("|") > 1:
+        return False
+    return _folded_title(stripped) not in titles
+
+
+def _recorded_titles(record: ResearchRecord) -> set[str]:
+    """Every name the run has for a document, folded for comparison."""
+    leads = list(record.discovery.source_leads) if record.discovery else []
+    titles = {lead.title for lead in leads if lead.title}
+    titles |= {
+        source.title
+        for source in (record.evidence.sources if record.evidence else [])
+        if source.title
+    }
+    return {_folded_title(title) for title in titles} | {
+        _folded_title(_without_search_chrome(title)) for title in titles
+    }
+
+
 def _evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]:
+    """The findings, less what was recorded as one but states nothing.
+
+    What is left out is counted by ``_unstated_findings`` and said in the section's
+    lead-in, because a list that quietly drops nine of thirty-eight entries reads as
+    a complete list of twenty-nine.
+    """
+    titles = _recorded_titles(record)
+    return [
+        statement
+        for statement in _all_evidence_statements(record)
+        if _states_a_finding(statement.text, titles)
+    ]
+
+
+def _unstated_findings(record: ResearchRecord) -> int:
+    """How many recorded statements state no finding, for the lead-in to admit."""
+    titles = _recorded_titles(record)
+    return sum(
+        1
+        for statement in _all_evidence_statements(record)
+        if not _states_a_finding(statement.text, titles)
+    )
+
+
+def _all_evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]:
     shared = _shared_qualifications(record)
     statements: list[_EvidenceStatement] = []
     for narrative in record.discovery.narratives if record.discovery else []:
@@ -6652,12 +6721,31 @@ def _section_three(record: ResearchRecord) -> _Draft:
             # below, and then prints thirty-five cited findings with nothing between
             # the two saying what they are. A reader meets the first finding as though
             # the report had changed the subject under the same heading.
+            #
+            # No silent caps. Nine of thirty-eight recorded statements on a live run
+            # stated no finding -- a markdown table printed a row at a time, and
+            # sources' own names recorded as though a name were a claim. They are
+            # left out of the list, and saying so here is the only way the count
+            # below is not read as everything discovery recorded.
+            unstated = _unstated_findings(record)
+            dropped = (
+                ""
+                if not unstated
+                else " "
+                + _opening(unstated, "further statement was", "further statements were")
+                + " recorded and "
+                + ("is" if unstated == 1 else "are")
+                + " not printed below: "
+                + ("it is" if unstated == 1 else "they are")
+                + " a source's own name, or a row of a table, rather than anything "
+                "said about the field."
+            )
             core.append(
                 "What discovery recorded under those directions is "
                 f"{_plural(len(statements), 'finding')} from the literature, set out "
                 "below with the source each came from. Each is something already "
                 "reported rather than anything this run proposes, and together they "
-                "are the material the generator worked from."
+                "are the material the generator worked from." + dropped
             )
         shared = _shared_qualifications(record)
         if shared:

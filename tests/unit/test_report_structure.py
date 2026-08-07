@@ -4856,3 +4856,110 @@ def test_a_rewrite_that_names_only_a_handle_says_it_addressed_the_reviews():
 
     assert "rev_4" not in prose and "rev_cand_mechanism_2" not in prose
     assert "to address the reviews" in prose
+
+
+def _discovery_with(statements: list[str], leads: list[SourceLead]):
+    """A record whose discovery recorded those statements under one direction."""
+    from coscientist.models import DiscoveryManifest, DiscoveryNarrative
+    from coscientist.narrative import ResearchRecord
+
+    session = Session(question="Does a coating help?")
+    record = ResearchRecord(session=session)
+    record.discovery = DiscoveryManifest(
+        question="Does a coating help?",
+        source_leads=leads,
+        narratives=[
+            DiscoveryNarrative(
+                question="Does a coating help?",
+                research_directions=["Coating thickness against retention."],
+                statements=[
+                    DiscoveryStatement(
+                        text=text, facet="supporting", originating_pass=1
+                    )
+                    for text in statements
+                ],
+            )
+        ],
+    )
+    return record
+
+
+def test_a_table_row_and_a_bare_source_name_are_not_printed_as_findings():
+    """A live Key Findings list held both, under a lead-in calling them findings.
+
+    One entry was a markdown table printed a row at a time, header pipes and all.
+    Nine more were a source's own name -- "NextGenBat aalto.fi" -- which says
+    nothing about the field and is the reference-list entry verbatim.
+    """
+    from coscientist.narrative import (
+        _evidence_statements,
+        _section_three,
+        _unstated_findings,
+    )
+
+    record = _discovery_with(
+        [
+            "A 2 nm alumina coating held retention past five hundred cycles.",
+            "| Evaluated Literature | Coating Thickness | Electrolyte |",
+            "NextGenBat aalto.fi",
+            "Applications of Atomic Layer Deposition - MDPI mdpi.com",
+        ],
+        [
+            SourceLead(canonical_url="https://aalto.fi/x", title="NextGenBat aalto.fi"),
+            SourceLead(
+                canonical_url="https://mdpi.com/y",
+                title="Applications of Atomic Layer Deposition - MDPI mdpi.com",
+            ),
+        ],
+    )
+
+    printed = [statement.text for statement in _evidence_statements(record)]
+
+    assert printed == [
+        "A 2 nm alumina coating held retention past five hundred cycles."
+    ]
+    assert _unstated_findings(record) == 3
+    prose = " ".join(_section_three(record).core)
+    assert "is one finding from the literature" in prose
+    # No silent caps: the three that were dropped are counted where the one is.
+    assert "Three further statements were recorded and are not printed below" in prose
+    assert "a source's own name, or a row of a table" in prose
+
+
+def test_a_findings_list_that_drops_nothing_says_nothing_about_dropping():
+    """The admission is a report of a defect, not a standing disclaimer."""
+    from coscientist.narrative import _section_three, _unstated_findings
+
+    record = _discovery_with(
+        [
+            "A 2 nm alumina coating held retention past five hundred cycles.",
+            "Thicker coatings raised the impedance.",
+        ],
+        [SourceLead(canonical_url="https://aalto.fi/x", title="NextGenBat aalto.fi")],
+    )
+
+    assert _unstated_findings(record) == 0
+    prose = " ".join(_section_three(record).core)
+    assert "two findings from the literature" in prose
+    assert "not printed below" not in prose
+
+
+def test_a_source_name_is_matched_however_the_reference_list_trims_it():
+    """The statement copies the raw title; the reference list cuts the hostname."""
+    from coscientist.narrative import _folded_title, _recorded_titles, _states_a_finding
+
+    record = _discovery_with(
+        [],
+        [
+            SourceLead(
+                canonical_url="https://mdpi.com/y",
+                title="Atomic Layer Deposition - MDPI mdpi.com",
+            )
+        ],
+    )
+    titles = _recorded_titles(record)
+
+    assert not _states_a_finding("Atomic Layer Deposition - MDPI mdpi.com.", titles)
+    assert not _states_a_finding("Atomic Layer Deposition - MDPI", titles)
+    assert _states_a_finding("Atomic layer deposition raised the impedance.", titles)
+    assert _folded_title(" A  Title. ") == "a title"
