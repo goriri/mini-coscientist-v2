@@ -4403,6 +4403,49 @@ def test_the_conclusion_names_the_review_that_scored_the_idea_lowest(
             )
 
 
+def test_the_conclusion_does_not_send_a_reader_to_a_review_nobody_wrote(
+    rich_session: Session,
+):
+    """The worst place the substitution can surface, and where it did: the rank-1
+    idea's lowest score was the placeholder's, so the sentence naming what to read
+    before commissioning the work named a review no reviewer had written."""
+    from dataclasses import replace
+
+    from coscientist.narrative import _conclusion, _idea_facts
+
+    record = load_record(rich_session)
+    facts = _idea_facts(record.candidates[0])
+    reviews = [
+        replace(review, score=4) for review in build_idea_briefs(record)[0].reviews
+    ]
+    reviews[0] = replace(reviews[0], score=2, stood_in=True)
+
+    said = _conclusion(facts, reviews, shortlisted=True, accepted_flaw=None)
+
+    assert f"from the {reviews[0].section.lower()} review" in said
+    assert "That score is a placeholder's rather than a reviewer's" in said
+    assert "unreviewed rather than weak" in said
+
+
+def test_a_lowest_score_a_reviewer_did_set_down_is_not_called_a_placeholders(
+    rich_session: Session,
+):
+    from dataclasses import replace
+
+    from coscientist.narrative import _conclusion, _idea_facts
+
+    record = load_record(rich_session)
+    facts = _idea_facts(record.candidates[0])
+    reviews = [
+        replace(review, score=4) for review in build_idea_briefs(record)[0].reviews
+    ]
+    reviews[0] = replace(reviews[0], score=2)
+
+    said = _conclusion(facts, reviews, shortlisted=True, accepted_flaw=None)
+
+    assert "placeholder" not in said
+
+
 def test_the_conclusion_says_what_the_next_move_cannot_settle(rich_session: Session):
     """The three cases the live sessions do not reach, and the punctuation of a pair."""
     from dataclasses import replace
