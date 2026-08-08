@@ -427,7 +427,7 @@ try {
           return workflow.stage === "evidence" && workflow.pending_draft && workflow.pending_draft.version > 1;
         })()`,
         "Revising the evidence base never produced a second version of it.",
-        180000,
+        30000,
       );
       const after = JSON.parse(
         await cdp.evaluate(
@@ -449,7 +449,7 @@ try {
         cdp,
         "!!document.querySelector('.approval-card:not(.resolved) [data-decision=\"accept\"]')",
         "The revised evidence base never came back to a gate.",
-        60000,
+        30000,
       );
     }
     // Keyed to the tournament being on screen rather than to a gate number,
