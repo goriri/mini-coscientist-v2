@@ -72,6 +72,7 @@ Approval and agent execution are separate choices:
 | Approval | `stage` | Pauses after every workflow stage for accept, revise, or stop. |
 | Approval | `artifact` | Requires a decision for every specialist result before consolidating its stage. |
 | Approval | `auto` | Accepts ordinary valid drafts automatically and records each decision as `auto_approval_policy`. |
+| Approval | `--evidence-review` | Adds one stop on the evidence base itself, which no profile except `stage` and `artifact` otherwise pauses at. Ignored by `auto`. |
 | Provider | `offline` (default) | Uses conservative deterministic templates. Ideal for demos, tests, and reviewing the workflow. |
 | Provider | `a2a` | Calls live Gemini specialists through their A2A endpoints. Requires the local server and Google Cloud credentials. |
 
@@ -165,6 +166,19 @@ uv run coscientist tui "Can a coating improve cycle life?" \
 uv run coscientist tui "Can a coating improve cycle life?" \
   --approval-profile artifact
 ```
+
+Evidence is not one of the milestones: discovery runs as internal work and the
+first thing the profile hands back is the hypotheses built on it. Add one stop
+on the corpus itself — what was found, what survived verification, and which
+facets nothing covers — before the generators reason over it:
+
+```bash
+uv run coscientist tui "Can a coating improve cycle life?" \
+  --evidence-review
+```
+
+The web launcher ticks the same box by default; `--auto` ignores it, having
+nobody to ask. It is set once for a new run and kept for the run's whole life.
 
 Each displayed gate contains the relevant specialist outputs:
 

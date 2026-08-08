@@ -1698,6 +1698,55 @@ button {
   font: 700 var(--text-sm) var(--sans);
 }
 
+/* The one control in this row that is a choice rather than a setting, so it
+   carries its own text instead of a label plus a widget. */
+.profile-check {
+  gap: 8px;
+  cursor: pointer;
+}
+
+/* Every other label in this composer names a widget beside it, so they are all
+   set as uppercase field headings. This one is the choice itself, and set that
+   way it became a third heading stacked on "Research question" -- two lines of
+   identical shouting, one of which was a tickbox. */
+.profile-check span {
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.profile-check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--teal);
+  cursor: pointer;
+}
+
+/* Auto has nobody at the gate. Greyed rather than removed: a control that
+   vanishes when the cadence changes reads as a rendering fault. */
+.profile-check.disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.profile-check.disabled input {
+  cursor: not-allowed;
+}
+
+/* Its own line under the row: the reason a control is greyed belongs beside the
+   control, and squeezed into the row it would push the selects off a phone. */
+.profile-note {
+  flex: 1 0 100%;
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
 .jump-latest {
   position: sticky;
   z-index: 9;
@@ -2801,6 +2850,13 @@ body.history-preview .composer .send-button {
   .profile-control select {
     flex: 0 0 46%;
     min-width: 0;
+  }
+
+  /* space-between is for a label opposite its select. This row is a box and
+     the sentence that names it, and pushing them to opposite edges of a phone
+     left the tick orphaned from the words it applies to. */
+  .profile-check {
+    justify-content: flex-start;
   }
 
   /* The 44px box holds one and a half lines, and the placeholder runs to two

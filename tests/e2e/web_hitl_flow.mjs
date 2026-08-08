@@ -109,6 +109,37 @@ try {
     "The center panel did not expose the three complete drug-research questions.",
   );
 
+  // The one cadence that cannot honour the evidence gate. Left tickable it
+  // would post a request for a stop that an auto run is built to drive past,
+  // and the researcher would only find out four stages later.
+  const autoInterlock = await cdp.evaluate(`(() => {
+    const cadence = document.querySelector("#approvalProfile");
+    const read = () => ({
+      disabled: document.querySelector("#evidenceReview").disabled,
+      reason: document.querySelector("#evidenceReviewNote").hidden
+        ? ""
+        : document.querySelector("#evidenceReviewNote").textContent.trim(),
+    });
+    const set = (value) => {
+      cadence.value = value;
+      cadence.dispatchEvent(new Event("change", { bubbles: true }));
+      return read();
+    };
+    const auto = set("auto");
+    const restored = set("milestone");
+    return { auto, restored, cadence: cadence.value };
+  })()`);
+  assert(
+    autoInterlock.auto.disabled && autoInterlock.auto.reason,
+    "Auto must disable the evidence gate and say why on the page, not in a tooltip.",
+  );
+  assert(
+    !autoInterlock.restored.disabled &&
+      !autoInterlock.restored.reason &&
+      autoInterlock.cadence === "milestone",
+    "Leaving auto must give the evidence gate back and take the note away.",
+  );
+
   await cdp.evaluate(`(() => {
     const input = document.querySelector("#promptInput");
     input.value = "Does a protective coating improve rechargeable battery cycle life compared with an uncoated control?";
@@ -173,6 +204,18 @@ try {
   );
   assert(workflowId, "The approval card must reference a durable workflow.");
 
+  // The launcher ticks this box for the browser and clears it for an API caller,
+  // and the value the run kept is what the snapshot reports. A form that posted
+  // the question and dropped the box would look identical here until the run
+  // sailed past evidence, four stages later.
+  const launchedWithEvidenceReview = await cdp.evaluate(
+    `fetch("/api/research/sessions/${workflowId}").then(r => r.json()).then(w => w.evidence_review)`,
+  );
+  assert(
+    launchedWithEvidenceReview === true,
+    "The guided launcher must ask for the evidence-base gate.",
+  );
+
   const structuredPreview = await cdp.evaluate(
     `formatText('### Goal manager\\n\\n{"success_criteria":["A measurable endpoint"],"blocking":false}')`,
   );
@@ -215,6 +258,7 @@ try {
   const GATE_CEILING = 8;
   let gatesAccepted = 0;
   let rankChecked = false;
+  let evidenceChecked = false;
   for (let gate = 0; ; gate += 1) {
     assert(
       gate < GATE_CEILING,
@@ -319,6 +363,47 @@ try {
         `Answering a governance finding left ${liveCards} live approval cards.`,
       );
     }
+    // The stop the launcher asked for. Milestone treats discovery as internal
+    // work, so without the box this stage never reached a card at all and the
+    // corpus was first seen through eight hypotheses already built on it.
+    if (
+      !evidenceChecked &&
+      (await cdp.evaluate(
+        "!!document.querySelector('[data-presentation-stage=\"evidence\"]')",
+      ))
+    ) {
+      evidenceChecked = true;
+      const evidenceGate = await cdp.evaluate(`(() => {
+        const panel = document.querySelector('[data-presentation-stage="evidence"]');
+        const card = document.querySelector('.approval-card:not(.resolved)');
+        return {
+          stage: card?.dataset.stageKey || "",
+          trust: !!panel.querySelector('.evidence-trust'),
+          metrics: [...panel.querySelectorAll('.presentation-metrics *')]
+            .map((node) => node.textContent).join(" "),
+          accept: card?.querySelector('[data-decision="accept"]')?.textContent.trim() || "",
+        };
+      })()`);
+      assert(
+        evidenceGate.stage.endsWith(":evidence"),
+        `The evidence base was shown at the ${evidenceGate.stage} gate, not its own.`,
+      );
+      // The knowledge base itself, not a count of passes: what was found, what
+      // survived verification, and which facets nothing covers.
+      assert(
+        evidenceGate.trust,
+        "The evidence gate must show the corpus it is asking about.",
+      );
+      assert(
+        evidenceGate.metrics.includes("Source leads") &&
+          evidenceGate.metrics.includes("Coverage"),
+        "The evidence gate must state how much was found and how far it reaches.",
+      );
+      assert(
+        evidenceGate.accept.includes("evidence base"),
+        `The evidence gate's primary button reads "${evidenceGate.accept}".`,
+      );
+    }
     // Keyed to the tournament being on screen rather than to a gate number,
     // which only held while the count of gates was assumed to be fixed.
     if (
@@ -384,6 +469,10 @@ try {
   assert(
     rankChecked,
     "The tournament was never presented, so its table was never checked.",
+  );
+  assert(
+    evidenceChecked,
+    "The run never stopped on its evidence base, which the launcher asked it to.",
   );
 
   await waitFor(

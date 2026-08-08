@@ -79,6 +79,8 @@ const elements = {
   approvalProfile: document.querySelector("#approvalProfile"),
   modelChoice: document.querySelector("#modelChoice"),
   languageChoice: document.querySelector("#languageChoice"),
+  evidenceReview: document.querySelector("#evidenceReview"),
+  evidenceReviewNote: document.querySelector("#evidenceReviewNote"),
   currentSessionCard: document.querySelector("#currentSessionCard"),
   currentSessionName: document.querySelector("#currentSessionName"),
   currentSessionState: document.querySelector("#currentSessionState"),
@@ -1864,6 +1866,10 @@ async function createGuidedWorkflow(prompt, pending) {
       approval_profile: elements.approvalProfile.value,
       model: elements.modelChoice.value,
       language: elements.languageChoice.value,
+      // Read off the box rather than sent unconditionally: an auto run is
+      // disabled above and must not ask for a gate nothing will stop at.
+      evidence_review:
+        elements.evidenceReview.checked && !elements.evidenceReview.disabled,
     }),
   });
   renderWorkflow(workflow, pending, true);
@@ -1882,10 +1888,27 @@ function selectMode(mode) {
     elements.approvalProfile,
     elements.modelChoice,
     elements.languageChoice,
+    elements.evidenceReview,
   ].forEach((control) => {
     control.hidden = mode === "conversation";
     control.closest(".profile-control").hidden = mode === "conversation";
   });
+  syncEvidenceReviewControl();
+}
+
+function syncEvidenceReviewControl() {
+  // An auto run accepts every draft it produces, so a checked box there would
+  // promise a stop that never happens. The server settles it the same way; the
+  // box says so before the run starts rather than after it has finished.
+  const auto = elements.approvalProfile.value === "auto";
+  elements.evidenceReview.disabled = auto;
+  const control = elements.evidenceReview.closest(".profile-control");
+  control.classList.toggle("disabled", auto);
+  control.title = auto
+    ? ""
+    : "Stops after discovery and shows the corpus, its coverage and its gaps, before four generators reason over it.";
+  elements.evidenceReviewNote.hidden =
+    !auto || state.mode === "conversation" || control.hidden;
 }
 
 async function openResearchSession(sessionId, { restore = false } = {}) {
@@ -2146,6 +2169,7 @@ document.querySelectorAll("[data-prompt]").forEach((button) => {
   });
 });
 
+elements.approvalProfile.addEventListener("change", syncEvidenceReviewControl);
 elements.newInquiry.addEventListener("click", newInquiry);
 elements.copySession.addEventListener("click", async () => {
   if (!state.sessionId) {

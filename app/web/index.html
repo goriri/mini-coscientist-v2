@@ -325,6 +325,21 @@
                 Research language
                 <select id="languageChoice"></select>
               </label>
+              <!-- Milestones do not gate evidence: discovery is treated as
+                   internal work and the first thing shown is the hypotheses
+                   built on it. Checked here, the run stops on the corpus
+                   instead, which is the only point at which a thin one can
+                   still be sent back cheaply. -->
+              <label class="profile-control profile-check" for="evidenceReview">
+                <input id="evidenceReview" type="checkbox" checked />
+                <span>Review the evidence base before generating</span>
+              </label>
+              <!-- A greyed control whose reason lives in a title attribute is a
+                   reason nobody on a touchscreen can reach. -->
+              <p class="profile-note" id="evidenceReviewNote" hidden>
+                An auto run accepts every stage it produces, so nothing would be
+                waiting at this gate.
+              </p>
             </div>
             <label for="promptInput">Research question</label>
             <textarea

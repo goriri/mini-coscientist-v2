@@ -176,6 +176,7 @@ class CoScientistWorkflow:
         model: str | None = None,
         language: str | None = None,
         workflow_version: int = 2,
+        evidence_review: bool = False,
         ledger: ResearchLedger | None = None,
         evidence_discovery: IterativeEvidenceDiscovery | None = None,
     ):
@@ -207,6 +208,13 @@ class CoScientistWorkflow:
                 language=language or DEFAULT_LANGUAGE,
                 discipline=classify_discipline(question),
                 workflow_version=workflow_version,
+                # An unattended run has nobody standing at the extra gate, and
+                # ``run_auto`` accepts every draft it drafts. Recording the flag
+                # as asked for would put a promise in the session that the run
+                # is built never to keep, so the profile settles it here and the
+                # field says what this run will actually do.
+                evidence_review=evidence_review
+                and resolved_profile != ApprovalProfile.AUTO,
                 input_requirements=detect_input_requirements(question),
             )
         else:
@@ -290,7 +298,15 @@ class CoScientistWorkflow:
         if self.approval_profile == ApprovalProfile.AUTO:
             return False
         if self.approval_profile == ApprovalProfile.MILESTONE:
-            return self.stage in MILESTONE_STAGES
+            # Evidence is not a milestone: the profile treats discovery as
+            # internal work and hands the researcher the hypotheses built on it.
+            # A run that opted in at launch stops here anyway, because a corpus
+            # that came back thin looks exactly like one that came back sound
+            # until somebody reads it, and by the generate gate four strategies
+            # have already reasoned over whatever it was.
+            return self.stage in MILESTONE_STAGES or (
+                self.stage == "evidence" and self.session.evidence_review
+            )
         return True
 
     @property

@@ -924,6 +924,13 @@ class Session(Contract):
     input_requirements: list[InputRequirement] = Field(default_factory=list)
     literature_only: bool = False
     workflow_version: int = Field(default=2, ge=1, le=2)
+    # Stop after discovery and show the researcher what was actually found,
+    # before four generators spend the rest of the run reasoning over it. The
+    # milestone profile treats evidence as internal work, which is right when
+    # the corpus is sound and wrong the one time it is thin -- and thin is only
+    # visible by reading it. Chosen per run at launch rather than globally: an
+    # API caller driving the pipeline unattended has nobody at that gate.
+    evidence_review: bool = False
     exploratory_evidence_accepted: bool = False
     budget: ResearchBudget = Field(default_factory=ResearchBudget)
     artifacts: list[Artifact] = Field(default_factory=list)
@@ -986,6 +993,9 @@ class Session(Contract):
         migrated.setdefault("language", DEFAULT_LANGUAGE)
         migrated.setdefault("literature_only", False)
         migrated.setdefault("workflow_version", 1)
+        # A session saved before the gate existed ran straight through evidence,
+        # which is what off means.
+        migrated.setdefault("evidence_review", False)
         migrated.setdefault("exploratory_evidence_accepted", False)
         migrated.setdefault("budget", {})
         migrated.setdefault("tasks", [])

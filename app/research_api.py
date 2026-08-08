@@ -90,6 +90,11 @@ class CreateResearchSession(BaseModel):
     # typo than a 422 on the request that made it.
     model: Literal[MODEL_IDS] = DEFAULT_MODEL  # type: ignore[valid-type]
     language: Literal[LANGUAGE_CODES] = DEFAULT_LANGUAGE  # type: ignore[valid-type]
+    # Off unless asked for. The extra gate is only useful to a caller who is
+    # going to read what is behind it, and a script polling this API to
+    # completion would simply park at evidence forever. The web launcher asks
+    # for it explicitly; nothing else inherits it.
+    evidence_review: bool = False
 
 
 class ResearchDecision(BaseModel):
@@ -329,6 +334,10 @@ def _snapshot(workflow: CoScientistWorkflow) -> dict:
         "model": session.model,
         "language": session.language,
         "requires_human_approval": workflow.requires_human_approval,
+        # What the run settled on, not what was asked for: an auto run drops the
+        # gate, and the launcher needs to be able to say so rather than promise
+        # a stop that never comes.
+        "evidence_review": session.evidence_review,
         "literature_only": session.literature_only,
         "pending_draft": _artifact_summary(workflow.pending_draft, workflow),
         "pending_artifacts": [
@@ -639,6 +648,7 @@ def create_research_session(
             model=request.model,
             language=request.language,
             workflow_version=int(os.environ.get("EVIDENCE_PIPELINE_VERSION", "2")),
+            evidence_review=request.evidence_review,
             ledger=_ledger(),
         )
     except ValueError as error:

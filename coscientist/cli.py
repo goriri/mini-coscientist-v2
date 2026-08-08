@@ -85,6 +85,16 @@ def parser() -> argparse.ArgumentParser:
                 "decisions. Required whenever one is given."
             ),
         )
+        cmd.add_argument(
+            "--evidence-review",
+            action="store_true",
+            help=(
+                "Stop after discovery so the evidence base can be read before "
+                "the generators reason over it. The milestone profile does not "
+                "gate evidence otherwise; --auto ignores this, having nobody to "
+                "ask. Set once for a new run and kept for its whole life."
+            ),
+        )
         cmd.add_argument("--db", help="SQLite research ledger path")
         cmd.add_argument("--session-id", help="Resume a session from --db")
         cmd.add_argument(
@@ -132,10 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     # its default through on a resume would reject every session that had been
     # started on anything else.
     resuming = bool(args.resume or args.session_id)
-    if resuming and (args.model or args.language):
+    if resuming and (args.model or args.language or args.evidence_review):
         raise SystemExit(
-            "--model and --language configure a new run. A resumed session "
-            "keeps the model and language it was started with."
+            "--model, --language and --evidence-review configure a new run. A "
+            "resumed session keeps the model, language and gates it was "
+            "started with."
         )
     provider = (
         A2AProvider(args.a2a_url, model=args.model or DEFAULT_MODEL)
@@ -183,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
             research_mode=args.research_mode,
             model=args.model or DEFAULT_MODEL,
             language=args.language or DEFAULT_LANGUAGE,
+            evidence_review=args.evidence_review,
             ledger=ledger,
         )
     else:
