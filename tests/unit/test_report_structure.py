@@ -4937,13 +4937,10 @@ def test_a_cross_link_the_report_cannot_name_is_counted_rather_than_printed():
     )
 
 
-def test_a_rewrite_that_names_only_a_handle_says_it_addressed_the_reviews():
-    """Evolution answered with the ids it was thinking in, and the report printed
-    "evolution rewrote the idea in round one to address `rev_4`, and
-    `rev_cand_mechanism_2`" -- two references that appear nowhere else in the
-    document."""
+def _rewrite_addressing_handles():
+    """A rewrite whose recorded critiques are the ids evolution was thinking in."""
     from coscientist.models import Candidate, EvolutionCycle, EvolutionRecord
-    from coscientist.narrative import ResearchRecord, _revised_form
+    from coscientist.narrative import ResearchRecord
 
     ranked = Candidate(
         id="cand_1",
@@ -4970,11 +4967,110 @@ def test_a_rewrite_that_names_only_a_handle_says_it_addressed_the_reviews():
             )
         ]
     )
+    return record, ranked
+
+
+def test_a_rewrite_that_names_only_a_handle_says_it_addressed_the_reviews():
+    """Evolution answered with the ids it was thinking in, and the report printed
+    "evolution rewrote the idea in round one to address `rev_4`, and
+    `rev_cand_mechanism_2`" -- two references that appear nowhere else in the
+    document."""
+    from coscientist.narrative import _revised_form
+
+    record, ranked = _rewrite_addressing_handles()
 
     prose, _changed, _unchanged = _revised_form(record, ranked)
 
     assert "rev_4" not in prose and "rev_cand_mechanism_2" not in prose
     assert "to address the reviews" in prose
+
+
+def test_naming_the_ids_does_not_hide_a_handle_from_the_test_for_one():
+    """The two passes ran in the order that defeats the one above. The id-naming pass
+    sets a handle it cannot place in backticks, and a backticked handle is not a bare
+    one -- so the handles came back, in the branch that asserts they are what the
+    rewrite was written for: "this is what it was written against: `rev_4`, and
+    `rev_cand_mechanism_2`"."""
+    from coscientist.narrative import _name_ids_in_prose, _revised_form
+
+    record, ranked = _rewrite_addressing_handles()
+    _name_ids_in_prose(record)
+
+    prose, _changed, _unchanged = _revised_form(record, ranked)
+
+    assert "rev_4" not in prose and "rev_cand_mechanism_2" not in prose
+    assert "to address the reviews" in prose
+
+
+def test_a_governance_finding_names_the_evidence_it_cites():
+    """The naming pass walks the contracts, and the governance notes are dataclasses
+    holding a copy of the same reviewer text taken off the session. One finding was
+    therefore printed two ways in one report -- named where the review section quoted
+    it, "relies entirely on claim_2_1" where the governance section did."""
+    from coscientist.models import EvidenceClaim, EvidencePacket, SourceRecord
+    from coscientist.narrative import (
+        AdjudicationNote,
+        BlockerNote,
+        ResearchRecord,
+        _name_ids_in_prose,
+    )
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="source_2_2",
+                url="https://example.org/alumina",
+                title="Ultrathin Al2O3 Coatings",
+                verification_status="verified",
+            )
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_2_1",
+                claim="A 2 nm layer holds capacity past five hundred cycles.",
+                source_id="source_2_2",
+                verification_status="verified",
+            )
+        ],
+    )
+    record.adjudications = [
+        AdjudicationNote(
+            candidate_id="cand_1",
+            title="An Alumina Coating",
+            resolution="override",
+            adjudicator="A. Reviewer",
+            justification="Accepted because claim_2_1 is enough for a pilot.",
+            fatal_flaws=["The idea relies entirely on claim_2_1."],
+            claim="A coating improves cycle life, per source_2_2.",
+        )
+    ]
+    record.open_governance_blocks = [
+        BlockerNote(
+            candidate_id="cand_2",
+            title="A Titania Coating",
+            fatal_flaws=["Nothing but source_2_2 speaks to the inhalation risk."],
+        )
+    ]
+
+    _name_ids_in_prose(record)
+
+    printed = " ".join(
+        [
+            *record.adjudications[0].fatal_flaws,
+            record.adjudications[0].claim,
+            *record.open_governance_blocks[0].fatal_flaws,
+        ]
+    )
+    assert "claim_2_1" not in printed and "source_2_2" not in printed
+    assert printed.count("Ultrathin Al2O3 Coatings") == 3
+    # The adjudicator's own words are quoted as theirs, and the report does not edit
+    # what a human wrote -- not even to make an id in it readable.
+    assert (
+        record.adjudications[0].justification
+        == "Accepted because claim_2_1 is enough for a pilot."
+    )
 
 
 def _discovery_with(statements: list[str], leads: list[SourceLead]):

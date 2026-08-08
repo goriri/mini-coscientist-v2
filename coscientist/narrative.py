@@ -2439,7 +2439,7 @@ def _name_ids_in_prose(record: ResearchRecord) -> None:
         )
         return name[:1].upper() + name[1:] if opens else name
 
-    def replace(text: str) -> str:
+    def replace_text(text: str) -> str:
         if _RECORD_ID.search(text):
             # A trailing quote around the id would be orphaned by the substitution.
             text = (
@@ -2468,7 +2468,27 @@ def _name_ids_in_prose(record: ResearchRecord) -> None:
         *record.reviews,
     ):
         if model is not None:
-            _scrub_prose(model, replace)
+            _scrub_prose(model, replace_text)
+    # The governance notes carry the same reviewer text as the reviews above -- the
+    # fatal flaw, copied out of the session when governance was loaded -- but they are
+    # dataclasses, and the loop over contracts never reaches them. So one finding was
+    # printed two ways in one report: named where the review section quoted it, and
+    # "relies entirely on claim_2_1" where the governance section did. The claim comes
+    # along because a withdrawn idea is not in the population, so its text is scrubbed
+    # nowhere else. The person's own justification does not: it is quoted as theirs,
+    # and the report does not edit what a human wrote.
+    record.adjudications = [
+        replace(
+            note,
+            claim=replace_text(note.claim),
+            fatal_flaws=[replace_text(flaw) for flaw in note.fatal_flaws],
+        )
+        for note in record.adjudications
+    ]
+    record.open_governance_blocks = [
+        replace(note, fatal_flaws=[replace_text(flaw) for flaw in note.fatal_flaws])
+        for note in record.open_governance_blocks
+    ]
 
 
 def _scrub_prose(value: Any, replace: Callable[[str], str]) -> Any:
@@ -3220,8 +3240,15 @@ def _states_a_critique(text: str) -> bool:
     criterion -- so the sentence sent the reader after two references that do not
     exist anywhere in the document. Dropped, the sentence falls back to naming the
     reviews, which is what those handles were pointing at.
+
+    The backticks come off first. The id-naming pass runs before this one and sets a
+    handle it cannot place in backticks, the way the integrity lines set theirs --
+    which put quote marks around the one thing this test exists to catch. `rev_4`
+    stopped matching a bare handle, and the sentence came back worse than it had
+    been: "this is what it was written against: `rev_4`, and `rev_cand_mechanism_2`"
+    asserts that those two handles are what the rewrite was written for.
     """
-    cleaned = " ".join(str(text or "").split())
+    cleaned = " ".join(str(text or "").split()).strip("`")
     return bool(cleaned) and not _BARE_HANDLE.match(cleaned)
 
 
