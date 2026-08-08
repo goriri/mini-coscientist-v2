@@ -22,6 +22,8 @@ from .disciplines import classify_discipline
 from .dossier import compile_dossier
 from .evidence import (
     MAX_DEEP_RESEARCH_PASSES,
+    MAX_RETAINED_SOURCE_LEADS,
+    SUFFICIENT_COVERAGE,
     EvidenceArtifactStore,
     EvidenceStillRunning,
     GeminiDeepResearchTransport,
@@ -37,6 +39,7 @@ from .evidence import (
     names_a_document,
     resolve_manifest_locators,
     resolve_packet_locators,
+    retain_leads,
     sweep_verification,
 )
 from .governance import (
@@ -50,6 +53,7 @@ from .methods import classify_research_mode, method_requirements
 from .model_catalog import DEFAULT_LANGUAGE, DEFAULT_MODEL
 from .models import (
     EVIDENCE_FACETS,
+    FACET_PHRASES,
     MAX_VERIFICATION_BATCHES,
     MERGE_PRODUCER,
     STAGES,
@@ -63,9 +67,11 @@ from .models import (
     CandidatePopulation,
     DecisionAction,
     DeepResearchRun,
+    DiscoveryCoverage,
     DiscoveryManifest,
     DiscoveryNarrative,
     DiscoveryStatement,
+    EnrichmentRequest,
     EvidenceFloor,
     EvidencePacket,
     EvidenceRequest,
@@ -89,6 +95,17 @@ WORKFLOW_STAGES_V1 = tuple(
 )
 WORKFLOW_STAGES = tuple(stage for stage in STAGES if stage != "report")
 MILESTONE_STAGES = frozenset({"scope", "rank", "evolve", "meta_review"})
+
+MAX_GAP_SEARCHES = 6
+"""How many searches one revision of the evidence base may dispatch.
+
+Enough for the researcher's own request plus every facet the audit can name,
+which is seven, minus the ones it usually names at once. The bound exists
+because a revision is a button a researcher can press repeatedly and each press
+fans out concurrently against a shared model quota; without it, five impatient
+revisions are thirty-five simultaneous searches. What falls outside it is said
+in the manifest rather than dropped in silence.
+"""
 
 
 def _deep_research_enabled() -> bool:
@@ -562,116 +579,36 @@ class CoScientistWorkflow:
             raise ValueError("An accepted ResearchPlan is required before discovery.")
         plan = ResearchPlan.model_validate(scope.payload)
 
-        controller = self.evidence_discovery
-        transport: GeminiDeepResearchTransport | None = None
-        transport_error = ""
-        if controller is None and _deep_research_enabled():
-            # Deep Research runs on Vertex AI with Application Default Credentials
-            # or on an API key; the transport decides which. Construction failure
-            # is a degraded mode, never a crashed run, so the workflow can still
-            # reach the evidence gate and report why nothing was discovered.
-            try:
-                transport = GeminiDeepResearchTransport()
-            except Exception as exc:  # any client failure degrades, never crashes
-                transport_error = str(exc)
-        elif controller is None:
-            transport_error = (
-                "Deep Research was turned off for this deployment "
-                "(COSCIENTIST_DEEP_RESEARCH=off), so the literature was searched "
-                "with grounded web search instead."
-            )
-        if controller is None and transport is not None:
-            controller = IterativeEvidenceDiscovery(
-                transport,
-                EvidenceArtifactStore(),
-                # One interaction per evidence facet, all seven at once, then a
-                # single pass at whatever they left open. The sequential
-                # gap-directed loop this replaces was smarter per dollar and
-                # seven times slower, and it only ever asked its second question
-                # after the first had come back.
-                fan_out=os.environ.get("EVIDENCE_FAN_OUT", "true").lower() == "true",
-                max_waves=2,
-                registry_enricher=RegistryMetadataEnricher(),
-                polls_per_invocation=(
-                    1
-                    if os.environ.get("EVIDENCE_TASK_STEP_MODE", "false").lower()
-                    == "true"
-                    else None
-                ),
-            )
-        if controller is None:
-            manifest, discovery = await self._search_grounded_discovery(
+        # A researcher who reads the evidence base and sends it back has named
+        # what is missing from a corpus that already exists. Answering that by
+        # starting discovery over would re-run the whole literature search --
+        # another billed, uncancellable Deep Research wave, on a deployment that
+        # has one -- to be told most of what is already on the page. The named
+        # gaps are searched directly instead, one grounded search each, and
+        # merged into the corpus that is already there.
+        standing = self._draft_discovery()
+        standing_manifest = (
+            DiscoveryManifest.model_validate(standing.payload)
+            if standing is not None
+            else None
+        )
+        if (
+            revision > 1
+            and standing is not None
+            and standing_manifest is not None
+            and standing_manifest.source_leads
+        ):
+            manifest, discovery = await self._gap_directed_search(
                 plan,
-                transport_error,
+                standing_manifest,
+                standing,
                 feedback=feedback,
                 revision=revision,
             )
         else:
-            discovery = next(
-                (
-                    item
-                    for item in reversed(self.session.artifacts)
-                    if item.stage == "evidence"
-                    and item.agent == "deep_research_discovery"
-                    and item.schema_name == "DiscoveryManifest"
-                    and item.status == ArtifactStatus.DRAFT
-                ),
-                None,
+            manifest, discovery = await self._discovered_evidence(
+                plan, feedback=feedback, revision=revision
             )
-            existing_manifest = (
-                DiscoveryManifest.model_validate(discovery.payload)
-                if discovery is not None and discovery.payload
-                else DiscoveryManifest(question=self.session.question)
-            )
-            if discovery is None:
-                discovery = Artifact(
-                    stage="evidence",
-                    agent="deep_research_discovery",
-                    artifact_type="specialist_output",
-                    content="Deep Research pass 1 of 3 is being started.",
-                    feedback=feedback,
-                    producer_model="deep-research-preview-04-2026",
-                    schema_name="DiscoveryManifest",
-                    payload=existing_manifest.model_dump(mode="json"),
-                )
-                self.session.artifacts.append(discovery)
-                self._persist()
-
-            def persist_manifest(updated: DiscoveryManifest) -> None:
-                discovery.revise(
-                    self._evidence_summary(updated), updated.model_dump(mode="json")
-                )
-                self._persist()
-
-            normalizer = None
-            if isinstance(controller.transport, GeminiDeepResearchTransport):
-                try:
-                    normalizer = GeminiEvidenceNormalizer()
-                except Exception:
-                    # Deterministic paragraph extraction is the documented
-                    # fallback; losing the model normalizer must not discard a
-                    # report that Deep Research already paid to produce.
-                    normalizer = None
-
-            manifest = await asyncio.to_thread(
-                controller.run,
-                self.session,
-                plan,
-                manifest=existing_manifest,
-                normalizer=normalizer,
-                manifest_callback=persist_manifest,
-            )
-            if any(
-                run.status in {"queued", "in_progress", "requires_action"}
-                for run in manifest.runs
-            ):
-                raise EvidenceStillRunning(
-                    "Deep Research interaction is still running."
-                )
-            # Deep Research names its sources with the same grounding redirector
-            # search uses. They are followed here, before the manifest is
-            # recorded, so the corpus written from these leads names documents.
-            manifest = await self._resolved_lead_locators(manifest)
 
         # Split before the manifest is written out, not at dispatch: the split is
         # what records how many leads went to a verifier and how many the ceiling
@@ -702,7 +639,15 @@ class CoScientistWorkflow:
                 and item.status == ArtifactStatus.DRAFT
             ):
                 item.status = ArtifactStatus.ACCEPTED
-        if manifest.enrichment_requests:
+        # Only the ones nothing has answered yet. Left unfiltered, this re-ran
+        # every gap search the previous revision had already completed, on every
+        # later revision, growing by a wave each time.
+        pending_enrichment = [
+            request
+            for request in manifest.enrichment_requests
+            if request.status in {"queued", "working"}
+        ]
+        if pending_enrichment:
             enrichment_definition = tuple(
                 item
                 for item in SPECIALISTS_BY_STAGE["evidence"]
@@ -714,8 +659,7 @@ class CoScientistWorkflow:
                 feedback=(
                     "Resolve only these residual searches (maximum six):\n"
                     + "\n".join(
-                        f"- {request.query}"
-                        for request in manifest.enrichment_requests[:6]
+                        f"- {request.query}" for request in pending_enrichment[:6]
                     )
                 ),
                 revision=revision,
@@ -848,6 +792,491 @@ class CoScientistWorkflow:
             )
         )
         return draft
+
+    def _draft_discovery(self, *, require_payload: bool = True) -> Artifact | None:
+        """The discovery manifest this stage is still working on, if there is one.
+
+        Evidence is the one stage whose specialist output survives a revision:
+        the manifest is revised in place across Deep Research polls, across a
+        grounded fallback and across a researcher sending the corpus back, so
+        every path into the stage has to find the same artifact rather than
+        start a second one beside it.
+        """
+        return next(
+            (
+                item
+                for item in reversed(self.session.artifacts)
+                if item.stage == "evidence"
+                and item.agent == "deep_research_discovery"
+                and item.schema_name == "DiscoveryManifest"
+                and item.status == ArtifactStatus.DRAFT
+                and (item.payload or not require_payload)
+            ),
+            None,
+        )
+
+    async def _discovered_evidence(
+        self, plan: ResearchPlan, *, feedback: str, revision: int
+    ) -> tuple[DiscoveryManifest, Artifact]:
+        """Search the literature from nothing, by whichever provider is wired up."""
+        controller = self.evidence_discovery
+        transport: GeminiDeepResearchTransport | None = None
+        transport_error = ""
+        if controller is None and _deep_research_enabled():
+            # Deep Research runs on Vertex AI with Application Default Credentials
+            # or on an API key; the transport decides which. Construction failure
+            # is a degraded mode, never a crashed run, so the workflow can still
+            # reach the evidence gate and report why nothing was discovered.
+            try:
+                transport = GeminiDeepResearchTransport()
+            except Exception as exc:  # any client failure degrades, never crashes
+                transport_error = str(exc)
+        elif controller is None:
+            transport_error = (
+                "Deep Research was turned off for this deployment "
+                "(COSCIENTIST_DEEP_RESEARCH=off), so the literature was searched "
+                "with grounded web search instead."
+            )
+        if controller is None and transport is not None:
+            controller = IterativeEvidenceDiscovery(
+                transport,
+                EvidenceArtifactStore(),
+                # One interaction per evidence facet, all seven at once, then a
+                # single pass at whatever they left open. The sequential
+                # gap-directed loop this replaces was smarter per dollar and
+                # seven times slower, and it only ever asked its second question
+                # after the first had come back.
+                fan_out=os.environ.get("EVIDENCE_FAN_OUT", "true").lower() == "true",
+                max_waves=2,
+                registry_enricher=RegistryMetadataEnricher(),
+                polls_per_invocation=(
+                    1
+                    if os.environ.get("EVIDENCE_TASK_STEP_MODE", "false").lower()
+                    == "true"
+                    else None
+                ),
+            )
+        if controller is None:
+            manifest, discovery = await self._search_grounded_discovery(
+                plan,
+                transport_error,
+                feedback=feedback,
+                revision=revision,
+            )
+        else:
+            discovery = self._draft_discovery(require_payload=False)
+            existing_manifest = (
+                DiscoveryManifest.model_validate(discovery.payload)
+                if discovery is not None and discovery.payload
+                else DiscoveryManifest(question=self.session.question)
+            )
+            if discovery is None:
+                discovery = Artifact(
+                    stage="evidence",
+                    agent="deep_research_discovery",
+                    artifact_type="specialist_output",
+                    content="Deep Research pass 1 of 3 is being started.",
+                    feedback=feedback,
+                    producer_model="deep-research-preview-04-2026",
+                    schema_name="DiscoveryManifest",
+                    payload=existing_manifest.model_dump(mode="json"),
+                )
+                self.session.artifacts.append(discovery)
+                self._persist()
+
+            def persist_manifest(updated: DiscoveryManifest) -> None:
+                discovery.revise(
+                    self._evidence_summary(updated), updated.model_dump(mode="json")
+                )
+                self._persist()
+
+            normalizer = None
+            if isinstance(controller.transport, GeminiDeepResearchTransport):
+                try:
+                    normalizer = GeminiEvidenceNormalizer()
+                except Exception:
+                    # Deterministic paragraph extraction is the documented
+                    # fallback; losing the model normalizer must not discard a
+                    # report that Deep Research already paid to produce.
+                    normalizer = None
+
+            manifest = await asyncio.to_thread(
+                controller.run,
+                self.session,
+                plan,
+                manifest=existing_manifest,
+                normalizer=normalizer,
+                manifest_callback=persist_manifest,
+            )
+            if any(
+                run.status in {"queued", "in_progress", "requires_action"}
+                for run in manifest.runs
+            ):
+                raise EvidenceStillRunning(
+                    "Deep Research interaction is still running."
+                )
+            # Deep Research names its sources with the same grounding redirector
+            # search uses. They are followed here, before the manifest is
+            # recorded, so the corpus written from these leads names documents.
+            manifest = await self._resolved_lead_locators(manifest)
+        return manifest, discovery
+
+    def _searched_facets(self, manifest: DiscoveryManifest) -> set[str]:
+        """Which facets this corpus has already been searched under.
+
+        Coverage distinguishes a facet a pass was aimed at and came back empty
+        from one nobody asked about, and only the caller knows which is which.
+        On a second visit to the stage the original caller is gone, so it is
+        reconstructed from the three places the act was recorded: the angles a
+        grounded pass ran, the facet each Deep Research pass was sent to cover,
+        and the facet tags on the leads that came back.
+        """
+        return {
+            *(angle for angle in manifest.discovery_angles if angle in EVIDENCE_FACETS),
+            *(run.facet for run in manifest.runs if run.facet in EVIDENCE_FACETS),
+            *(
+                facet
+                for lead in manifest.source_leads
+                for facet in lead.facets
+                if facet in EVIDENCE_FACETS
+            ),
+        }
+
+    def _discovered_corpus(self) -> Artifact | None:
+        """The newest packet discovery has written, merged or otherwise."""
+        return next(
+            (
+                item
+                for item in reversed(self.session.artifacts)
+                if item.stage == "evidence"
+                and item.agent == "evidence_discovery"
+                and item.schema_name == "EvidencePacket"
+                and item.payload
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _corpus_statements(packet: Artifact | None) -> list[DiscoveryStatement]:
+        """Recover what discovery said, from the corpus rather than the manifest.
+
+        Coverage scores its facets from leads but its research directions from
+        statements, and statements are the one thing the manifest does not keep
+        on the grounded path -- they are computed at dispatch and dropped. Left
+        unrecovered, a gap pass would re-score every direction against only the
+        handful of statements its own searches returned, and a revision that
+        added sources would report coverage falling.
+
+        The merged corpus packet holds them: its sources carry the facet of the
+        search that found them, and its claims name their source.
+        """
+        if packet is None:
+            return []
+        corpus = EvidencePacket.model_validate(packet.payload)
+        by_id = {source.id: source for source in corpus.sources}
+        return [
+            DiscoveryStatement(
+                text=claim.claim,
+                facet=source.facet if source.facet in EVIDENCE_FACETS else "",
+                source_urls=[source.url],
+                originating_pass=1,
+                relation=claim.relation,
+            )
+            for claim in corpus.claims
+            if (source := by_id.get(claim.source_id or "")) is not None
+        ]
+
+    @staticmethod
+    def _never_less_covered(
+        audited: DiscoveryCoverage, previous: DiscoveryCoverage | None
+    ) -> DiscoveryCoverage:
+        """Hold each score at the best this corpus has ever measured.
+
+        Nothing is ever removed from the evidence base, so no direction and no
+        facet can become less covered by searching for more. The audit can still
+        say it did: a direction is scored on how many statements exist, and the
+        statements a revision re-derives come from the merged corpus, where two
+        passes that found the same paper for the same finding have become one.
+        The first wave's seven near-identical statements come back as one, and a
+        revision that added a retraction notice reported coverage falling from
+        88% to 63% -- which a researcher reads as "asking for more made it
+        worse", about the button they just pressed.
+        """
+        if previous is None:
+            return audited
+        floored = audited.model_copy(deep=True)
+        floored.direction_scores = {
+            direction: max(score, previous.direction_scores.get(direction, 0.0))
+            for direction, score in audited.direction_scores.items()
+        }
+        floored.facet_scores = {
+            facet: max(score, previous.facet_scores.get(facet, 0.0))
+            for facet, score in audited.facet_scores.items()
+        }
+        totals = [*floored.facet_scores.values(), *floored.direction_scores.values()]
+        floored.weighted_score = round(sum(totals) / max(1, len(totals)), 4)
+        floored.sufficient = (
+            floored.weighted_score >= SUFFICIENT_COVERAGE and not floored.gaps
+        )
+        return floored
+
+    async def _gap_directed_search(
+        self,
+        plan: ResearchPlan,
+        manifest: DiscoveryManifest,
+        discovery: Artifact,
+        *,
+        feedback: str,
+        revision: int,
+    ) -> tuple[DiscoveryManifest, Artifact]:
+        """Search the named gaps, and leave the rest of the corpus alone.
+
+        This is what a revision at the evidence gate does. The alternative --
+        starting the discovery wave again -- costs another seven Deep Research
+        interactions, roughly twenty-one dollars, forty minutes, and cannot be
+        cancelled once begun, to re-find the sources already on the page. What
+        the researcher asked for is the missing part, so only that is searched,
+        with the same grounded-search specialist the fallback path uses.
+
+        Each target becomes one search and one ``EnrichmentRequest``. It is not
+        recorded as a ``DeepResearchRun`` because it is not one: the manifest's
+        run list is capped at the Deep Research ceiling and the panel counts it
+        as paid passes, so filing gap searches there would both spend the cap
+        and tell the reader money was spent that was not.
+        """
+        # Read before anything is dispatched. The gap searches append their own
+        # packets to the session, so looked up afterwards "the corpus so far"
+        # would be whichever gap search happened to land last.
+        prior = self._discovered_corpus()
+        prior_statements = self._corpus_statements(prior)
+        latest = manifest.coverage_history[-1] if manifest.coverage_history else None
+        impact_rank = {"blocking": 0, "high": 1, "medium": 2, "low": 3}
+        open_gaps = sorted(
+            (gap for gap in (latest.gaps if latest else []) if gap.status == "open"),
+            key=lambda gap: (impact_rank.get(gap.decision_impact, 2), -gap.priority),
+        )
+        targets: list[tuple[str, str, list[str]]] = []
+        if feedback.strip():
+            # First, and its own target: the researcher read the corpus and said
+            # what is wrong with it, which is better aimed than anything the
+            # coverage audit can infer. Folded into the gap prompts instead, it
+            # would be repeated seven times and answered once.
+            targets.append(
+                (
+                    "",
+                    "The researcher reviewed this evidence base and asked for "
+                    f"this specifically: {feedback.strip()}",
+                    [],
+                )
+            )
+        targets.extend(
+            (
+                gap.facet if gap.facet in EVIDENCE_FACETS else "",
+                gap.description,
+                [gap.id],
+            )
+            for gap in open_gaps
+        )
+        if not targets:
+            # Nothing named a gap and nobody said why they sent it back, so the
+            # weakest facets are searched. Sending it back has to do something.
+            weakest = sorted(
+                EVIDENCE_FACETS,
+                key=lambda facet: (
+                    latest.facet_scores.get(facet, 0.0) if latest else 0.0
+                ),
+            )[:MAX_GAP_SEARCHES]
+            targets = [
+                (
+                    facet,
+                    "Search again for "
+                    f"{FACET_PHRASES.get(facet, facet.replace('_', ' '))}; this "
+                    "facet is the thinnest part of the evidence base.",
+                    [],
+                )
+                for facet in weakest
+            ]
+        selected = targets[:MAX_GAP_SEARCHES]
+        dropped = len(targets) - len(selected)
+
+        definition = tuple(
+            item
+            for item in SPECIALISTS_BY_STAGE["evidence"]
+            if item.role == "evidence_discovery"
+        )
+        directions = "\n".join(f"- {item}" for item in plan.success_criteria)
+        known = "\n".join(
+            f"- {lead.title or lead.canonical_url}"
+            for lead in manifest.source_leads[:40]
+        )
+        shared = (
+            "GAP-DIRECTED PASS. A literature search has already run for this "
+            "question and its results were reviewed by a researcher, who sent "
+            "them back. You are filling one named hole in that corpus, not "
+            "repeating the search. Return a typed EvidencePacket whose claims "
+            "each name the source they came from. Everything stays "
+            "discovered_unverified: you have read search results, not sources. "
+            "A verification specialist runs next.\n\n"
+            f"Research question: {self.session.question}\n"
+            f"What the plan must be able to show:\n{directions}\n"
+            f"Already in the corpus -- finding these again adds nothing:\n{known}"
+        )
+        dispatched = await asyncio.gather(
+            *(
+                self.task_bus.dispatch_stage(
+                    self.session,
+                    definition,
+                    feedback=(
+                        f"{shared}\n\nGap {index} of {len(selected)}"
+                        + (f" ({facet})" if facet else "")
+                        + f". {brief} Stay on this gap: the others are being "
+                        "searched in parallel, and duplicating them wastes the "
+                        "pass."
+                    ),
+                    revision=revision,
+                )
+                for index, (facet, brief, _) in enumerate(selected, start=1)
+            )
+        )
+        target_by_result = {
+            id(result): selected[index]
+            for index, batch in enumerate(dispatched)
+            for result in batch
+            if index < len(selected)
+        }
+
+        packets: list[EvidencePacket] = []
+        statements: list[DiscoveryStatement] = []
+        leads = list(manifest.source_leads)
+        requests: list[EnrichmentRequest] = []
+        results = [result for batch in dispatched for result in batch]
+        for result in results:
+            self.session.tasks.append(result.task)
+            facet, brief, gap_ids = target_by_result.get(id(result), ("", "", []))
+            request = EnrichmentRequest(
+                provider="google_search",
+                gap_ids=list(gap_ids),
+                query=brief,
+                # Recorded as done here rather than left queued: the residual
+                # enrichment dispatch downstream picks up anything still pending,
+                # and it would run these searches a second time.
+                status="completed" if result.artifact.payload else "failed",
+                result_artifact_reference=result.artifact.id,
+            )
+            requests.append(request)
+            if not result.artifact.payload:
+                self.session.artifacts.append(result.artifact)
+                continue
+            packet = await self._resolved_locators(
+                EvidencePacket.model_validate(result.artifact.payload)
+            )
+            relations_by_source: dict[str, list[str]] = {}
+            for claim in packet.claims:
+                if claim.source_id:
+                    relations_by_source.setdefault(claim.source_id, []).append(
+                        claim.relation
+                    )
+            if facet:
+                for source in packet.sources:
+                    source.facet = facet
+                statements.extend(
+                    DiscoveryStatement(
+                        text=claim.claim,
+                        facet=facet,
+                        source_urls=[
+                            source.url
+                            for source in packet.sources
+                            if source.id == claim.source_id
+                        ],
+                        originating_pass=1,
+                        relation=claim.relation,
+                    )
+                    for claim in packet.claims
+                )
+            result.artifact.payload = packet.model_dump(mode="json")
+            self.session.artifacts.append(result.artifact)
+            packets.append(packet)
+            leads = merge_leads(
+                leads,
+                [
+                    SourceLead(
+                        canonical_url=source.url,
+                        title=source.title,
+                        source_type=source.source_type,
+                        provider="google_search",
+                        originating_passes=[1],
+                        originating_statement_ids=list(source.supports_claim_ids),
+                        facets=[facet] if facet else [],
+                        claim_relations=list(
+                            dict.fromkeys(relations_by_source.get(source.id, []))
+                        ),
+                        raw_artifact_reference=result.artifact.id,
+                    )
+                    for source in packet.sources
+                ],
+            )
+
+        # Rebuilt from the corpus that already existed plus what the gap searches
+        # returned. Merging only the new packets would hand verification a corpus
+        # containing nothing but the gap material, and everything downstream
+        # reads the newest packet in the session.
+        new_packets = len(packets)
+        if prior is not None:
+            packets.insert(0, EvidencePacket.model_validate(prior.payload))
+        merged = self._merged_discovery_corpus(packets, results, feedback=feedback)
+        if merged is not None and prior is not None:
+            # Superseded by hand: the merge only supersedes the artifacts it was
+            # handed as results, and the previous revision's corpus is not one of
+            # them. Left a draft, two packets would each claim to be the corpus
+            # and everything downstream reads whichever is newest.
+            prior.status = ArtifactStatus.SUPERSEDED
+
+        searched = self._searched_facets(manifest) | {
+            facet for facet, _, _ in selected if facet
+        }
+        updated = manifest.model_copy(deep=True)
+        retained = retain_leads(leads, MAX_RETAINED_SOURCE_LEADS)
+        updated.leads_beyond_retention_ceiling += len(leads) - len(retained)
+        updated.source_leads = retained
+        updated.verification_handoff_source_ids = [lead.id for lead in retained]
+        updated.enrichment_requests = [*updated.enrichment_requests, *requests]
+        updated.coverage_history = [
+            *updated.coverage_history,
+            self._never_less_covered(
+                audit_coverage(
+                    DiscoveryNarrative(
+                        question=self.session.question,
+                        research_directions=list(plan.success_criteria),
+                        statements=[*prior_statements, *statements],
+                    ),
+                    retained,
+                    previous=latest,
+                    searched_facets=searched,
+                ),
+                latest,
+            ),
+        ]
+        found = sum(
+            len(packet.sources) for packet in packets[len(packets) - new_packets :]
+        )
+        updated.convergence_reason = "gap_directed_search"
+        # No silent caps, and the gap list alone is not enough of one: a gap that
+        # was searched and came back empty stays on that list beside a gap this
+        # revision never got to, and they read identically.
+        updated.gap_searches_deferred = dropped
+        updated.synthesis_report = (
+            f"{updated.synthesis_report}\n\nRevision {revision}: "
+            f"{len(selected)} gap-directed searches added {found} sources."
+        ).strip()
+        if dropped:
+            updated.synthesis_report += (
+                f" {dropped} further gaps were left open to hold this revision "
+                f"at {MAX_GAP_SEARCHES} searches; they remain listed as gaps."
+            )
+        discovery.revise(
+            self._evidence_summary(updated), updated.model_dump(mode="json")
+        )
+        return updated, discovery
 
     @staticmethod
     def _verification_batches(manifest: DiscoveryManifest) -> list[list[SourceLead]]:
@@ -995,18 +1424,7 @@ class CoScientistWorkflow:
         packet was searched under, which is better evidence of what a source is
         than the keyword heuristic: the search that found it is what defines it.
         """
-        existing = next(
-            (
-                item
-                for item in reversed(self.session.artifacts)
-                if item.stage == "evidence"
-                and item.agent == "deep_research_discovery"
-                and item.schema_name == "DiscoveryManifest"
-                and item.status == ArtifactStatus.DRAFT
-                and item.payload
-            ),
-            None,
-        )
+        existing = self._draft_discovery()
         if existing is not None:
             manifest = DiscoveryManifest.model_validate(existing.payload)
             if manifest.source_leads:
@@ -1292,6 +1710,26 @@ class CoScientistWorkflow:
                 f"- Not verified: {manifest.leads_beyond_verification_ceiling} "
                 "further leads, left unchecked because the batch ceiling was "
                 "reached"
+            )
+        gap_searches = len(
+            [
+                request
+                for request in manifest.enrichment_requests
+                if request.status == "completed"
+            ]
+        )
+        if gap_searches:
+            lines.append(
+                f"- Gap-directed searches: {gap_searches} run against named gaps "
+                "in this corpus, without a further Deep Research pass"
+            )
+        if manifest.gap_searches_deferred:
+            # The gaps are listed below either way, so without this line one
+            # that was searched and came back empty reads exactly like one this
+            # revision never got to.
+            lines.append(
+                f"- Gaps not searched: {manifest.gap_searches_deferred}, beyond "
+                "what one revision runs; they are still listed as gaps below"
             )
         if manifest.stored_interaction_notice:
             lines.append(

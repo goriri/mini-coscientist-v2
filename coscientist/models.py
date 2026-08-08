@@ -522,6 +522,11 @@ class DiscoveryManifest(Contract):
     # a corpus of three hundred cut to ninety is a decision about the evidence,
     # and every number downstream is computed from what survived it.
     leads_beyond_retention_ceiling: int = Field(default=0, ge=0)
+    # And how many gaps the last revision of this stage named but could not
+    # search, having reached its ceiling. Same reason again: the gaps stay
+    # listed either way, so without this a gap that was searched and came back
+    # empty is indistinguishable from one nothing was spent on.
+    gap_searches_deferred: int = Field(default=0, ge=0)
     synthesis_report: str = ""
 
 

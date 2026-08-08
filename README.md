@@ -180,6 +180,13 @@ uv run coscientist tui "Can a coating improve cycle life?" \
 The web launcher ticks the same box by default; `--auto` ignores it, having
 nobody to ask. It is set once for a new run and kept for the run's whole life.
 
+Revising at that gate does not start discovery again. What you write in the box
+becomes one search, each gap the coverage audit named becomes another, up to six
+in total, and they run as grounded web searches against the corpus that already
+exists — no second Deep Research wave, nothing already found discarded, and the
+coverage audit re-scored over the merged result. A revision that has to leave
+gaps unsearched says so in the manifest rather than dropping them quietly.
+
 Each displayed gate contains the relevant specialist outputs:
 
 ```text

@@ -403,6 +403,54 @@ try {
         evidenceGate.accept.includes("evidence base"),
         `The evidence gate's primary button reads "${evidenceGate.accept}".`,
       );
+      // Sending the corpus back is the whole reason for stopping here, so it is
+      // driven rather than assumed. What it must do is search the gap and keep
+      // the corpus: the stage used to answer a revision by running discovery
+      // again from nothing, which on a deployment with Deep Research is another
+      // billed wave to re-find the papers already on the page.
+      const before = await cdp.evaluate(
+        `fetch("/api/research/sessions/${workflowId}/stages/evidence").then(r => r.json()).then(s => JSON.stringify({
+          leads: s.presentation?.metrics?.find((m) => m.label === "Source leads")?.value ?? 0,
+          passes: s.presentation?.metrics?.find((m) => m.label === "Deep Research passes")?.value ?? 0,
+        }))`,
+      );
+      const baseline = JSON.parse(before);
+      await cdp.evaluate(`(() => {
+        const card = document.querySelector(".approval-card:not(.resolved)");
+        card.querySelector(".revision-field").value = "Nothing here covers long-term safety. Search for that.";
+        card.querySelector('[data-decision="revise"]').click();
+      })()`);
+      await waitFor(
+        cdp,
+        `(async () => {
+          const workflow = await fetch("/api/research/sessions/${workflowId}").then((r) => r.json());
+          return workflow.stage === "evidence" && workflow.pending_draft && workflow.pending_draft.version > 1;
+        })()`,
+        "Revising the evidence base never produced a second version of it.",
+        180000,
+      );
+      const after = JSON.parse(
+        await cdp.evaluate(
+          `fetch("/api/research/sessions/${workflowId}/stages/evidence").then(r => r.json()).then(s => JSON.stringify({
+            leads: s.presentation?.metrics?.find((m) => m.label === "Source leads")?.value ?? 0,
+            passes: s.presentation?.metrics?.find((m) => m.label === "Deep Research passes")?.value ?? 0,
+          }))`,
+        ),
+      );
+      assert(
+        after.leads >= baseline.leads,
+        `The revision cut the corpus from ${baseline.leads} leads to ${after.leads}.`,
+      );
+      assert(
+        after.passes === baseline.passes,
+        `The revision spent a Deep Research pass: ${baseline.passes} became ${after.passes}.`,
+      );
+      await waitFor(
+        cdp,
+        "!!document.querySelector('.approval-card:not(.resolved) [data-decision=\"accept\"]')",
+        "The revised evidence base never came back to a gate.",
+        60000,
+      );
     }
     // Keyed to the tournament being on screen rather than to a gate number,
     // which only held while the count of gates was assumed to be fixed.

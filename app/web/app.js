@@ -1232,8 +1232,13 @@ const GATE_WORK = {
     draft: "evidence base",
     next: "Generate",
     starts: "four generator strategies write hypotheses. A few minutes.",
+    // Up to six web searches aimed at what you write in the box and at the
+    // gaps the coverage audit named -- not a second Deep Research wave. Saying
+    // "it may spend another pass" was true of the stage that re-ran discovery
+    // from nothing, and it made the one button that improves the evidence base
+    // read like the expensive one.
     revises:
-      "sends discovery back for another look at the gaps. Minutes, and it may spend another Deep Research pass.",
+      "searches the gaps you name, and keeps everything already found. About a minute, and no Deep Research pass.",
   },
   generate: {
     draft: "candidate hypotheses",
