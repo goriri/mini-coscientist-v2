@@ -1179,20 +1179,29 @@ class CoScientistWorkflow:
             if facet:
                 for source in packet.sources:
                     source.facet = facet
-                statements.extend(
-                    DiscoveryStatement(
-                        text=claim.claim,
-                        facet=facet,
-                        source_urls=[
-                            source.url
-                            for source in packet.sources
-                            if source.id == claim.source_id
-                        ],
-                        originating_pass=1,
-                        relation=claim.relation,
-                    )
-                    for claim in packet.claims
+            # Every search contributes its statements, whether or not it was
+            # aimed at one of the seven facets. Only the facet tag depends on
+            # that. A revision's own target -- what the researcher wrote in the
+            # box -- carries no facet, and skipping it here meant the common
+            # revision, the one where the audit named no gaps and the request is
+            # the only search, contributed no statements at all. Coverage scores
+            # research directions by counting statements, so a live revision
+            # scored every direction zero and the panel reported coverage
+            # falling from 88% to 70% for adding sources to the corpus.
+            statements.extend(
+                DiscoveryStatement(
+                    text=claim.claim,
+                    facet=facet,
+                    source_urls=[
+                        source.url
+                        for source in packet.sources
+                        if source.id == claim.source_id
+                    ],
+                    originating_pass=1,
+                    relation=claim.relation,
                 )
+                for claim in packet.claims
+            )
             result.artifact.payload = packet.model_dump(mode="json")
             self.session.artifacts.append(result.artifact)
             packets.append(packet)
@@ -1240,13 +1249,20 @@ class CoScientistWorkflow:
         updated.source_leads = retained
         updated.verification_handoff_source_ids = [lead.id for lead in retained]
         updated.enrichment_requests = [*updated.enrichment_requests, *requests]
+        # Whatever discovery scored, scored again. The two discovery paths key
+        # their directions differently -- a Deep Research narrative is keyed on
+        # the question, the grounded fallback on the success criteria -- and a
+        # revision that re-keyed them turned the floor below into a no-op, since
+        # a direction the previous audit never named has no previous score to be
+        # held at. That is how a live revision published 70% under an 88%.
+        directions = list(latest.direction_scores) if latest else []
         updated.coverage_history = [
             *updated.coverage_history,
             self._never_less_covered(
                 audit_coverage(
                     DiscoveryNarrative(
                         question=self.session.question,
-                        research_directions=list(plan.success_criteria),
+                        research_directions=directions or list(plan.success_criteria),
                         statements=[*prior_statements, *statements],
                     ),
                     retained,
@@ -1509,20 +1525,29 @@ class CoScientistWorkflow:
             if facet:
                 for source in packet.sources:
                     source.facet = facet
-                statements.extend(
-                    DiscoveryStatement(
-                        text=claim.claim,
-                        facet=facet,
-                        source_urls=[
-                            source.url
-                            for source in packet.sources
-                            if source.id == claim.source_id
-                        ],
-                        originating_pass=1,
-                        relation=claim.relation,
-                    )
-                    for claim in packet.claims
+            # Every search contributes its statements, whether or not it was
+            # aimed at one of the seven facets. Only the facet tag depends on
+            # that. A revision's own target -- what the researcher wrote in the
+            # box -- carries no facet, and skipping it here meant the common
+            # revision, the one where the audit named no gaps and the request is
+            # the only search, contributed no statements at all. Coverage scores
+            # research directions by counting statements, so a live revision
+            # scored every direction zero and the panel reported coverage
+            # falling from 88% to 70% for adding sources to the corpus.
+            statements.extend(
+                DiscoveryStatement(
+                    text=claim.claim,
+                    facet=facet,
+                    source_urls=[
+                        source.url
+                        for source in packet.sources
+                        if source.id == claim.source_id
+                    ],
+                    originating_pass=1,
+                    relation=claim.relation,
                 )
+                for claim in packet.claims
+            )
             result.artifact.payload = packet.model_dump(mode="json")
             self.session.artifacts.append(result.artifact)
             packets.append(packet)
@@ -1718,10 +1743,25 @@ class CoScientistWorkflow:
                 if request.status == "completed"
             ]
         )
+        failed_searches = len(
+            [
+                request
+                for request in manifest.enrichment_requests
+                if request.status == "failed"
+            ]
+        )
         if gap_searches:
             lines.append(
                 f"- Gap-directed searches: {gap_searches} run against named gaps "
                 "in this corpus, without a further Deep Research pass"
+            )
+        if failed_searches:
+            # Counted apart from the completed ones rather than left out of both
+            # lines. A revision that dispatched six searches and got two back
+            # otherwise reports two, and the four that returned nothing are
+            # indistinguishable from searches nobody ran.
+            lines.append(
+                f"- Gap-directed searches that returned nothing: {failed_searches}"
             )
         if manifest.gap_searches_deferred:
             # The gaps are listed below either way, so without this line one

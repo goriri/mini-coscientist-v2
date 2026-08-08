@@ -486,14 +486,23 @@ try {
       // Tournament details opened on collapsed rounds and nothing else, so what
       // the ranking decided was only readable by opening all of them.
       assert(
-        rankingPresentation.briefing.includes("Final standings"),
+        rankingPresentation.briefing.length > 120,
         "Tournament details must open on a briefing, not on the rounds alone.",
       );
-      // The stub judges by arithmetic, so the briefing is computed and has to
-      // say so rather than pass for a judge's reading of the hypotheses.
+      // Who wrote it decides what it has to look like, and the two providers
+      // write different things: the stub judges by arithmetic and gets the
+      // computed standings, a live judge gets prose about its own matches.
+      // Asserting the computed text against a deployment failed the whole
+      // production run on a briefing that was working exactly as designed.
+      const briefingAuthor = await cdp.evaluate(
+        `fetch("/api/research/sessions/${workflowId}/stages/rank").then((r) => r.json()).then((s) => s.presentation.briefing_author)`,
+      );
       assert(
-        rankingPresentation.briefingSourced,
-        "A computed briefing must name itself as computed.",
+        briefingAuthor === "judge"
+          ? !rankingPresentation.briefingSourced
+          : rankingPresentation.briefingSourced &&
+              rankingPresentation.briefing.includes("Final standings"),
+        `A ${briefingAuthor} briefing is labelled as the other one.`,
       );
     }
     await cdp.evaluate(

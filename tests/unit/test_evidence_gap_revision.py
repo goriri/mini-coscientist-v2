@@ -376,3 +376,82 @@ def test_a_revision_against_a_corpus_with_no_named_gaps_still_searches():
 
     assert len(provider.discovery_prompts) == 1
     assert "solid-state cells" in provider.discovery_prompts[0]
+
+
+def _keyed_on_the_question(flow: CoScientistWorkflow) -> DiscoveryCoverage:
+    """Score the standing corpus the way a Deep Research wave scores it.
+
+    The two discovery paths key their research directions differently: a Deep
+    Research narrative is keyed on the question and the grounded fallback on the
+    scope's success criteria. Every test above runs the grounded path, where the
+    keys happen to match whatever a revision computes -- which is why none of
+    them caught a revision re-keying them.
+    """
+    standing = _standing(flow)
+    manifest = DiscoveryManifest.model_validate(standing.payload)
+    manifest.coverage_history = [
+        DiscoveryCoverage(
+            direction_scores={QUESTION: 1.0},
+            facet_scores={facet: 1.0 for facet in ("supporting", "methods")},
+            weighted_score=0.875,
+        )
+    ]
+    standing.payload = manifest.model_dump(mode="json")
+    return manifest.coverage_history[-1]
+
+
+def test_a_revision_scores_the_directions_discovery_scored():
+    """A live revision published 70% coverage under the 88% it started from.
+
+    The corpus came from Deep Research, whose directions are keyed on the
+    question; the revision re-scored against the success criteria instead. Keys
+    the previous audit never named have no previous score to be held at, so the
+    floor that exists to prevent exactly this passed straight through, and the
+    panel told the researcher that asking for more evidence made the evidence
+    base worse.
+    """
+    provider = SearchingProvider()
+    flow = _discovered(provider)
+    before = _keyed_on_the_question(flow)
+
+    flow.revise("Add the long-term safety literature.")
+
+    after = _manifest(flow).coverage_history[-1]
+    assert set(after.direction_scores) == set(before.direction_scores)
+    assert after.weighted_score >= before.weighted_score, (
+        "the revision published a lower coverage than the corpus it grew"
+    )
+
+
+def test_the_researchers_own_search_counts_toward_coverage():
+    """The one target with no facet is the researcher's own request.
+
+    Statements were collected only from facet-tagged searches, so the common
+    revision -- no gaps named, the request the only search -- contributed none,
+    and every research direction scored zero for want of a statement to count.
+    """
+    provider = SearchingProvider()
+    flow = _discovered(provider)
+    standing = _standing(flow)
+    manifest = DiscoveryManifest.model_validate(standing.payload)
+    # Floored at zero, so nothing can be inherited from the previous audit and
+    # the score can only come from the statements this revision counted.
+    manifest.coverage_history = [
+        DiscoveryCoverage(
+            direction_scores={QUESTION: 0.0},
+            facet_scores={facet: 0.0 for facet in ("supporting", "methods")},
+            weighted_score=0.0,
+        )
+    ]
+    standing.payload = manifest.model_dump(mode="json")
+    # One direction, so the score is the statement count over two, and the
+    # standing corpus alone is what it has to beat.
+    standing_only = min(1.0, len(_corpus(flow).claims) / 2)
+
+    flow.revise("Nothing here covers long-term safety. Search for that.")
+
+    after = _manifest(flow).coverage_history[-1]
+    assert len(provider.discovery_prompts) == 1
+    assert after.direction_scores[QUESTION] > standing_only, (
+        "the researcher's own search returned sources that counted for nothing"
+    )
