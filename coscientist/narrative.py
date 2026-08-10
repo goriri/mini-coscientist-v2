@@ -8702,41 +8702,53 @@ def _section_three(record: ResearchRecord) -> _Draft:
         # mechanism with nobody, and neither sentence reaches it.
         converging = sum(1 for group in members if len(group) > 1)
         alone = len(clusters) - converging
-        core.append(
-            # This is the one place the shared mechanisms are spelled out. They used to
-            # be printed again as the research-direction bullets and a third time under
-            # every converging pair, so a mechanism a reader had already met arrived
-            # twice more in the same document, each time as though it were new.
-            #
-            # The five of them also used to be a single semicolon chain inside one
-            # sentence -- two hundred words between the colon and the full stop, with
-            # each cluster's name, size and mechanism separated from the next by a
-            # semicolon and from its own parts by commas. A sentence per cluster says
-            # the same thing and can be read.
-            "Mapping the generated ideas back onto the problem produced "
+        # This is the one place the shared mechanisms are spelled out. They used to be
+        # printed again as the research-direction bullets and a third time under every
+        # converging pair, so a mechanism a reader had already met arrived twice more
+        # in the same document, each time as though it were new.
+        #
+        # The five of them also used to be a single semicolon chain inside one
+        # sentence -- two hundred words between the colon and the full stop, with each
+        # cluster's name, size and mechanism separated from the next by a semicolon
+        # and from its own parts by commas. A sentence per cluster says the same thing
+        # and can be read.
+        grouped = [
+            f"{cluster.name} holds "
+            + _plural(len(group), "idea")
             + (
-                f"{_plural(len(clusters), 'distinct cluster')}, each named here with "
-                "the mechanism it was grouped on. "
+                # A colon rather than "around". The clustering stage writes the shared
+                # mechanism as a whole clause as often as it writes a noun phrase, and
+                # "holds one idea around conformal LiAlF4 coating provides a physical
+                # barrier against HF attack" is not a sentence.
+                f", grouped on this mechanism: {_spliced(cluster.shared_mechanism)}."
                 if distinct
-                else f"{_plural(len(clusters), 'cluster')}. The clustering stage "
-                "recorded no mechanism that tells them apart, so the names below "
-                "group the ideas without saying what the grouping rests on. "
+                else "."
             )
-            + " ".join(
-                f"{cluster.name} holds "
-                + _plural(len(group), "idea")
-                + (
-                    # A colon rather than "around". The clustering stage writes the
-                    # shared mechanism as a whole clause as often as it writes a noun
-                    # phrase, and "holds one idea around conformal LiAlF4 coating
-                    # provides a physical barrier against HF attack" is not a sentence.
-                    f", grouped on this mechanism: {_spliced(cluster.shared_mechanism)}."
-                    if distinct
-                    else "."
-                )
-                for cluster, group in zip(clusters, members, strict=True)
+            for cluster, group in zip(clusters, members, strict=True)
+        ]
+        lead_in = "Mapping the generated ideas back onto the problem produced " + (
+            f"{_plural(len(clusters), 'distinct cluster')}, each named here with the "
+            "mechanism it was grouped on."
+            if distinct
+            else f"{_plural(len(clusters), 'cluster')}. The clustering stage recorded "
+            "no mechanism that tells them apart, so the names below group the ideas "
+            "without saying what the grouping rests on."
+        )
+        closing = _clustering_consequence(converging, alone, distinct=distinct).strip()
+        # One cluster to a line where the mechanisms are long enough that the sentence
+        # naming the next one is out of sight: a live paragraph ran three of them and
+        # the closing sentence together for 1,283 characters, and a reader looking a
+        # named cluster up has only the names to find it by -- which sit mid-sentence.
+        if len(grouped) > 1 and sum(map(len, grouped)) > _SERIES_IN_A_SENTENCE:
+            listed = "\n".join(f"- {entry}" for entry in grouped)
+            blocks = [lead_in, listed, closing]
+        else:
+            blocks = [" ".join([lead_in, *grouped])]
+            blocks.append(closing)
+        core.append(
+            ("\n\n" if len(blocks) > 2 else " ").join(
+                block for block in blocks if block
             )
-            + _clustering_consequence(converging, alone, distinct=distinct)
         )
         # The clustering stage may put one idea under two mechanisms, and nothing
         # said so. A live report opened "three distinct clusters" and then gave

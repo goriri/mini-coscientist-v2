@@ -4170,6 +4170,81 @@ def test_a_cluster_mechanism_is_stated_once_and_not_in_three_sections():
     assert "Physical Barrier Coatings" in overview.unexpected_connections[0]
 
 
+def test_clusters_named_with_a_long_mechanism_are_set_one_to_a_line():
+    """A reader looking a named cluster up has only the names to find it by, and they
+    sit mid-sentence. Three clusters and the closing sentence run together made a live
+    Main Research Directions paragraph 1,283 characters long."""
+    from coscientist.models import ResearchCluster, ResearchLandscape
+    from coscientist.narrative import ResearchRecord, _section_three
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.titles = {name: name for name in ("cand_a", "cand_b", "cand_c", "cand_d")}
+    record.landscape = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name=name,
+                candidate_ids=list(ids),
+                shared_mechanism=(
+                    f"{mechanism} of ALD Al2O3 at 400 °C in an oxygen atmosphere "
+                    "drives a solid-state reaction with residual surface lithium to "
+                    "form a Li-ion conductive interphase."
+                ),
+                shared_outcome="Retention holds past five hundred cycles.",
+            )
+            for name, ids, mechanism in (
+                ("Thermal Interphase", ("cand_a", "cand_b"), "Annealing"),
+                ("Barrier Efficacy", ("cand_c", "cand_d"), "Deposition"),
+            )
+        ]
+    )
+
+    written = next(
+        paragraph
+        for paragraph in _section_three(record).core
+        if paragraph.startswith("Mapping the generated ideas")
+    )
+    lead_in, listed, closing = written.split("\n\n")
+
+    assert lead_in.endswith("the mechanism it was grouped on.")
+    assert listed.splitlines() == [
+        f"- {name} holds two ideas, grouped on this mechanism: {mechanism} of ALD "
+        "Al2O3 at 400 °C in an oxygen atmosphere drives a solid-state reaction with "
+        "residual surface lithium to form a Li-ion conductive interphase."
+        for name, mechanism in (
+            ("Thermal Interphase", "annealing"),
+            ("Barrier Efficacy", "deposition"),
+        )
+    ]
+    assert closing.startswith("Clustering matters for the recommendation")
+
+
+def test_one_cluster_named_in_a_clause_stays_in_the_paragraph():
+    """A list of one has nothing to set against it, and costs the reader the break."""
+    from coscientist.models import ResearchCluster, ResearchLandscape
+    from coscientist.narrative import ResearchRecord, _section_three
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.titles = {"cand_a": "A Thin Alumina Coating"}
+    record.landscape = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Physical Barrier Coatings",
+                candidate_ids=["cand_a"],
+                shared_mechanism="A coating suppresses the interfacial reaction.",
+                shared_outcome="Retention holds past five hundred cycles.",
+            )
+        ]
+    )
+
+    written = next(
+        paragraph
+        for paragraph in _section_three(record).core
+        if paragraph.startswith("Mapping the generated ideas")
+    )
+
+    assert "\n" not in written
+
+
 def test_an_idea_placed_under_two_mechanisms_is_said_to_be_counted_twice():
     """A live report opened "three distinct clusters", gave their sizes as two, two
     and one over four ideas, and printed the same hypothesis under two converging
