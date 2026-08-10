@@ -5200,7 +5200,9 @@ def test_two_integrity_cases_are_separated_from_the_or_inside_one_of_them(
     was retracted or could not be retrieved or its evidence was never checked against
     its source" stood over the live report's Evidence integrity list.
     """
+    from coscientist.citations import Citation
     from coscientist.dossier import _provenance_appendix
+    from coscientist.models import EvidenceClaim
     from coscientist.narrative import evidence_integrity_cases
 
     record = load_record(rich_session)
@@ -5210,6 +5212,24 @@ def test_two_integrity_cases_are_separated_from_the_or_inside_one_of_them(
         for key, item in record.evidence_support.items()
         if item.support in ("discredited", "unverified")
     }
+    # The alternation is written only where the run recorded both verdicts, and the
+    # fixture's one discredited citation was retracted. Adding the other verdict is
+    # what puts the "or" inside the case that this test is about joining.
+    discredited = next(
+        item
+        for item in record.evidence_support.values()
+        if item.support == "discredited"
+    )
+    discredited.citations.append(
+        Citation(
+            reference="claim_gone",
+            claim=EvidenceClaim(
+                id="claim_gone",
+                claim="A coating held retention past five hundred cycles.",
+                verification_status="inaccessible",
+            ),
+        )
+    )
     assert evidence_integrity_cases(record) == [
         "its evidence was retracted or could not be retrieved",
         "its evidence was never checked against its source",
@@ -5222,6 +5242,35 @@ def test_two_integrity_cases_are_separated_from_the_or_inside_one_of_them(
         "never checked against its source." in appendix
     )
     assert "retrieved or its evidence" not in appendix
+
+
+def test_the_integrity_lead_in_offers_only_the_verdicts_the_run_recorded(
+    rich_session: Session,
+):
+    """ "Its evidence was retracted or could not be retrieved" stood over four lines
+    that each named "the unretrieved claim drawn from" a source. Nothing in that run
+    was retracted, and the one sentence a reader takes the case from still offered
+    retraction as a live possibility -- which is different work to repair."""
+    from coscientist.dossier import _provenance_appendix
+    from coscientist.narrative import evidence_integrity_cases
+
+    record = load_record(rich_session)
+    record.evidence_support = {
+        key: item
+        for key, item in record.evidence_support.items()
+        if item.support == "discredited"
+    }
+    for citations in record.evidence_support.values():
+        for citation in citations.citations:
+            if citation.discredited:
+                (citation.claim or citation.source).verification_status = "inaccessible"
+
+    assert evidence_integrity_cases(record) == ["its evidence could not be retrieved"]
+
+    appendix = "\n".join(_provenance_appendix(record))
+
+    assert "its evidence could not be retrieved." in appendix
+    assert "retracted" not in appendix
 
 
 def test_the_appendix_records_which_pass_found_which_source():

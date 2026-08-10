@@ -3368,9 +3368,26 @@ def evidence_integrity_lines(record: ResearchRecord) -> list[str]:
 
 
 def evidence_integrity_cases(record: ResearchRecord) -> list[str]:
-    """Which of the four failures this run actually recorded, in printing order."""
+    """Which of the four failures this run actually recorded, in printing order.
+
+    The discredited case is written as a disjunction because the support verdict
+    folds two verdicts into one word. Where the run recorded only one of them, the
+    alternation is a hedge the record does not need: the four lines under it each
+    named "the unretrieved claim drawn from" a source, and the lead-in over them
+    still offered retraction as a live possibility.
+    """
     ordered = dict.fromkeys(case for case, _line in _integrity_entries(record))
-    return [INTEGRITY_CASES[case] for case in ordered]
+    causes = frozenset().union(
+        *(
+            citations.discrediting_statuses
+            for citations in record.evidence_support.values()
+        ),
+        frozenset(),
+    )
+    stated = dict(INTEGRITY_CASES)
+    if causes:
+        stated["discredited"] = f"its evidence {broken_grounding_clause(causes)}"
+    return [stated[case] for case in ordered]
 
 
 def evidence_integrity_ideas(record: ResearchRecord) -> int:
