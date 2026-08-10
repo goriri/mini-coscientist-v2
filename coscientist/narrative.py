@@ -8517,6 +8517,19 @@ def _section_one(record: ResearchRecord) -> _Draft:
     return _Draft(1, "Research Goal", core, extra)
 
 
+# A word whose case says nothing except where the word stands: all lower case, no
+# digit and no capital of its own, and more than one letter in front of any hyphen.
+# "pH window" and "n-hexane carryover" fail it and keep the case the specialist wrote;
+# "claim-level" and "mode-appropriate" pass.
+_CASE_SAYS_NOTHING = re.compile(r"[a-z]{2,}(?:-[a-z]+)*")
+
+
+def _opened(text: str) -> str:
+    """A bullet opened on a capital, unless its first word carries case of its own."""
+    first = text.split(" ", 1)[0].strip("*_([\"'")
+    return text[:1].upper() + text[1:] if _CASE_SAYS_NOTHING.fullmatch(first) else text
+
+
 def _labelled_bullets(items: Sequence[str]) -> str:
     """``Label: value`` items as a list rather than as one semicolon chain.
 
@@ -8524,15 +8537,22 @@ def _labelled_bullets(items: Sequence[str]) -> str:
     clause a reader has to count semicolons to find, and the fold to lower case that
     ``_join`` applies to everything after the first item demoted six labels that the
     rest of the report prints capitalised. They are a list; they are set as one.
+
+    Set the way the cover's other lists are set: opened on a capital and closed by the
+    line break. The one list here that was not read "- claim-level evidence strength
+    and contradiction status." directly under "- The coated cathode demonstrates >80%
+    capacity retention after 500 cycles at 1C" -- two lists an inch apart on the cover
+    page, disagreeing about both ends of every line. The full stop was the caller's to
+    drop and it does drop it; ``_sentence`` was putting it back.
     """
     bullets = []
     for item in items:
         text = " ".join(item.split())
         label, separator, rest = text.partition(":")
         if separator and rest.strip() and len(label.split()) <= 4:
-            bullets.append(f"- **{label.strip()}** — {rest.strip().rstrip('.')}.")
+            bullets.append(f"- **{label.strip()}** — {rest.strip().rstrip('.')}")
         else:
-            bullets.append(f"- {_sentence(text)}")
+            bullets.append(f"- {_opened(_sentence(text)).rstrip('.')}")
     return "\n".join(bullets)
 
 

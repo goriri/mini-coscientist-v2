@@ -1115,8 +1115,8 @@ def test_labelled_criteria_are_set_as_a_list_not_as_a_semicolon_chain():
     )
 
     assert text == (
-        "- **Evidence** — Alignment with the provided claims.\n"
-        "- **Safety** — Thermal runaway risk."
+        "- **Evidence** — Alignment with the provided claims\n"
+        "- **Safety** — Thermal runaway risk"
     )
 
 
@@ -1124,8 +1124,40 @@ def test_an_unlabelled_criterion_is_still_a_bullet():
     from coscientist.narrative import _labelled_bullets
 
     assert _labelled_bullets(["It has to beat the uncoated control"]) == (
-        "- It has to beat the uncoated control."
+        "- It has to beat the uncoated control"
     )
+
+
+def test_the_covers_two_criterion_lists_open_and_close_their_lines_alike():
+    """They sit an inch apart on the cover page and disagreed at both ends of a line.
+
+    "- claim-level evidence strength and contradiction status." printed directly under
+    "- The coated cathode demonstrates >80% capacity retention after 500 cycles at 1C",
+    which is neither lower-cased nor stopped -- and neither are the numbered
+    requirements or the attributes above it.
+    """
+    from coscientist.narrative import _labelled_bullets
+
+    assert _labelled_bullets(
+        [
+            "claim-level evidence strength and contradiction status",
+            "mode-appropriate feasibility and reproducibility",
+        ]
+    ) == (
+        "- Claim-level evidence strength and contradiction status\n"
+        "- Mode-appropriate feasibility and reproducibility"
+    )
+
+
+@pytest.mark.parametrize(
+    "written",
+    ["pH window at the cathode surface", "n-hexane carryover into the cell"],
+)
+def test_a_criterion_whose_first_word_carries_case_keeps_it(written):
+    """Opening it on a capital would make the word a different word."""
+    from coscientist.narrative import _labelled_bullets
+
+    assert _labelled_bullets([written]) == f"- {written}"
 
 
 def test_a_colon_inside_a_sentence_is_not_mistaken_for_a_label():
@@ -4098,7 +4130,7 @@ def test_the_cover_separates_what_would_meet_the_goal_from_what_ranked_the_ideas
     assert "1. Must include uncoated control cells" in lines
     assert "2. Must state a thickness" in lines
     # The label leads, since the report cites the criteria by it.
-    assert "- **Evidence** — Alignment with the provided claims." in lines
+    assert "- **Evidence** — Alignment with the provided claims" in lines
 
 
 def test_a_novelty_verdict_carries_the_reservation_its_own_reviewer_recorded():
