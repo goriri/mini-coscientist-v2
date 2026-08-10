@@ -4400,24 +4400,68 @@ def test_the_count_under_a_review_is_hoisted_where_no_review_differs_on_it(body:
     briefs = [SimpleNamespace(reviews=reviews[index::8]) for index in range(8)]
 
     said, hoisted = shared_review_tally(briefs)
-    assert hoisted
+    assert hoisted == "This review raised one objection and recorded one response."
     assert said[0].startswith(
         "Each of the forty reviews below raised one objection and recorded one "
         "response, and that is the same under every idea"
     )
 
-    # One review that answered nothing is the case the sentence exists to mark, so
-    # the count goes back under each review rather than being said over all of them.
-    quiet = [*reviews[:-1], SimpleNamespace(**{**vars(reviews[-1]), "rebuttals": []})]
-    assert shared_review_tally([SimpleNamespace(reviews=quiet)]) == ([], False)
-    # A placeholder raised nothing at all, and is not a reviewer to speak for.
-    stood_in = [
+    # A review with nothing to say about what it raised prints no count, so it would
+    # be read as one of the many; nothing may be hoisted over it.
+    silent = [
         *reviews[:-1],
-        SimpleNamespace(**{**vars(reviews[-1]), "stood_in": True}),
+        SimpleNamespace(objections=[], rebuttals=[], stood_in=False),
     ]
-    assert shared_review_tally([SimpleNamespace(reviews=stood_in)]) == ([], False)
+    assert shared_review_tally([SimpleNamespace(reviews=silent)]) == ([], "")
+    # Too few copies to be worth the paragraph that displaces them.
+    assert shared_review_tally([SimpleNamespace(reviews=reviews[:4])]) == ([], "")
     # The fixture's reviews do differ, so its report still carries the count in place.
     assert "This review raised" in body
+
+
+def test_the_count_is_hoisted_over_the_reviews_that_agree_and_kept_by_those_that_do_not(
+    body: str,
+):
+    """Requiring every review to agree put the sentence back under all forty because
+    seven of them differed -- including the 33 it says nothing about. The prevailing
+    count is hoisted and the reviews that departed from it keep theirs, where each
+    stands alone rather than thirty-third in a row of identical lines."""
+    same = [
+        SimpleNamespace(
+            objections=["It is thin."], rebuttals=["It is not."], stood_in=False
+        )
+        for _ in range(33)
+    ]
+    other = [
+        SimpleNamespace(
+            objections=["It is thin.", "And short."],
+            rebuttals=["It is not.", "Nor that."],
+            stood_in=False,
+        )
+        for _ in range(7)
+    ]
+    said, hoisted = shared_review_tally(
+        [SimpleNamespace(reviews=[*same, *other][index::8]) for index in range(8)]
+    )
+    assert hoisted == "This review raised one objection and recorded one response."
+    assert said[0].startswith(
+        "Thirty-three of the 40 reviews below raised one objection and recorded one "
+        "response, so the count is given here rather than under each of them. The "
+        "seven reviews that did otherwise say so under themselves, and one that says "
+        "nothing about what it raised is one of the 33."
+    )
+
+    # A placeholder says under itself that no review was written, which is how a
+    # reader knows the hoisted count is not being said over it.
+    absent = [*same, SimpleNamespace(objections=[], rebuttals=[], stood_in=True)]
+    _, over_absent = shared_review_tally([SimpleNamespace(reviews=absent)])
+    assert over_absent == "This review raised one objection and recorded one response."
+
+    # Two counts equally common leave no count that a review here keeps by default.
+    assert shared_review_tally([SimpleNamespace(reviews=[*same[:7], *other])]) == (
+        [],
+        "",
+    )
 
 
 def test_a_response_is_printed_once_per_idea_and_counted_under_its_review(
@@ -4429,14 +4473,15 @@ def test_a_response_is_printed_once_per_idea_and_counted_under_its_review(
     Addressed Objections had already printed, attributed. The attributed copy survives:
     a response written with its subject elided -- "could be useful for verifying the
     exact thickness dependence, but fundamentally lacks novelty" -- is only readable
-    where the review that wrote it is named. The review keeps the count, which is the
-    one thing the summary cannot show: that it answered rather than stood pat.
+    where the review that wrote it is named. The count survives, which is the one
+    thing the summary cannot show: that the review answered rather than stood pat. It
+    is on the page once for the reviews that share it and under each review that does
+    not, which on this fixture is the reviews that answered nothing.
     """
     briefs = build_idea_briefs(load_record(rich_session))
     dives = _idea_sections(body)
 
     assert "Rebuttals offered:" not in body
-    counted = 0
     for brief, dive in zip(briefs, dives, strict=True):
         answered = {
             rebuttal for review in brief.reviews for rebuttal in review.rebuttals
@@ -4444,12 +4489,15 @@ def test_a_response_is_printed_once_per_idea_and_counted_under_its_review(
         assert answered, "the fixture must give every idea a recorded response"
         for rebuttal in answered:
             assert dive.count(rebuttal) == 1, f"printed twice in one idea: {rebuttal}"
-        counted += len(
-            re.findall(
-                r"This review (?:raised \w+ objections? and )?recorded \w+ ", dive
-            )
-        )
+    counted = re.search(
+        r"\w+ of the \d+ reviews below raised \w+ objections? and recorded \w+ ", body
+    )
     assert counted, "the count has to stand where the reader meets the review"
+    assert counted.group() in _chapter_preamble(body)
+    # And the reviews outside it are the ones that stood on their objection, which is
+    # the case the sentence was written to mark. Nothing else is left saying so.
+    assert body.count("This review ") == 12
+    assert body.count("This review raised one objection.") == 12
 
 
 def test_a_deep_verification_item_states_the_objection_and_stops(body: str):
