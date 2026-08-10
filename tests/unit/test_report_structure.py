@@ -6832,6 +6832,57 @@ def test_a_fork_says_which_of_the_models_it_names_it_never_called(
     assert "produced the forked scope" not in produced
 
 
+def test_the_stage_table_marks_the_rows_a_fork_did_not_run(rich_session: Session):
+    """A live fork printed its inherited scope and Deep Research discovery under
+    "What each stage produced" formatted exactly like the stages it ran, between one
+    section saying "This run searched no literature" and another saying "This run ran
+    no pass of its own"."""
+    from coscientist.narrative import ProvenanceNote
+
+    record = load_record(rich_session)
+    record.session.seeded_evidence_from = "session_earlier"
+    record.provenance.insert(
+        0,
+        ProvenanceNote(
+            stage="evidence",
+            agent="deep_research_discovery",
+            schema_name="DiscoveryManifest",
+            source="specialist",
+            repairs=[],
+            error="",
+            model="deep-research-preview-04-2026",
+        ),
+    )
+    from coscientist.dossier import _provenance_appendix
+
+    table = "\n".join(_provenance_appendix(record)).split(
+        "## What each stage produced\n", 1
+    )[1]
+    lead = table.split("| Stage |", 1)[0]
+
+    assert lead.strip().startswith("Scoping the goal and literature discovery are")
+    assert "the forked run's work rather than this one's" in lead
+    assert "Every row below them is work this run did itself." in lead
+
+
+def test_the_stage_table_of_a_run_that_forked_nothing_carries_no_such_note(
+    rich_session: Session,
+):
+    """The note is a caveat, and a run that ran every stage it lists has nothing to
+    caveat -- printing it there would tell a reader some of these rows are not this
+    run's when all of them are."""
+    from coscientist.dossier import _provenance_appendix
+
+    record = load_record(rich_session)
+    record.session.seeded_evidence_from = ""
+
+    table = "\n".join(_provenance_appendix(record)).split(
+        "## What each stage produced\n", 1
+    )[1]
+
+    assert "the forked run's work" not in table.split("| Stage |", 1)[0]
+
+
 def test_the_warnings_chapter_says_the_evidence_base_is_not_this_runs(
     rich_session: Session,
 ):

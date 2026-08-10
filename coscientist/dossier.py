@@ -2529,6 +2529,29 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
     if not record.provenance:
         lines.extend(["No stage of this run recorded what it produced.", ""])
         return lines
+    # A fork's carried-over stages are listed here exactly like the stages it ran, so
+    # the heading claims work for the run that a reader can only discount by carrying
+    # a caveat from two sections above. A live fork's first two rows were the scope
+    # and the Deep Research discovery it inherited, printed under "What each stage
+    # produced" between "This run searched no literature" and "This run ran no pass
+    # of its own".
+    ran = {note.stage for note in record.provenance}
+    carried = [stage_name(stage) for stage in FORKED_STAGES if stage in ran]
+    if record.session.seeded_evidence_from and carried:
+        named = _listed(carried)
+        executed = any(note.stage not in FORKED_STAGES for note in record.provenance)
+        rest = " Every row below them is work this run did itself." if executed else ""
+        lines.append(
+            named[0].upper()
+            + named[1:]
+            + (" is" if len(carried) == 1 else " are")
+            + " the forked run's work rather than this one's, carried over with the "
+            "evidence base and listed here because the report rests on "
+            + ("it" if len(carried) == 1 else "them")
+            + " either way."
+            + rest
+        )
+        lines.append("")
     # The source column held "specialist" on every row of a healthy run, and the
     # paragraph under the table said so again in words. A column that cannot vary is
     # not evidence; it is only worth a column on the runs where it does vary.
