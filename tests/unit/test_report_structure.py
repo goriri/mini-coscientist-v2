@@ -1637,7 +1637,9 @@ def test_a_criterions_mean_and_range_say_when_a_placeholder_is_inside_them(
     line = next(item for item in lines if item.startswith(f"{stood.section}:"))
 
     assert "One of those is a placeholder" in line
-    assert "counted in the mean and the range" in line
+    # Whichever figures this criterion's line prints: the reviewers of this fixture
+    # agreed, so it gives a single score rather than a mean and a range.
+    assert "counted in that figure as though it were one" in line
     # Only the criterion the reviewer skipped. The other four were answered in full.
     assert sum("placeholder" in item for item in lines) == 1
 

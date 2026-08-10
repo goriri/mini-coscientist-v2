@@ -9846,24 +9846,42 @@ def _review_summary(briefs: Sequence[IdeaBrief]) -> list[str]:
             scores.setdefault(review.section, []).append(review.score)
             if review.stood_in:
                 stood[review.section] = stood.get(review.section, 0) + 1
-    summary = [
-        f"{criterion}: mean {_one_decimal(sum(values) / len(values))} of five across "
-        f"{_plural(len(values), 'review')}, range {min(values)} to {max(values)}."
-        + (
-            ""
-            if criterion not in stood
-            else (
-                " One of those is a placeholder"
-                if stood[criterion] == 1
-                else f" {_number_word(stood[criterion])} of those are placeholders"
+    summary = []
+    for criterion, values in scores.items():
+        low, high = min(values), max(values)
+        if low != high:
+            line = (
+                f"{criterion}: mean {_one_decimal(sum(values) / len(values))} of five "
+                f"across {_plural(len(values), 'review')}, range {low} to {high}."
             )
-            + " rather than a reviewer's judgement, counted in the mean and the range "
-            "as though it were one; the "
-            + ("idea it stands under is" if stood[criterion] == 1 else "ideas are")
-            + " named under Warnings and Limitations."
-        )
-        for criterion, values in scores.items()
-    ]
+            figures = "the mean and the range"
+        elif len(values) == 1:
+            line = f"{criterion}: {low} of five, from the one review recorded."
+            figures = "that figure"
+        else:
+            # A range wants two ends. Where every reviewer landed on the same score
+            # the line read "Feasibility: mean 2.0 of five across eight reviews,
+            # range 2 to 2" -- a mean with nothing to average away and a spread with
+            # no spread, which reads as an arithmetic slip rather than as the
+            # unanimity it is, and buries the one thing worth noticing about it.
+            line = (
+                f"{criterion}: {low} of five from every one of "
+                f"{_plural(len(values), 'review')}."
+            )
+            figures = "that figure"
+        if criterion in stood:
+            line += (
+                (
+                    " One of those is a placeholder"
+                    if stood[criterion] == 1
+                    else f" {_number_word(stood[criterion])} of those are placeholders"
+                )
+                + f" rather than a reviewer's judgement, counted in {figures} as "
+                "though it were one; the "
+                + ("idea it stands under is" if stood[criterion] == 1 else "ideas are")
+                + " named under Warnings and Limitations."
+            )
+        summary.append(line)
     if not summary:
         summary.append("No review was recorded against any idea in this run.")
     return summary

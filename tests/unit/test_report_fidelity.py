@@ -991,6 +991,54 @@ def test_one_match_moves_both_sides_by_the_same_number_of_points():
     assert loser.shown_after - loser.shown_before == loser.swing
 
 
+def test_a_criterion_every_reviewer_scored_alike_says_so_instead_of_a_flat_range():
+    """A spread with one end is not a spread.
+
+    A live Review summary read "Feasibility: mean 2.0 of five across eight reviews,
+    range 2 to 2" -- a mean with nothing to average away and a range with no range,
+    which reads as an arithmetic slip and buries the one thing worth noticing, that
+    all eight reviewers landed on the same score.
+    """
+    from coscientist.narrative import _review_summary
+
+    agreed = [
+        _brief(f"Idea {index}", [_idea_review(section="Feasibility", score=2)])
+        for index in range(8)
+    ]
+    split = [
+        _brief("A", [_idea_review(section="Novelty", score=3)]),
+        _brief("B", [_idea_review(section="Novelty", score=5)]),
+    ]
+
+    assert _review_summary(agreed) == [
+        "Feasibility: 2 of five from every one of eight reviews."
+    ]
+    assert _review_summary(agreed[:1]) == [
+        "Feasibility: 2 of five, from the one review recorded."
+    ]
+    assert _review_summary(split) == [
+        "Novelty: mean 4.0 of five across two reviews, range 3 to 5."
+    ]
+
+
+def test_a_placeholder_inside_a_unanimous_criterion_names_the_figure_it_sits_in():
+    """The warning follows the line it qualifies: unanimity prints no mean and no
+    range, so a clause that says "counted in the mean and the range" would point the
+    reader at two figures the line does not have."""
+    from coscientist.narrative import _review_summary
+
+    briefs = [
+        _brief("A", [_idea_review(section="Feasibility", score=2)]),
+        _brief("B", [_idea_review(section="Feasibility", score=2, stood_in=True)]),
+    ]
+
+    line = _review_summary(briefs)[0]
+
+    assert line.startswith("Feasibility: 2 of five from every one of two reviews.")
+    assert "counted in that figure as though it were one" in line
+    assert "the mean and the range" not in line
+
+
 def test_a_shortlist_cut_inside_a_tie_says_the_last_place_was_a_tie_break():
     from coscientist.narrative import _shortlist_caveats
 
