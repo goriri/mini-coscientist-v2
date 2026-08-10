@@ -4005,7 +4005,17 @@ def _revised_form(
             else "This is the form evolution produced, which the meta-review does not "
             "recommend"
         )
-        + f", and it is not the form ranked above: {written}. "
+        + ", and it is not the form ranked above"
+        + (
+            # A colon inside what the first colon introduces leaves the second one
+            # with no antecedent a reader can find: "not the form ranked above:
+            # evolution rewrote the idea in round one, and this is what it was
+            # written against: lack of a stereological sampling plan for SEM".
+            f". {written[:1].upper()}{written[1:]}"
+            if ":" in written.split(". ")[0]
+            else f": {written}"
+        )
+        + ". "
         + (
             # With the article. These are the names of the fields printed under the
             # idea, and read into a sentence without one they stopped being English:

@@ -1703,10 +1703,28 @@ def test_a_critique_that_is_a_whole_finding_is_not_spliced_into_a_noun_slot():
     lead_in, _, _ = _revised_form(record, _candidate("cand_a"))
 
     assert "to address none of the validation protocols" not in lead_in
+    # Its own sentence, because the clause it used to hang off ends in a colon too.
     assert (
-        "evolution rewrote the idea in round two, and this is what it was written "
+        "Evolution rewrote the idea in round two, and this is what it was written "
         "against: none of the validation protocols explicitly mention randomization"
     ) in lead_in
+
+
+def test_the_rewrite_lead_in_does_not_nest_a_colon_inside_a_colon():
+    """A live report read "it is not the form ranked above: evolution rewrote the idea
+    in round one, and this is what it was written against: lack of a stereological
+    sampling plan for SEM". The second colon sits inside what the first introduces,
+    so it has no antecedent a reader can find."""
+    from coscientist.narrative import _revised_form
+
+    record = _twice_revised()
+    record.evolution.records = record.evolution.records[1:]
+
+    lead_in, _, _ = _revised_form(record, _candidate("cand_a"))
+
+    opening = lead_in.split(". ")[0]
+    assert opening.count(":") <= 1, opening
+    assert opening.endswith("it is not the form ranked above")
 
 
 def test_a_rewrite_with_no_critique_on_the_record_keeps_the_noun_phrase():
