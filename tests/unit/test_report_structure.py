@@ -2566,7 +2566,9 @@ def test_the_appendix_says_when_it_is_every_idea_and_not_only_the_ones_listed(
     assert not all(item.qualified for item in record.evidence_support.values()), (
         "the fixture must ground one idea, or there is no partial case to check"
     )
-    assert "The grounding of the following ideas carries a qualification:" in report
+    assert "Each of the following ideas carries a qualification on its grounding:" in (
+        report
+    )
 
     record.evidence_support = {
         key: item for key, item in record.evidence_support.items() if item.qualified
@@ -4879,7 +4881,7 @@ def test_the_integrity_lead_in_agrees_with_the_number_of_ideas_it_covers(
     }
     one = "\n".join(_provenance_appendix(record))
 
-    assert "The grounding of the following idea carries a qualification" in one
+    assert "The following idea carries a qualification on its grounding" in one
     assert "following ideas" not in one
     assert "names the idea it applies to" in one
 
@@ -4888,6 +4890,38 @@ def test_the_integrity_lead_in_agrees_with_the_number_of_ideas_it_covers(
     every = "\n".join(_provenance_appendix(record))
 
     assert "The one idea in this run carries a qualification on its grounding" in every
+
+
+def test_two_integrity_cases_are_separated_from_the_or_inside_one_of_them(
+    rich_session: Session,
+):
+    """One case is itself an alternation, so joining two with a bare "or" gave the
+    reader three branches and nothing marking which two are the pair: "its evidence
+    was retracted or could not be retrieved or its evidence was never checked against
+    its source" stood over the live report's Evidence integrity list.
+    """
+    from coscientist.dossier import _provenance_appendix
+    from coscientist.narrative import evidence_integrity_cases
+
+    record = load_record(rich_session)
+    # Exactly the two the live report printed: the alternating case, and one more.
+    record.evidence_support = {
+        key: item
+        for key, item in record.evidence_support.items()
+        if item.support in ("discredited", "unverified")
+    }
+    assert evidence_integrity_cases(record) == [
+        "its evidence was retracted or could not be retrieved",
+        "its evidence was never checked against its source",
+    ], "the fixture no longer produces the two cases this defect needs"
+
+    appendix = "\n".join(_provenance_appendix(record))
+
+    assert (
+        "its evidence was retracted or could not be retrieved, or its evidence was "
+        "never checked against its source." in appendix
+    )
+    assert "retrieved or its evidence" not in appendix
 
 
 def test_the_appendix_records_which_pass_found_which_source():

@@ -2150,12 +2150,13 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
         # over two lines, and the four cases it listed included two this run never
         # recorded. Only the cases that produced a line are named.
         cases = evidence_integrity_cases(record)
+        # Comma before the final "or" at every count, not only past two. One of the
+        # four cases is itself an alternation -- "its evidence was retracted or could
+        # not be retrieved" -- so the bare join printed "retracted or could not be
+        # retrieved or its evidence was never checked against its source", three
+        # branches with nothing saying which two are the pair.
         stated = (
-            cases[0]
-            if len(cases) == 1
-            else ", ".join(cases[:-1]) + f", or {cases[-1]}"
-            if len(cases) > 2
-            else " or ".join(cases)
+            cases[0] if len(cases) == 1 else ", ".join(cases[:-1]) + f", or {cases[-1]}"
         )
         lines.extend(
             [
@@ -2174,9 +2175,16 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
                         "grounding"
                     )
                     if every
-                    else "The grounding of the following "
-                    + ("idea carries" if covered == 1 else "ideas carries")
-                    + " a qualification"
+                    # The cases are written in the singular, about one idea's own
+                    # grounding, so the subject has to be singular too. "The grounding
+                    # of the following ideas carries a qualification: its evidence was
+                    # retracted" put a plural subject over four lines of "its".
+                    else (
+                        "The following idea carries a qualification on its grounding"
+                        if covered == 1
+                        else "Each of the following ideas carries a qualification on "
+                        "its grounding"
+                    )
                 )
                 + f": {stated}."
                 + (
