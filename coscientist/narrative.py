@@ -3593,7 +3593,15 @@ _STUB_VALUES = frozenset({"n/a", "na", "none", "unknown", "-"})
 
 
 def _comparable(text: str) -> str:
-    """One statement reduced to what makes two of them the same statement."""
+    """One statement reduced to what makes two of them the same statement.
+
+    There were two of these, three thousand lines apart, and the module kept the
+    second: every call in the file resolved to it, including the ones written above
+    it against the first. They differed in what they stripped, so the sentence
+    "Can a coating help?" compared equal to itself and unequal to "Can a coating
+    help" -- and the check that drops a research direction for restating the goal
+    verbatim is exactly a comparison of one question against another.
+    """
     return " ".join(str(text or "").split()).casefold().rstrip(".?!")
 
 
@@ -6650,11 +6658,6 @@ def _cited_evidence(record: ResearchRecord, candidate: Candidate) -> _CitedEvide
         if bucket is grouped.supports and filed.get(comparable) == "Evidence against":
             grouped.contested.add(stated)
     return grouped
-
-
-def _comparable(text: str) -> str:
-    """One statement in the form two renderings of it can be compared in."""
-    return " ".join(text.lower().split()).rstrip(".")
 
 
 _LOCATOR = re.compile(r"(?:https?://\S+|\b10\.\d{4,9}/\S+|\bPMID:?\s*\d+)", re.I)

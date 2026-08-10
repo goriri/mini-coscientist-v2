@@ -6211,6 +6211,34 @@ def _discovery_with(statements: list[str], leads: list[SourceLead]):
     return record
 
 
+def test_a_direction_that_restates_the_goal_is_struck_out_however_it_ends():
+    """A pass that falls back to its raw report records the goal as its direction,
+    which is why the goal is struck out of this list. The comparison was written to
+    ignore how a sentence is punctuated, but the module held two functions of that
+    name three thousand lines apart and every call resolved to the second, which
+    stripped a full stop and left a question mark: a direction restating the question
+    as a statement went straight to the top of Main Research Directions."""
+    from coscientist.models import DiscoveryManifest, DiscoveryNarrative
+    from coscientist.narrative import ResearchRecord, _research_directions
+
+    record = ResearchRecord(session=Session(question="Does a coating help?"))
+    record.discovery = DiscoveryManifest(
+        question="Does a coating help?",
+        narratives=[
+            DiscoveryNarrative(
+                question="Does a coating help?",
+                research_directions=[
+                    "Does a coating help",
+                    "Does a coating help?",
+                    "Coating thickness against retention.",
+                ],
+            )
+        ],
+    )
+
+    assert _research_directions(record) == ["Coating thickness against retention."]
+
+
 def test_a_table_row_and_a_bare_source_name_are_not_printed_as_findings():
     """A live Key Findings list held both, under a lead-in calling them findings.
 
