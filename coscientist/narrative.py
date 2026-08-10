@@ -10317,6 +10317,16 @@ def _sentence_of_titles(titles: Sequence[str], *, fallback: str) -> str:
     return _sentence(joined) if joined else fallback
 
 
+# What makes the boundary between two names invisible when they are joined by "and":
+# a conjunction or a comma the first one already holds.
+_TITLE_CONJUNCTION = re.compile(r"[,;]|\s(?:and|or|nor)\s", re.IGNORECASE)
+
+
+def _needs_marking_off(title: str) -> bool:
+    """Whether a name is long enough, and broken enough, to need its end marked."""
+    return len(title.split()) >= 6 and bool(_TITLE_CONJUNCTION.search(title))
+
+
 def _joined_titles(titles: Sequence[str], *, fallback: str = "") -> str:
     """A list of idea titles as the subject of a sentence, still capitalised.
 
@@ -10334,7 +10344,18 @@ def _joined_titles(titles: Sequence[str], *, fallback: str = "") -> str:
     # The semicolon is what keeps a list of multi-word titles readable, and it is
     # noise on a list of two: "Dry-coating NCM811 Cathodes; and Protective Al2O3
     # Coatings" punctuates a pair as though more were coming.
-    if len(cleaned) == 2:
+    #
+    # Unless the first of the two is long and carries a conjunction of its own, in
+    # which case the pair needs the mark more than any longer list does. A live
+    # description cited two papers as "the unverified claims drawn from Identification
+    # of the dual roles of Al2O3 coatings on NMC811-cathodes via theory and experiment
+    # and Tailoring Performance of the LiNi0.8Mn0.1Co0.1O2 Cathode by Al2O3 and MoO3
+    # artificial cathode electrolyte interphase (CEI) layers ..." -- three "and"s
+    # across the join, none of them marked as the one that ends the first name. Long,
+    # because a reader who can still see where the first name started can see where it
+    # ends: "negative or null results and corrections or retractions affecting the
+    # sources used" needs no help and gets none.
+    if len(cleaned) == 2 and not _needs_marking_off(cleaned[0]):
         return f"{cleaned[0]} and {cleaned[1]}"
     return "; ".join(cleaned[:-1]) + f"; and {cleaned[-1]}"
 

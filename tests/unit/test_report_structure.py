@@ -3393,6 +3393,39 @@ def test_a_pair_of_titles_is_joined_without_the_list_semicolon():
     assert _joined_titles(["A", "B", "C"]) == "A; B; and C"
 
 
+def test_a_long_first_name_that_holds_an_and_of_its_own_gets_its_end_marked():
+    """A live description cited two papers as "the unverified claims drawn from
+    Identification of the dual roles of Al2O3 coatings on NMC811-cathodes via theory
+    and experiment and Tailoring Performance of the LiNi0.8Mn0.1Co0.1O2 Cathode by
+    Al2O3 and MoO3 artificial cathode electrolyte interphase (CEI) layers through
+    plasma-enhanced atomic layer deposition (PEALD) Coating" -- three "and"s across
+    the join, and nothing saying which of them ends the first name.
+
+    Long and broken, both: a short pair the reader can still hold whole needs no mark,
+    and the semicolon on one reads as though a third were coming."""
+    from coscientist.narrative import _joined_titles
+
+    marked = _joined_titles(
+        [
+            "Identification of the dual roles of Al2O3 coatings on NMC811-cathodes "
+            "via theory and experiment",
+            "Tailoring Performance of the LiNi0.8Mn0.1Co0.1O2 Cathode by Al2O3 and "
+            "MoO3 artificial CEI layers",
+        ]
+    )
+
+    assert marked.startswith("Identification of the dual roles")
+    assert "via theory and experiment; and Tailoring Performance" in marked
+    # Short enough to be read whole, conjunction and all.
+    assert _joined_titles(
+        ["negative or null results", "corrections or retractions"]
+    ) == ("negative or null results and corrections or retractions")
+    # Long, but with nothing inside it that could be mistaken for the join.
+    assert _joined_titles(
+        ["A Defect-free ZrO2 Coating Applied by Atomic Layer Deposition", "Another"]
+    ) == ("A Defect-free ZrO2 Coating Applied by Atomic Layer Deposition and Another")
+
+
 @pytest.mark.parametrize(
     ("stated", "folded"),
     [
