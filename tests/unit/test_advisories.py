@@ -419,3 +419,35 @@ def test_the_waived_gate_reconciles_nothing_where_the_two_totals_agree():
     )
 
     assert "different population" not in _waived_gate_advisory(record)[0].body
+
+
+def test_the_waived_gate_names_the_approval_profile_the_cover_already_printed():
+    """The regime is on the session, so the paragraph has no reason to hedge over it.
+
+    A live report printed "Approval profile: milestone" on its cover and named the
+    same profile two sections below this paragraph, and this paragraph still said
+    "whichever approval regime this run used" -- the report sounding unsure of a fact
+    it had stated twice already.
+    """
+    from coscientist.advisories import _waived_gate_advisory
+    from coscientist.models import ApprovalProfile, EvidencePacket, SourceRecord
+
+    def _body(profile: ApprovalProfile) -> str:
+        session = Session(question="Does a coating change cycle life?")
+        session.approval_profile = profile
+        session.exploratory_evidence_accepted = True
+        record = ResearchRecord(session=session)
+        record.evidence = EvidencePacket(
+            question=session.question,
+            sources=[SourceRecord(url="https://a.example/paper")],
+        )
+        return _waived_gate_advisory(record)[0].body
+
+    milestone = _body(ApprovalProfile.MILESTONE)
+
+    assert "whichever approval regime" not in milestone
+    assert (
+        "the milestone approval profile this run used applies to the second of "
+        "those, not the first" in milestone
+    )
+    assert "the stage approval profile this run used" in _body(ApprovalProfile.STAGE)

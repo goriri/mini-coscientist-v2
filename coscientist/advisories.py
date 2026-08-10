@@ -383,9 +383,13 @@ def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
                     if waiver
                     else "No actor is recorded against the waiver. "
                 )
+                # Named, not hedged over. The regime is on the session, printed on
+                # the cover as "Approval profile: milestone" and again two sections
+                # below this one -- so "whichever approval regime this run used" had
+                # the report sounding unsure of a fact it had already stated twice.
                 + "Waiving the gate is a distinct act from accepting the stage's "
-                "output, and whichever approval regime this run used applies to the "
-                "second of those, not the first. "
+                f"output, and the {record.session.approval_profile} approval profile "
+                "this run used applies to the second of those, not the first. "
                 + (
                     # Both counts are spelled, because "five sources of the 8
                     # admitted" is one sentence written in two number styles.
