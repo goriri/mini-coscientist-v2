@@ -722,6 +722,68 @@ def test_a_rating_appended_after_the_bench_steps_is_lifted_out_of_the_protocol()
     )
 
 
+def test_a_rating_headed_without_the_prompts_last_word_is_lifted_out_too():
+    """The lift above was keyed to the whole of the name the prompt asks for. Two of
+    eight live ideas headed the table "### Evaluation of Idea" instead, and theirs
+    stayed in the protocol: their Validation Protocol ran on from "compared to the
+    pristine powder" into "Evaluation of Idea. Technological Leap (Description:
+    Identifies the synthesis process itself as the primary degradation trigger;
+    Judgment: High)", and they were the two ideas of the eight with no rating table
+    of their own to show."""
+    from coscientist.models import Candidate
+    from coscientist.narrative import _authored_extras, _protocol_steps
+
+    candidate = Candidate(
+        title="TMA Precursor-Induced Surface Reduction",
+        claim="TMA reduces surface Ni before any cycling.",
+        mechanism_model="TMA is a strong reducing agent.",
+        rationale="Ni-rich surfaces are thermodynamically unstable against it.",
+        validation_protocol=(
+            "Synthesize ALD Al2O3-coated NMC811 at 120 C. The falsifier is if XPS "
+            "shows no increase in surface Ni2+ on the as-coated powder compared to "
+            "the pristine powder.\n\n"
+            "### Evaluation of Idea\n"
+            "| Category | Description | Judgment |\n"
+            "| :--- | :--- | :--- |\n"
+            "| Technological Leap | Identifies the synthesis process itself as the "
+            "primary degradation trigger. | High |\n"
+        ),
+        falsifier="The layered structure is preserved after the ALD process.",
+    )
+
+    title, table, _, source = _authored_extras(candidate)
+
+    assert title == "Evaluation of Idea"
+    assert source == "validation protocol"
+    assert table == [
+        ["Category", "Description", "Judgment"],
+        [
+            "Technological Leap",
+            "Identifies the synthesis process itself as the primary degradation "
+            "trigger.",
+            "High",
+        ],
+    ]
+    assert _protocol_steps(candidate.validation_protocol) == [
+        "Synthesize ALD Al2O3-coated NMC811 at 120 C. The falsifier is if XPS shows "
+        "no increase in surface Ni2+ on the as-coated powder compared to the "
+        "pristine powder."
+    ]
+
+
+def test_a_step_that_opens_on_the_word_evaluation_is_still_a_step():
+    """Without the word Table the heading is a phrase an ordinary bench step opens
+    with, so only a heading of its own is read as one."""
+    from coscientist.narrative import _protocol_steps
+
+    written = (
+        "Assemble coin cells (n=5) in an argon glovebox. Evaluation of the coating "
+        "proceeds by EIS every 50 cycles."
+    )
+
+    assert _protocol_steps(written) == [written]
+
+
 def test_a_table_of_bench_conditions_stays_inside_the_protocol():
     """The lift is keyed to the heading the generation prompts ask for by name. A
     protocol that tabulates its own arms is protocol, and moving it under The

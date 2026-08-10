@@ -3773,6 +3773,10 @@ def _authors_own_table(text: str) -> tuple[str, str, list[list[str]]]:
             # "Evaluation of Idea Table" that way rather than as "### ".
             title = own.group(1)
             start -= 1
+        elif own := _OWN_APPENDIX_HEADING.match(previous):
+            # The same label with the prompt's last word left off it.
+            title = own.group(1)
+            start -= 1
         return "\n".join(lines[:start] + lines[end:]), title, [header, *rows]
     return str(text or ""), "", []
 
@@ -4455,6 +4459,24 @@ _OWN_APPENDIX = re.compile(
     r"[ \t]*\**[ \t]*:?[ \t]*\**[ \t]*",
     re.IGNORECASE | re.MULTILINE,
 )
+# The same table under a heading that leaves the prompt's last word off. Two of eight
+# live specialists headed it "### Evaluation of Idea" and put the grid under it, and
+# with only the prompt's own name recognised the rating stayed where it was written:
+# their Validation Protocol ran on from "compared to the pristine powder" into
+# "Evaluation of Idea. Technological Leap (Description: Identifies the synthesis
+# process itself as the primary degradation trigger; Judgment: High)" -- a rating the
+# specialist awarded itself, read as a bench step, in the two ideas of the eight that
+# then had no table of their own to show.
+#
+# A heading of its own, and nothing less. Without the word Table the phrase is one an
+# ordinary protocol step opens with -- "Evaluation of the coating proceeds by" -- and
+# the hash or the bold is the only thing that tells a heading from a sentence.
+_OWN_APPENDIX_HEADING = re.compile(
+    r"^[ \t]{0,3}(?:#{1,6}[ \t]*|\*\*)[ \t]*(?:\d+[.)][ \t]*)?"
+    r"(Evaluation(?:[ \t]+of[ \t]+\w+)?(?:[ \t]+Table)?)"
+    r"[ \t]*:?[ \t]*\**[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _authors_own_parts(text: str) -> tuple[str, list[tuple[str, str]]]:
@@ -4632,7 +4654,11 @@ def _protocol_parts(text: str) -> tuple[str, str]:
     appended = min(
         (
             mark.start()
-            for mark in (_OWN_APPENDIX.search(body), _AUTHORS_OWN_PART.search(body))
+            for mark in (
+                _OWN_APPENDIX.search(body),
+                _OWN_APPENDIX_HEADING.search(body),
+                _AUTHORS_OWN_PART.search(body),
+            )
             if mark
         ),
         default=None,
