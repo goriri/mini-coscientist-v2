@@ -2565,6 +2565,24 @@ def test_an_auto_approved_run_says_no_human_inspected_it(rich_session: Session):
     )
 
 
+def test_the_cover_names_every_scoring_reviewer_as_the_report_names_it(body: str):
+    """The Attributes list says who scores each dimension, and it has to say it in the
+    words the review chapters use. Hand-written, it invented two: a live cover read
+    "Feasibility: scored one to five by the methods and feasibility review" and
+    "Safety: scored one to five by the safety and governance review" over a report
+    whose reviewers are the Methods and statistics reviewer and the Ethics, safety and
+    governance reviewer, leaving a reader no way to tell whether that was one pass or
+    two."""
+    from coscientist.narrative import _REVIEWER_NAMES, CRITERION_SECTIONS
+    from coscientist.parity import REVIEW_CRITERIA
+
+    attributes = body.split("## Attributes", 1)[1].split("\n## ", 1)[0]
+    for reviewer, (criterion, _label) in REVIEW_CRITERIA.items():
+        line = f"{CRITERION_SECTIONS[criterion]}: scored one to five by "
+        assert line in attributes, line
+        assert f"{line}the {_REVIEWER_NAMES[reviewer].lower()}" in attributes
+
+
 def test_a_real_workflow_run_produces_the_same_document_shape():
     """The fixture is a stand-in; the shape has to hold for the workflow's own output.
 

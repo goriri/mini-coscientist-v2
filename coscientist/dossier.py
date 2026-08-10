@@ -58,6 +58,7 @@ from .markdown_render import (
 from .models import FACET_PHRASES, MERGE_PRODUCER, Session
 from .narrative import (
     _AGENT_NAMES,
+    CRITERION_SECTIONS,
     DEEP_DIVE_PREAMBLE,
     DISCOVERY_STOOD_IN,
     REVIEW_SECTIONS,
@@ -78,6 +79,7 @@ from .narrative import (
     _number_word,
     _opening,
     _plural,
+    _reviewer_lead_in,
     _sentence,
     _stage_words,
     build_idea_briefs,
@@ -92,7 +94,7 @@ from .narrative import (
     stage_name,
     synthesize_overview,
 )
-from .parity import DEFAULT_ELO, UNMEASURED_MOVEMENT
+from .parity import DEFAULT_ELO, REVIEW_CRITERIA, UNMEASURED_MOVEMENT
 
 
 def _bullets(items: Iterable[str]) -> list[str]:
@@ -130,12 +132,17 @@ def _front_matter(record: ResearchRecord, overview: ResearchOverview) -> list[st
     ]
     # The review dimensions close the attribute list in the reference reports,
     # because they are what every idea is scored on rather than facts about the goal.
+    # Each dimension named for the reviewer that scores it, in the words the rest of
+    # the report gives that reviewer. Written out by hand this list invented two names
+    # nothing else in the document uses -- "scored one to five by the methods and
+    # feasibility review" and "by the safety and governance review" -- so a reader on
+    # page one who went looking for either found Methods and statistics reviewer and
+    # Ethics, safety and governance reviewer, and no way to tell whether those were
+    # the same pass.
     attributes += [
-        "Correctness: scored one to five by the evidence and correctness review",
-        "Novelty: scored one to five by the novelty review",
-        "Feasibility: scored one to five by the methods and feasibility review",
-        "Impact: scored one to five by the impact review",
-        "Safety: scored one to five by the safety and governance review",
+        f"{CRITERION_SECTIONS[criterion]}: scored one to five by "
+        f"the {_reviewer_lead_in(reviewer).rstrip(':').lower()}"
+        for reviewer, (criterion, _label) in REVIEW_CRITERIA.items()
     ]
     # Two different things used to be poured into one bulleted list under this
     # heading: what would make the goal met, and what the ideas were ranked against.
