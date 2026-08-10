@@ -1622,6 +1622,50 @@ def test_several_stages_falling_back_at_once_are_not_warned_about_as_one():
     assert "re-run the stage before relying" in alone
 
 
+def test_the_fallback_count_counts_specialists_and_not_stages():
+    """A stage runs up to five specialists, so the notes outnumber the stages.
+
+    A live run printed "Fourteen stages fell back to a fixed template" five bullets
+    under "Stages completed: 8 of 8", because five of the fourteen were the five
+    reviewers of one stage and four were the four generators of another. Read
+    against the stage count above it, the line said the run failed more stages than
+    it ran.
+    """
+    from coscientist.dossier import _provenance_appendix
+    from coscientist.narrative import ProvenanceNote, ResearchRecord
+
+    def _note(stage: str, agent: str) -> ProvenanceNote:
+        return ProvenanceNote(
+            stage=stage,
+            agent=agent,
+            schema_name="",
+            source="deterministic_fallback",
+            repairs=[],
+            error="",
+        )
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.provenance = [
+        _note("reflect", "reflection_agent"),
+        _note("reflect", "novelty_agent"),
+        _note("reflect", "impact_agent"),
+        _note("evolve", "evolution_agent"),
+    ]
+    said = "\n".join(_provenance_appendix(record))
+    assert (
+        "Four specialists, across two stages, fell back to a fixed template because "
+        "their answers came back incomplete or malformed." in said
+    )
+    assert "stages fell back" not in said
+
+    record.provenance = record.provenance[:1]
+    alone = "\n".join(_provenance_appendix(record))
+    assert (
+        "One specialist fell back to a fixed template because its answer came back "
+        "incomplete or malformed." in alone
+    )
+
+
 def test_a_repaired_payload_is_recorded_in_the_appendix(report: str):
     appendix = report[report.index(_APPENDIX) :]
     assert "repaired" in appendix

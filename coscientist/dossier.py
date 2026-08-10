@@ -2724,14 +2724,27 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
             ]
         )
     if record.fallback_stages:
+        # One note to a specialist, not to a stage. A live run printed "Fourteen
+        # stages fell back to a fixed template" five bullets under "Stages
+        # completed: 8 of 8", because five of the fourteen were the five reviewers
+        # of one stage and four were the four generators of another -- a reader
+        # comparing the two lines is told the run had more failures than stages.
+        fallen = {note.agent for note in record.fallback_stages}
+        stages = {note.stage for note in record.fallback_stages}
         lines.extend(
             [
-                f"{_number_word(len(record.fallback_stages))} "
-                + ("stage" if len(record.fallback_stages) == 1 else "stages")
-                + " fell back to a fixed template because the specialist's answer "
-                "came back incomplete or malformed. What that costs the report is "
-                f"stated under {ADVISORY_CHAPTER}; on a healthy run no stage falls "
-                "back at all.",
+                f"{_number_word(len(fallen))} "
+                + ("specialist" if len(fallen) == 1 else "specialists")
+                + (
+                    ""
+                    if len(stages) == 1
+                    else f", across {_number_word(len(stages)).lower()} stages,"
+                )
+                + " fell back to a fixed template because "
+                + ("its answer" if len(fallen) == 1 else "their answers")
+                + " came back incomplete or malformed. What that costs the report "
+                f"is stated under {ADVISORY_CHAPTER}; on a healthy run nothing "
+                "falls back at all.",
                 "",
             ]
         )
