@@ -1977,8 +1977,13 @@ def test_the_guide_describes_the_pairing_of_response_to_objection_that_is_printe
     assert "the response names the numbered item under Deep Verification" in guide
     # The other half of the guide's claim: that everywhere else the reader is on
     # their own, and that a response can concede rather than dispose either way.
-    assert "everywhere else the pairing is left to the reader" in guide
+    assert "the pairing is left to the reader" in guide
     assert "concede an objection rather than dispose of it" in guide
+    # And the condition stated is the condition the renderer applies. It was "a review
+    # raised one objection and recorded one response", which a review that also
+    # recorded a fatal flaw can satisfy -- and that review gets no pointer, because
+    # the response may have been aimed at the flaw.
+    assert "one objection and no fatal flaw" in guide
 
     # And the pointer the guide now promises is the one the section prints.
     responses = _attributed_responses(
@@ -1991,6 +1996,20 @@ def test_the_guide_describes_the_pairing_of_response_to_objection_that_is_printe
         ]
     )
     assert "item 1 under Deep Verification below" in responses
+
+    # The carve-out, on the same review with a flaw recorded beside the objection.
+    faulted = _attributed_responses(
+        [
+            _idea_review(
+                section="Correctness",
+                objections=["The scavenging is transient."],
+                rebuttals=["The protocol tracks it over 200 cycles."],
+                fatal_flaws=["The cited source measures a different chemistry."],
+            )
+        ]
+    )
+    assert "under Deep Verification" not in faulted
+    assert faulted.startswith("The correctness review answered:")
 
 
 def test_what_an_untested_objection_is_worth_is_said_once_over_all_of_them():

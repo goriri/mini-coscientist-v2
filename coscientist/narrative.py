@@ -1099,9 +1099,11 @@ DEEP_DIVE_PREAMBLE = (
     "has not been ruled out.",
     "Addressed objections are the responses the reviews recorded. A review lists its "
     "objections and its responses separately, so which answers which is on the record "
-    "only where a review raised one objection and recorded one response: there the "
-    "response names the numbered item under Deep Verification it answers, and "
-    "everywhere else the pairing is left to the reader. Either way a response may "
+    "only where a review recorded one response and left it one thing to answer: one "
+    "objection and no fatal flaw. There the response names the numbered item under "
+    "Deep Verification it answers. Everywhere else the pairing is left to the reader, "
+    "and that includes a review that recorded one of each beside a fatal flaw the "
+    "response may have been aimed at instead. Either way a response may "
     "concede an objection rather than dispose of it. Each response is "
     "attributed to the review that recorded it, so that is where a response is "
     "printed rather than a second time under the review itself, and a review that "
@@ -1157,7 +1159,7 @@ DEEP_DIVE_PREAMBLE = (
     "and the scoring scale caps such a review at two of five however confident it was. "
     "For the same reason no item here is marked as settled: the responses are printed "
     "under Reviews, and an item is named from that side only where the review that "
-    "raised it recorded exactly one of each.",
+    "raised it recorded one response and had this one thing to answer.",
     # A debated match has two participants and each of them has a section, so a reader
     # meets the same match twice and has to be told what is repeated and what is not.
     #
