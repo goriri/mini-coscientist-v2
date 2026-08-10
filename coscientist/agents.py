@@ -176,7 +176,22 @@ STRUCTURED_OUTPUT_INSTRUCTIONS = {
         "the four shortlisted candidates for at most three rounds; stop after two "
         "stable rounds with less than 5% score movement."
     ),
-    "proximity": "Return one ResearchLandscape JSON object clustered by mechanism, outcome, evidence overlap, and data needs.",
+    # The contract has carried a ``duplicates`` field throughout and this instruction
+    # never mentioned it, so it came back empty on every run and the report's
+    # merge-before-funding bullet never printed. A live run then shipped "Low-
+    # Temperature ALD Al2O3 HF-Scavenging and Phase Stabilization" and "ALD Al2O3 as
+    # HF Scavenger and Phase Stabilizer on NMC811" as two ideas tied on the same Elo,
+    # with the overlap remarked on only inside a quoted reviewer's prose.
+    "proximity": (
+        "Return one ResearchLandscape JSON object clustered by mechanism, outcome, "
+        "evidence overlap, and data needs. Populate 'duplicates' with every group of "
+        "candidate ids whose hypotheses are near-duplicates -- the same mechanism on "
+        "the same system, differing only in wording or in a parameter neither one "
+        "argues for -- since those have to be merged before either is funded and a "
+        "tournament that scores them apart will not surface it. Two candidates in one "
+        "cluster are not duplicates by that alone: a cluster shares a mechanism, a "
+        "duplicate group makes the same claim. Use the candidate ids exactly as given."
+    ),
     "meta_reviewer": (
         "Return one DossierManifest JSON object. Exclude every candidate with an "
         "unresolved fatal flaw from recommendation and state evidence that would change the decision."

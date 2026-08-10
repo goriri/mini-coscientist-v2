@@ -1,9 +1,12 @@
 import pytest
 
+from coscientist.agents import STRUCTURED_OUTPUT_INSTRUCTIONS
 from coscientist.models import (
     ApprovalProfile,
     CandidatePopulation,
     EvolutionCycle,
+    ResearchCluster,
+    ResearchLandscape,
     ReviewSet,
     TournamentState,
 )
@@ -12,7 +15,9 @@ from coscientist.orchestration import MILESTONE_STAGES, CoScientistWorkflow
 from coscientist.parity import (
     REVIEW_CRITERIA,
     dossier_manifest,
+    parsed_research_landscape,
     population_from_artifacts,
+    research_landscape,
 )
 
 
@@ -273,4 +278,84 @@ def test_auto_profile_cannot_waive_governance_block():
     assert not flow.done
     assert any(
         event.event_type == "governance_blocked" for event in flow.session.events
+    )
+
+
+def test_a_paraphrased_id_in_the_landscape_is_resolved_before_it_reaches_a_reader(
+    rich_session,
+):
+    """Every other stage aligns the ids a specialist echoes back; this one did not.
+
+    Section eight of a live run ended: "One further entry was recorded here against
+    ideas this report cannot name: the ids the clustering stage filed it under reach
+    no idea in this run." The clustering was sound -- only the spelling was not.
+    """
+    session = rich_session
+    ids = [
+        candidate.id
+        for candidate in population_from_artifacts(session.artifacts).candidates
+    ]
+    assert len(ids) >= 4
+
+    parsed = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Chemical scavenging",
+                # A hyphen for the real id's underscore, and a positional reference.
+                candidate_ids=[ids[0].replace("_", "-"), "Candidate 2"],
+                shared_mechanism="The coating scavenges HF at the interface.",
+                shared_outcome="Capacity retention over five hundred cycles.",
+            )
+        ],
+        duplicates=[[ids[0].upper(), "Candidate 2"]],
+        protected_minority_ids=["Candidate 3"],
+        coverage_gaps=["Independent replication"],
+    )
+    fallback = research_landscape(session)
+    aligned = parsed_research_landscape(session, parsed, fallback)
+
+    assert aligned is not fallback
+    assert aligned.clusters[0].candidate_ids == [ids[0], ids[1]]
+    assert aligned.duplicates == [[ids[0], ids[1]]]
+    assert aligned.protected_minority_ids == [ids[2]]
+    # The specialist's own reading of what is missing survives the alignment.
+    assert aligned.coverage_gaps == ["Independent replication"]
+
+
+def test_a_landscape_naming_no_idea_in_this_run_gives_way_to_the_template(
+    rich_session,
+):
+    """A group of ideas the run does not hold says nothing about the ideas it does."""
+    session = rich_session
+    fallback = research_landscape(session)
+    parsed = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Borrowed from another run",
+                candidate_ids=["hyp_alpha", "hyp_beta"],
+                shared_mechanism="Unrelated.",
+                shared_outcome="Unrelated.",
+            )
+        ],
+        coverage_gaps=["Written about ideas this run does not hold"],
+    )
+
+    assert parsed_research_landscape(session, parsed, fallback) is fallback
+    assert parsed_research_landscape(session, None, fallback) is fallback
+
+
+def test_the_clustering_stage_is_asked_for_the_duplicates_its_contract_holds():
+    """``duplicates`` was in the contract and in no prompt, so it came back empty.
+
+    A live run shipped "Low-Temperature ALD Al2O3 HF-Scavenging and Phase
+    Stabilization" and "ALD Al2O3 as HF Scavenger and Phase Stabilizer on NMC811" as
+    two ideas tied on one Elo, with the overlap remarked on only inside a quoted
+    reviewer's prose.
+    """
+    instruction = STRUCTURED_OUTPUT_INSTRUCTIONS["proximity"]
+    assert "'duplicates'" in instruction
+    assert "merged before either is funded" in instruction
+    # And told apart from a cluster, which shares a mechanism rather than a claim.
+    assert "Two candidates in one cluster are not duplicates by that alone" in (
+        instruction
     )

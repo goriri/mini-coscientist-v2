@@ -1443,6 +1443,69 @@ def parsed_tournament_state(
     )
 
 
+def parsed_research_landscape(
+    session: Session, parsed: ResearchLandscape | None, fallback: ResearchLandscape
+) -> ResearchLandscape:
+    """Adopt the specialist's landscape with its ids resolved to real candidates.
+
+    Every other stage that names candidates by id runs them through
+    ``align_candidate_ids``; this one did not, so a paraphrased identifier reached
+    the report as a group it could not print. Section eight of a live run ended: "One
+    further entry was recorded here against ideas this report cannot name: the ids
+    the clustering stage filed it under reach no idea in this run." The clustering
+    was sound -- only the spelling of the ids was not.
+
+    A group is kept when at least two of its members resolve, since a cluster or a
+    near-duplicate pair is a claim about ideas standing together and one idea makes
+    no such claim. A protected minority is about a single idea, so it is kept
+    whenever it resolves at all.
+    """
+    if parsed is None or not (
+        parsed.clusters
+        or parsed.duplicates
+        or parsed.protected_minority_ids
+        or parsed.coverage_gaps
+    ):
+        return fallback
+    candidate_ids = [
+        candidate.id
+        for candidate in population_from_artifacts(session.artifacts).candidates
+    ]
+    referenced = [
+        *(item for cluster in parsed.clusters for item in cluster.candidate_ids),
+        *(item for duplicate in parsed.duplicates for item in duplicate),
+        *parsed.protected_minority_ids,
+    ]
+    mapping = align_candidate_ids(referenced, candidate_ids)
+
+    def resolved(items: list[str]) -> list[str]:
+        return list(dict.fromkeys(mapping[item] for item in items if item in mapping))
+
+    clusters = [
+        cluster.model_copy(update={"candidate_ids": members})
+        for cluster in parsed.clusters
+        if len(members := resolved(cluster.candidate_ids)) > 1
+    ]
+    duplicates = [
+        members
+        for duplicate in parsed.duplicates
+        if len(members := resolved(duplicate)) > 1
+    ]
+    minority = resolved(parsed.protected_minority_ids)
+    # Where nothing at all resolved, the specialist named a set of ideas this run does
+    # not hold, and its coverage gaps were written about that set. The template's
+    # clustering is thin but it is about these candidates.
+    if not (clusters or duplicates or minority) and referenced:
+        return fallback
+    return parsed.model_copy(
+        update={
+            "clusters": clusters,
+            "duplicates": duplicates,
+            "protected_minority_ids": minority,
+        }
+    )
+
+
 def typed_specialist_payload(session: Session, role: str, content: str) -> TypedPayload:
     """Validate every specialist boundary into its declared contract.
 
@@ -1481,7 +1544,7 @@ def typed_specialist_payload(session: Session, role: str, content: str) -> Typed
         value = outcome.value or fallback
     elif role == "proximity":
         fallback = research_landscape(session)
-        value = outcome.value or fallback
+        value = parsed_research_landscape(session, outcome.value, fallback)
     else:
         fallback = dossier_manifest(session)
         value = outcome.value or fallback
