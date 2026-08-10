@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from itertools import combinations
 from typing import Protocol
 
+from .citations import latest_evidence_packet, resolve_population
 from .methods import method_requirements
 from .model_catalog import session_language_clause
 from .models import (
@@ -766,6 +767,19 @@ def reviews_by_candidate(session: Session) -> dict[str, list[CandidateReview]]:
     return grouped
 
 
+# The grounding verdicts as a judge is told them: what the run established about
+# each hypothesis's citations, in words rather than in the enum the pipeline files
+# them under.
+_GROUNDING_FOR_JUDGE = {
+    "grounded": "every citation checked against the document it names",
+    "partially_grounded": "some citations checked against their documents, others not",
+    "unverified": "citations resolve to records nobody went back and checked",
+    "discredited": "cites evidence that was retracted or could not be retrieved",
+    "unsupported": "cites evidence that exists nowhere in this run",
+    "uncited": "cites no evidence at all",
+}
+
+
 @dataclass(frozen=True)
 class JudgeContext:
     """Everything the two prompts substitute, resolved once per tournament."""
@@ -782,6 +796,11 @@ class JudgeContext:
     # halfway down the page. Defaulted so a hand-built context in a test still
     # constructs.
     language_preamble: str = ""
+    # Whether each hypothesis's cited evidence exists and was checked, keyed by
+    # candidate id. Nothing else the judge is handed carries it: a live closing
+    # briefing credited the leader with scoring "well on empirical grounding" over a
+    # summary table whose Evidence column, in the same block, read "discredited".
+    grounding: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def build(cls, session: Session, population: CandidatePopulation) -> JudgeContext:
@@ -828,6 +847,13 @@ class JudgeContext:
                 for candidate in population.candidates
             },
             language_preamble=session_language_clause(session),
+            grounding={
+                candidate_id: _GROUNDING_FOR_JUDGE[citations.support]
+                for candidate_id, citations in resolve_population(
+                    population, latest_evidence_packet(session)
+                ).items()
+                if citations.support in _GROUNDING_FOR_JUDGE
+            },
         )
 
     def review_of(self, candidate: Candidate) -> str:
@@ -1072,6 +1098,8 @@ Write the briefing a researcher reads before acting on this ranking. Three to si
 
 Say what separated the leading hypothesis from the field, and on which of the preferences above it separated. Say which places in the order are too close to act on, so a reader does not treat a two-point gap as a finding. Say anything the matches exposed that a ranking cannot show on its own -- a leader carrying an unresolved flaw, a low-rated hypothesis that won on one preference and lost on the rest, a field that differs less than its spread suggests.
 
+Each standing carries the run's own verdict on whether that hypothesis's cited evidence exists and was checked. Where you speak of a hypothesis's empirical grounding, say what that verdict says; a hypothesis whose citations are discredited or missing has not scored well on evidence whatever its rating. Ties share a place, and the standings number them that way: name the place a hypothesis is in rather than counting down the list.
+
 Judge only on the matches recorded above; do not credit anything not stated there. Do not name a new winner, do not recommend next steps, and do not end with a verdict line."""
 
 # Enough of each decisive match to carry its reasoning, without spending the
@@ -1131,7 +1159,7 @@ def write_briefing(
     prompt happened to catch. Attributing either to the judge would be claiming
     a reading nobody made, which is why the author comes back with the text.
     """
-    facts = tournament_facts(state, titles)
+    facts = tournament_facts(state, titles, context.grounding)
     if getattr(provider, "deterministic", False) or not state.comparisons:
         return facts, "computed"
     prompt = context.language_preamble + _render(

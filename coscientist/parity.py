@@ -777,7 +777,29 @@ def short_claim(candidate: Candidate, limit: int = 110) -> str:
     return claim if len(claim) <= limit else f"{claim[: limit - 1].rstrip()}…"
 
 
-def tournament_facts(state: TournamentState, titles: dict[str, str]) -> str:
+def _shared_ranks(ordered: Sequence[tuple[str, float]]) -> dict[str, int]:
+    """Positions in which hypotheses that finished level share one number.
+
+    Numbered straight off the sort, three hypotheses tied on 1184 Elo were told to
+    the judge as fourth, fifth and sixth, and the judge's briefing then named "the
+    hypotheses in fourth, fifth, and sixth place" over a summary table whose rank
+    column reads 4, 4, 4 -- two numberings of one tournament, one of them printed
+    inside the other.
+    """
+    ranks: dict[str, int] = {}
+    for offset, (candidate_id, rating) in enumerate(ordered, 1):
+        previous = ordered[offset - 2] if offset > 1 else None
+        ranks[candidate_id] = (
+            ranks[previous[0]] if previous and previous[1] == rating else offset
+        )
+    return ranks
+
+
+def tournament_facts(
+    state: TournamentState,
+    titles: dict[str, str],
+    grounding: dict[str, str] | None = None,
+) -> str:
     """The arithmetic of a finished tournament, in sentences.
 
     Two readers need exactly this text: the judge, which is handed it as the
@@ -810,11 +832,22 @@ def tournament_facts(state: TournamentState, titles: dict[str, str]) -> str:
         "Final standings:",
     ]
     leader = ordered[0][1] if ordered else DEFAULT_ELO
-    for rank, (candidate_id, rating) in enumerate(ordered, 1):
+    ranks = _shared_ranks(ordered)
+    for candidate_id, rating in ordered:
+        rank = ranks[candidate_id]
         lines.append(
             f"  {rank}. {titles.get(candidate_id, candidate_id)} — {rating:.0f} Elo"
             + ("" if rank == 1 else f", {leader - rating:.0f} behind the leader")
             + (" (shortlisted)" if candidate_id in state.shortlist_ids else "")
+            # The verdict on whether the hypothesis's stated evidence exists, which
+            # the ratings do not carry and the judge cannot infer. Left out, a live
+            # briefing said the leader "scored well on empirical grounding" directly
+            # above the summary table's own Evidence column reading "discredited".
+            + (
+                f" [evidence: {grounding[candidate_id]}]"
+                if grounding and grounding.get(candidate_id)
+                else ""
+            )
         )
     adjacent = list(pairwise(ordered))
     if adjacent:

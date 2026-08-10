@@ -2784,6 +2784,17 @@ CHAPTER_SECTIONS = frozenset(
 
 _SUMMARY_CELL_CEILING = 140
 
+# Words that cannot be the last word of an abbreviated statement: each one governs
+# something the cut has taken away, so a cell ending on one reads as a cell that was
+# cut off rather than one that was shortened.
+_GOVERNING_WORDS = frozenset(
+    """a an the and or nor but so if while when where which who whose that than then
+    at by for from in into of on onto over to under with within without via versus
+    about after before during per across between among against toward towards upon
+    leading resulting causing compared relative due such is are was were be been
+    its their his her our this these those""".split()
+)
+
 
 def _cell(text: str, ceiling: int | None = _SUMMARY_CELL_CEILING) -> str:
     """One statement, short enough that the row it is in stays one screen wide.
@@ -2816,6 +2827,16 @@ def _cell(text: str, ceiling: int | None = _SUMMARY_CELL_CEILING) -> str:
         if cut > ceiling // 2:
             head = head[:cut]
             break
+    # A clause boundary is not always there to cut on, and the word boundary that
+    # stands in for it can fall after a word that governs the words it cut. Five
+    # Primary Claim and Falsifier Summary cells of a live table ended "at the same…",
+    # "than the…", "while…", "into…" and "leading to…" -- each one an abbreviation
+    # that reads as a truncation, because the last word left standing is the one
+    # asking for what follows it.
+    words = head.split()
+    while len(words) > 1 and words[-1].strip("(),;:—-").lower() in _GOVERNING_WORDS:
+        words.pop()
+    head = " ".join(words)
     if head.count("(") > head.count(")"):
         head = head[: head.rfind("(")]
     return head.rstrip(" ,;.:—-([") + "…"

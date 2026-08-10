@@ -5195,6 +5195,24 @@ def test_a_summary_cell_is_cut_where_a_clause_ends_not_inside_one():
     assert "or if" not in cell
 
 
+def test_a_cell_cut_on_a_word_does_not_end_on_the_word_that_governs_the_rest():
+    """A clause boundary is not always inside the head, and the word boundary that
+    stands in for it can fall after a word asking for what comes next. Five cells of
+    a live summary table ended "at the same…", "than the…", "while…", "into…" and
+    "leading to…" -- abbreviations that read as truncations."""
+    lead = (
+        "Coated cathode particles retain measurably more capacity than uncoated "
+        "cells because the alumina barrier blocks manganese"
+    )
+
+    cells = [
+        _cell(f"{lead} {tail} electrolyte decomposition builds on the surface")
+        for tail in ("at the", "while", "leading to", "of the")
+    ]
+
+    assert {cell for cell in cells} == {f"{lead}…"}
+
+
 def test_a_cell_with_no_clause_boundary_still_falls_back_to_a_word():
     cell = _cell("Retention " + "held " * 40)
 

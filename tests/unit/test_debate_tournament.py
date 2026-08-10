@@ -864,3 +864,67 @@ def test_the_briefing_does_not_multiply_out_the_unmeasured_movement_sentinel():
 
     assert "not measured" in facts
     assert "1200 points" not in facts
+
+
+def test_hypotheses_that_finished_level_are_told_to_the_judge_as_one_place():
+    """Numbered off the sort, three ideas tied on 1184 were fourth, fifth and sixth in
+    the facts the judge closes on -- and the judge's briefing then named "the
+    hypotheses in fourth, fifth, and sixth place" over a summary table printing 4, 4,
+    4 in its rank column, in the same block on the same page."""
+    facts = tournament_facts(
+        TournamentState(
+            ratings={
+                "cand_a": 1216.0,
+                "cand_b": 1184.0,
+                "cand_c": 1184.0,
+                "cand_d": 1100.0,
+            }
+        ),
+        {f"cand_{letter}": f"Hypothesis {letter.upper()}" for letter in "abcd"},
+    )
+    places = [
+        line.strip().split(".", 1)[0]
+        for line in facts.splitlines()
+        if line.startswith("  ")
+    ]
+
+    assert places == ["1", "2", "2", "4"]
+
+
+def test_the_judge_is_told_whether_a_hypothesis_has_the_evidence_it_cites():
+    """Nothing else the judge is handed carries the grounding verdict, so a live
+    briefing credited the leader with scoring "well on empirical grounding" over the
+    Evidence column of the table it was printed under, which read "discredited"."""
+    facts = tournament_facts(
+        TournamentState(ratings={"cand_a": 1216.0, "cand_b": 1184.0}),
+        {"cand_a": "Hypothesis A", "cand_b": "Hypothesis B"},
+        {"cand_a": "cites evidence that was retracted or could not be retrieved"},
+    )
+
+    assert (
+        "Hypothesis A — 1216 Elo [evidence: cites evidence that was retracted or "
+        "could not be retrieved]" in facts
+    )
+    # And a hypothesis the run recorded no verdict for is not given one.
+    assert "Hypothesis B — 1184 Elo, 32 behind the leader\n" in facts + "\n"
+
+
+def test_the_judge_context_carries_the_grounding_of_every_hypothesis_it_ranks():
+    from coscientist.debate import JudgeContext
+
+    session = _ranked_session()
+    population = population_from_artifacts(session.artifacts)
+
+    context = JudgeContext.build(session, population)
+
+    assert set(context.grounding) == {
+        candidate.id for candidate in population.candidates
+    }
+    assert set(context.grounding.values()) <= {
+        "every citation checked against the document it names",
+        "some citations checked against their documents, others not",
+        "citations resolve to records nobody went back and checked",
+        "cites evidence that was retracted or could not be retrieved",
+        "cites evidence that exists nowhere in this run",
+        "cites no evidence at all",
+    }
