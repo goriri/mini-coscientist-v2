@@ -937,6 +937,33 @@ def test_an_entry_that_failed_verification_is_not_counted_as_one_nobody_checked(
     assert "the other four entries record" not in said
 
 
+def test_the_standings_under_a_list_count_the_way_the_count_over_them_does():
+    """Every clause here lands behind "Of 22 entries below", which is written in
+    figures, and every clause counts the same entries that opening counts. Spelled,
+    they read as a different quantity than the one they are a breakdown of."""
+    from coscientist.narrative import ResearchRecord, _cited_reference_standing
+
+    statuses = ["verified"] * 9 + ["discovered_unverified"] * 13
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.citations = CitationRegistry(
+        [
+            SourceLead(
+                canonical_url=f"https://x/{n}",
+                title=f"Lead {n}",
+                verification_status=status,
+            )
+            for n, status in enumerate(statuses)
+        ]
+    )
+    for n in range(len(statuses)):
+        record.citations.number(f"https://x/{n}")
+
+    assert _cited_reference_standing(record).startswith(
+        "Of 22 entries below, nine were retrieved and checked against the document "
+        "they name, and 13 record where a statement came from and no more."
+    )
+
+
 # -------------------------------------------------------------------- idea titles
 
 

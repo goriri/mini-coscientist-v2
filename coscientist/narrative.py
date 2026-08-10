@@ -10139,11 +10139,15 @@ def _cited_entry_standings(
 
     Five kinds, not two. Merely-unchecked is the mildest of the four that are not
     verified, and it was the only one the sentence had a clause for.
+
+    Every clause here lands mid-sentence, behind a count of the whole that ``_plural``
+    has already written in figures, so every count here is written the way the report
+    writes a count that is not opening one: spelled to twelve and in figures above.
     """
     clauses = []
     if checked:
         clauses.append(
-            f"{_number_word(checked).lower()} "
+            f"{_bare_count(checked)} "
             + ("was" if checked == 1 else "were")
             + " retrieved and checked against the document "
             + ("it names" if checked == 1 else "they name")
@@ -10154,25 +10158,25 @@ def _cited_entry_standings(
     # catalogue.
     if catalogue:
         clauses.append(
-            f"{_number_word(catalogue).lower()} "
+            f"{_bare_count(catalogue)} "
             + ("was" if catalogue == 1 else "were")
             + " found in a catalogue and not read"
         )
     if unchecked:
         clauses.append(
-            f"{_number_word(unchecked).lower()} "
+            f"{_bare_count(unchecked)} "
             + ("records" if unchecked == 1 else "record")
             + " where a statement came from and no more"
         )
     if inaccessible:
         clauses.append(
-            f"{_number_word(inaccessible).lower()} "
+            f"{_bare_count(inaccessible)} "
             + ("was" if inaccessible == 1 else "were")
             + " looked for and could not be retrieved at all"
         )
     if retracted:
         clauses.append(
-            f"{_number_word(retracted).lower()} "
+            f"{_bare_count(retracted)} "
             + (
                 "names a document that has"
                 if retracted == 1
@@ -10213,7 +10217,7 @@ def _cited_reference_standing(record: ResearchRecord) -> str:
             "The one entry below was retrieved and checked against the document it "
             "names."
             if total == 1
-            else ("Both" if total == 2 else f"All {_number_word(total).lower()}")
+            else ("Both" if total == 2 else f"All {_bare_count(total)}")
             + " entries below were retrieved and checked against the document they "
             "name."
         )
@@ -10287,12 +10291,16 @@ def _reference_standing(record: ResearchRecord) -> str:
     # lines below read "Could not be retrieved when this run went back to it". A
     # reader told the rest is merely unread overstates what is left to recover.
     def _shortfall(count: int) -> str:
-        opening = _opening(count, "source")
-        lowered = f"{opening[:1].lower()}{opening[1:]}"
+        # "For the remaining" and "Of the remaining" carry the count, so the count is
+        # not opening the sentence and is not spelled as though it were. Built out of
+        # ``_opening`` and then lower-cased, it was: "Of the remaining seventy-eight
+        # sources, eleven were found in a catalogue" stood four chapters from "the 90
+        # documents the literature search reached", counting the same corpus.
+        remaining = _plural(count, "source")
         if not (retracted or inaccessible or catalogue):
-            return f"For the remaining {lowered}, {outstanding}."
+            return f"For the remaining {remaining}, {outstanding}."
         return (
-            f"Of the remaining {lowered}, "
+            f"Of the remaining {remaining}, "
             + _series(
                 _cited_entry_standings(0, unchecked, inaccessible, retracted, catalogue)
             )
@@ -10333,18 +10341,20 @@ def _reference_standing(record: ResearchRecord) -> str:
     # search returned eighty-five leads" here and "returned 83 source leads" there.
     folded = record.citations.folded_duplicates
     reconciled = (
-        f" The corpus holds {_number_word(total + folded).lower()} "
+        f" The corpus holds {_bare_count(total + folded)} "
         f"leads to reach {'them' if total != 1 else 'it'}: "
         f"{_plural(folded, 'lead')} named a document another lead had already named."
         if folded
         else ""
     )
-    # House style writes counts above twelve in figures mid-sentence, which is what
-    # _plural does, and this sentence spells its other two counts because they open
-    # clauses: "Twenty-five of the eighty were retrieved ... For the remaining 55
-    # sources" is one sentence writing the same kind of number two ways.
+    # Spelled in full only where it opens the sentence, which is the one count here
+    # that does. Spelling the rest to match it was the older rule, and it bought
+    # consistency inside this paragraph at the price of consistency with the rest of
+    # the report: "Twelve of the ninety were retrieved" here stood against "the 90
+    # documents the literature search reached" under Warnings and "the 65 findings"
+    # one paragraph above, all three counting corpora of this same run.
     return (
-        f"{_number_word(checked)} of the {_number_word(total).lower()} "
+        f"{_number_word(checked)} of the {_bare_count(total)} "
         # "One of the three were retrieved and checked against the document they
         # name" -- the verb and the pronoun were written for the plural and printed
         # over a count of one.

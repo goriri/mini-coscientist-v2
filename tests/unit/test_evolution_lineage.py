@@ -275,14 +275,17 @@ def test_the_reference_standing_counts_a_mixed_list_rather_than_flattening_it():
     assert "remaining two sources" in said
 
 
-def test_the_reference_standing_spells_every_count_in_its_sentence():
-    """House style writes counts above twelve in figures, and the two counts that open
-    clauses in this sentence are spelled whatever their size. A live run put both rules
-    in one sentence: "Twenty-five of the eighty were retrieved ... For the remaining 55
-    sources" -- the same kind of number written two ways eleven words apart."""
+def test_the_reference_standing_spells_the_one_count_that_opens_its_sentence():
+    """House style spells a count to twelve and writes it in figures above, except at
+    the head of a sentence, where a numeral cannot stand. One count here is at the head
+    of one. Spelling the rest to match it bought consistency inside this paragraph at
+    the price of consistency with the report: "Twelve of the ninety were retrieved"
+    stood against "the 90 documents the literature search reached" under Warnings and
+    "the 65 findings" a paragraph above, all three counting corpora of the same run."""
     said = _reference_standing(
         _standing(*(["verified"] * 25 + ["discovered_unverified"] * 55))
     )
-    assert "Twenty-five of the eighty were retrieved" in said
-    assert "For the remaining fifty-five sources" in said
-    assert "55" not in said
+    assert "Twenty-five of the 80 were retrieved" in said
+    assert "For the remaining 55 sources" in said
+    assert "eighty" not in said
+    assert "fifty-five" not in said
