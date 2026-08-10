@@ -26,7 +26,6 @@ from .advisories import (
 )
 from .debate import (
     readable_exchange,
-    readable_turn,
     standalone_opening,
     strip_rationale_label,
     strip_turn_label,
@@ -939,17 +938,36 @@ def _review_block(
     return lines
 
 
-def _verdict_line(match) -> str:
+def _verdict_line(match, *, transcript_above: bool = True) -> str:
     """The result of one match, without restating an argument already printed.
 
     The judge states its rationale in the closing turn, so printing it again
     underneath repeated a full paragraph verbatim on every debated match.
+
+    Only where that turn is on the page. A pair that met twice is transcribed
+    under one of the two ideas and cross-referenced under the other, and the
+    cross-referenced chapter suppressed the reason against a transcript the
+    reader has to go elsewhere to find: "This is the same exchange as the one
+    under MLD Alucone Hybrid Coating ... The verdict below is how it went for
+    this idea." stood above "The judge ruled this a loss with confidence 0.70."
+    and nothing else.
     """
     verdict = (
         f"The judge ruled this a {match.outcome} with confidence "
         f"{match.confidence:.2f}."
     )
-    tail = readable_turn(match.debate_turns[-1]) if match.debate_turns else ""
+    # What the reader was shown, which is what a repeat would be repeating.
+    # ``readable_turn`` is not that: the turns are printed contribution by
+    # contribution through ``readable_exchange``, which gives the closing rationale
+    # the sentence capital that its "Rationale:" label had kept off it. So the test
+    # read "Rationale: this idea provides a more feasible ..." against a rationale
+    # capitalised on its own, missed by the one letter, and printed the paragraph
+    # twice -- four times over on one live report.
+    tail = (
+        " ".join(said for _prefix, said in readable_exchange(match.debate_turns[-1]))
+        if match.debate_turns and transcript_above
+        else ""
+    )
     # A rematch note is recorded on the rationale so the pairing explains
     # itself; it belongs with the result, not inside the judge's reasoning.
     note, _, remainder = match.rationale.strip().partition("]")
@@ -1122,7 +1140,7 @@ def _match_summary(
                     "reproduced there rather than in both chapters. The verdict "
                     "below is how it went for this idea.",
                     "",
-                    _verdict_line(match),
+                    _verdict_line(match, transcript_above=False),
                     "",
                 ]
             )

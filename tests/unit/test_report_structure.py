@@ -2875,6 +2875,49 @@ def test_a_verdict_whose_reasoning_is_the_turn_above_it_points_at_nothing(body: 
     assert body.count("its reasoning is that closing turn rather than missing") == 1
 
 
+def test_a_verdict_matches_the_closing_turn_as_the_reader_was_shown_it(body: str):
+    """The suppression above read the turn through ``readable_turn``, which is not
+    the text on the page: the transcript is printed contribution by contribution and
+    the closing rationale is given the sentence capital that its "Rationale:" label
+    had kept off it. One letter apart, four live matches printed the paragraph twice
+    -- "- **Turn 5, Closing rationale:** This idea provides a more feasible,
+    mode-appropriate, and well-supported experimental approach. ..." and directly
+    under it "The judge ruled this a win with confidence 0.75. Rationale: This idea
+    provides a more feasible, mode-appropriate, and well-supported experimental
+    approach. ..."
+
+    And it read that turn even in the chapter that does not print it. A pair that
+    meets twice is transcribed under one idea and cross-referenced under the other,
+    where "The verdict below is how it went for this idea." stood above "The judge
+    ruled this a loss with confidence 0.70." and no reason at all.
+    """
+    reason = "This idea provides a more feasible experimental approach."
+    match = SimpleNamespace(
+        outcome="win",
+        confidence=0.75,
+        # As ``_sided`` leaves it: the label is a proper noun that opened the
+        # sentence, and the replacement takes no capital after a colon.
+        debate_turns=[
+            "Turn 5: Expert A: It is settled. "
+            f"Rationale: {reason[:1].lower()}{reason[1:]}"
+        ],
+        rationale=reason,
+    )
+
+    assert _verdict_line(match) == "The judge ruled this a win with confidence 0.75."
+    assert reason in _verdict_line(match, transcript_above=False)
+
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith("The judge ruled this"):
+            continue
+        above = [text for text in lines[max(0, index - 3) : index] if text.strip()]
+        if not above or "Closing rationale:**" not in above[-1]:
+            continue
+        closing = above[-1].split("Closing rationale:**", 1)[1].strip()
+        assert closing not in line
+
+
 def test_a_complete_set_of_responses_is_not_announced_before_it_is_listed(body: str):
     """ "Every review of this idea recorded a response." stood above a list naming each
     of those reviews, under all eight ideas. A count short of the reviews is the case
