@@ -4603,35 +4603,44 @@ def _rereview_reach(
     candidate: Candidate,
     reviews: Sequence[CandidateReview],
 ) -> str:
-    """Which of the criteria that judged the idea were not run again on the rewrite.
+    """Which criteria the rewrite was not re-run on, and whose form the scores judge.
 
     A rewrite re-reviewed on one criterion out of five has been checked on one
     criterion out of five, and the sentence above says only that it was re-reviewed.
     On a live run that sentence sat under a recommendation to carry the rewrite
     forward, so the four judgements the reader was carrying forward were judgements
     of the text the rewrite replaced.
+
+    Naming those four alone then said, by exclusion, that the fifth carries a current
+    score below. It does not. A re-review is filed against the rewrite's own id and
+    never reaches the Reviews section, which prints the reviews of the ranked form
+    and nothing else -- so a live chapter read "the safety review said advance the
+    idea as written" three sentences above its own Safety review answering "revise it
+    first", the pre-rewrite reading, with a score under it.
     """
+    printed = _idea_reviews(record, candidate.id)
+    if not reviews or not printed:
+        return ""
     was = {
         CRITERION_SECTIONS.get(review.criterion, review.criterion) for review in reviews
     }
     # In the order the report prints them, deduplicated, so two reviewers sharing a
     # criterion are one criterion here as they are everywhere else.
     missing = list(
-        dict.fromkeys(
-            review.section
-            for review in _idea_reviews(record, candidate.id)
-            if review.section not in was
-        )
+        dict.fromkeys(review.section for review in printed if review.section not in was)
     )
-    if not missing or not reviews:
-        return ""
-    return (
+    unrun = (
         f" The other {_plural(len(missing), 'criterion', plural='criteria')} that "
         f"judged it — {_names([name.lower() for name in missing])} — "
         + ("was" if len(missing) == 1 else "were")
-        + " not run again, so on "
-        + ("that one" if len(missing) == 1 else "those")
-        + " the scores above are scores of the form the rewrite replaced."
+        + " not run again."
+        if missing
+        else ""
+    )
+    return unrun + (
+        " Every score under Reviews below is a score of the form the rewrite "
+        "replaced, re-run criteria included: what a re-review recorded is the "
+        "verdict stated above, and it puts no score into that section."
     )
 
 

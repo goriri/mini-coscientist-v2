@@ -271,7 +271,10 @@ def test_a_rewrite_checked_on_one_criterion_says_which_four_were_not_re_run():
     assert "The other four criteria that judged it" in lead_in
     assert "correctness, feasibility, impact, and safety" in lead_in
     assert "were not run again" in lead_in
-    assert "the scores above are scores of the form the rewrite replaced" in lead_in
+    assert (
+        "Every score under Reviews below is a score of the form the rewrite replaced"
+        in lead_in
+    )
 
 
 def test_a_rewrite_every_criterion_saw_again_says_nothing_about_what_was_missed():
@@ -288,6 +291,52 @@ def test_a_rewrite_every_criterion_saw_again_says_nothing_about_what_was_missed(
     lead_in, _, _ = _revised_form(record, _candidate("cand_a"))
 
     assert "not run again" not in lead_in
+
+
+def test_a_re_run_criterion_does_not_claim_the_score_printed_below_is_the_new_one():
+    """A live chapter said "the safety review said advance the idea as written", named
+    the other four criteria as the ones not re-run, and then printed a Safety review
+    answering "revise it first" with a score under it. The re-review is filed against
+    the rewrite's own id and never reaches the Reviews section, so every score there
+    is a score of the ranked form -- the re-run criterion's included."""
+    from coscientist.narrative import _revised_form
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.reviews = [
+        ReviewSet(
+            reviews=[
+                _review("cand_a", criterion=criterion, recommendation="revise")
+                for criterion in (
+                    "evidence_correctness",
+                    "novelty",
+                    "methods_feasibility",
+                    "impact_safety",
+                    "safety_governance",
+                )
+            ]
+        )
+    ]
+    record.evolution = EvolutionCycle(
+        records=[_evolved("cand_a_v2", "cand_a", 2)],
+        rereviews=[
+            _review(
+                "cand_a_v2", criterion="safety_governance", recommendation="advance"
+            )
+        ],
+    )
+    _trace_lineage(record, {"cand_a"})
+
+    lead_in, _, _ = _revised_form(record, _candidate("cand_a"))
+
+    assert "the safety review said advance the idea as written" in lead_in
+    assert "correctness, novelty, feasibility, and impact — were not run again." in (
+        lead_in
+    )
+    assert (
+        "Every score under Reviews below is a score of the form the rewrite "
+        "replaced, re-run criteria included: what a re-review recorded is the "
+        "verdict stated above, and it puts no score into that section." in lead_in
+    )
 
 
 def test_the_fields_a_rewrite_left_alone_are_named_as_english_not_as_labels():
