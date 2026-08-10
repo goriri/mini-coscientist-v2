@@ -2254,7 +2254,9 @@ def test_a_finding_more_than_one_idea_rests_on_is_reported_as_carrying_them_both
     briefs = build_idea_briefs(record)
     stated = shared_grounding_reach(record, briefs)[0]
 
-    assert stated.startswith("Of the six ideas below, more than one rests on the same ")
+    assert stated.startswith(
+        "Of the six ideas below, more than one cites the same source: "
+    )
     assert "[2] by two of them" in stated
     assert "reaches further than the section reporting it" in stated
     # Once, above the ideas -- not under each idea that cites the finding.
@@ -2278,9 +2280,34 @@ def test_more_than_one_shared_finding_is_not_announced_as_the_same_one(
     stated = shared_grounding_reach(record, briefs)[0]
 
     assert stated.startswith(
-        "Of the six ideas below, more than one rests on each of two findings: "
+        "Of the six ideas below, more than one cites each of two sources: "
     )
-    assert "the same finding" not in stated
+    assert "the same source" not in stated
+
+
+def test_two_findings_out_of_one_paper_are_not_reported_as_one_finding(
+    rich_session: Session,
+):
+    """The overlap is counted on the reference marker, which names a document. Two
+    ideas citing two different findings out of the same paper were reported as
+    resting on the same finding -- a claim about the evidence that nothing in the
+    record makes, in the paragraph a reader uses to size correlated risk."""
+    from coscientist.narrative import shared_grounding_reach
+
+    record = load_record(rich_session)
+    claims = {claim.id: claim for claim in record.evidence.claims}
+    # Two findings, one paper behind both, one idea apiece.
+    claims["claim_2"].source_id = claims["claim_1"].source_id
+    claims["claim_2"].relation = claims["claim_1"].relation = "supports"
+    by_id = {candidate.id: candidate for candidate in record.candidates}
+    by_id["candidate_0002"].evidence_ids = ["claim_1"]
+    by_id["candidate_0003"].evidence_ids = ["claim_2"]
+    briefs = build_idea_briefs(record)
+
+    stated = shared_grounding_reach(record, briefs)[0]
+
+    assert "rests on the same finding" not in stated
+    assert "more than one cites the same source: " in stated
 
 
 def test_a_field_whose_ideas_share_no_finding_says_nothing_about_sharing(
@@ -6919,3 +6946,22 @@ def test_the_leader_is_named_where_the_runner_up_was_just_named_twice(
 
     assert paragraph.count("It was never paired") == 0
     assert "The leading idea was never paired against" in paragraph
+
+
+def test_a_cited_finding_is_labelled_with_the_direction_the_record_actually_holds():
+    """The direction on file is the evidence stage's reading of the claim against the
+    research question, taken before any idea existed. Printed as "the findings this
+    idea cites in support", a finding the specialist had filed under Evidence Against
+    in the same section was listed two paragraphs above it as evidence for."""
+    from coscientist.narrative import _CitedEvidence, _motivation
+
+    stated = _motivation(
+        {"Discriminating predictions": "Fade diverges after 200 cycles."},
+        _CitedEvidence(supports=["Coated cells lose half as much capacity."]),
+    )
+
+    assert "cites in support" not in stated
+    assert (
+        "The findings this idea cites that the evidence stage recorded as arguing "
+        "for the research question: " in stated
+    )

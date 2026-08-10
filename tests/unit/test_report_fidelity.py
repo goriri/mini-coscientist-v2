@@ -1716,8 +1716,8 @@ def test_a_recorded_fatal_flaw_does_not_restate_the_guides_sentence_either():
         shortlisted=False,
     )["Critical Flaws"]
     assert (
-        "printed in full under Deep Verification below, and no reviewer withdrew it"
-        in critical
+        "printed in full under Deep Verification below. Nothing later in this run "
+        "revisited it." in critical
     )
     assert "Nothing in this run tested it" not in critical
 
@@ -3987,3 +3987,42 @@ def test_constraints_reached_in_different_places_are_still_told_apart():
 
     assert "constraint one, in one review under Feasibility" in line
     assert "constraint two, in one review under Correctness" in line
+
+
+def test_a_flaw_the_rewrite_was_re_reviewed_clean_of_is_not_said_to_still_stand():
+    """The notice closed "and no reviewer withdrew it" without consulting the one
+    stage that revisits a flaw. On an idea whose rewrite was re-reviewed and recorded
+    no fatal flaw, the sentence a reader checks asserted the flaw stood, and the
+    verdict saying otherwise was three subsections below."""
+    from coscientist.narrative import _summary_sections
+
+    critical = _summary_sections(
+        _facts(),
+        [_idea_review(section="Correctness", score=1, fatal_flaws=["No such cell."])],
+        rank=1,
+        elo=1200,
+        shortlisted=False,
+        rereviews=[_review("cand_a", recommendation="advance")],
+    )["Critical Flaws"]
+
+    assert "no reviewer withdrew it" not in critical
+    assert (
+        "The rewrite of this idea was re-reviewed and no fatal flaw was recorded "
+        "against the rewrite — a verdict on the rewritten text, not a withdrawal of "
+        "it." in critical
+    )
+
+
+def test_a_flaw_the_rewrite_carries_too_is_reported_as_carried():
+    from coscientist.narrative import _summary_sections
+
+    critical = _summary_sections(
+        _facts(),
+        [_idea_review(section="Correctness", score=1, fatal_flaws=["No such cell."])],
+        rank=1,
+        elo=1200,
+        shortlisted=False,
+        rereviews=[_review("cand_a", fatal_flaws=["The cell still does not exist."])],
+    )["Critical Flaws"]
+
+    assert "a fatal flaw was recorded against the rewrite as well." in critical

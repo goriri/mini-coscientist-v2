@@ -3206,13 +3206,18 @@ def shared_support_notices(
 def shared_grounding_reach(
     record: ResearchRecord, briefs: Sequence[IdeaBrief]
 ) -> list[str]:
-    """Which findings carry more than one idea, which no idea's own section can say.
+    """Which sources carry more than one idea, which no idea's own section can say.
 
     Each idea names the findings it cites under Supporting Arguments, and on a live
-    run three ideas named the same single finding there. Read one section at a time
-    that is three grounded ideas; read together it is one finding holding up three of
-    the seven, and a fault in it takes all three. The overlap is a fact about the
-    field rather than about any idea, so it is stated once, above them.
+    run three ideas named findings out of the same single paper there. Read one
+    section at a time that is three grounded ideas; read together it is one document
+    holding up three of the seven, and a retraction takes all three. The overlap is a
+    fact about the field rather than about any idea, so it is stated once, above them.
+
+    Counted by source, which is what a reference marker names and what the risk this
+    paragraph exists for attaches to. It said "finding" over the same count: two ideas
+    citing two different findings out of one paper were reported as resting on the
+    same finding, which is a claim about the evidence that the record does not make.
     """
     below = [brief.candidate_id for brief in briefs]
     if len(below) < 2:
@@ -3251,11 +3256,11 @@ def shared_grounding_reach(
     )
     if not shared:
         return []
-    # A shared finding this report gave no reference number to cannot be pointed at
+    # A shared source this report gave no reference number to cannot be pointed at
     # from here, and a list that quietly drops it reads as the whole overlap.
     withheld = ""
     if unnumbered:
-        counted = _plural(len(unnumbered), "further cited finding")
+        counted = _plural(len(unnumbered), "further cited source")
         single = len(unnumbered) == 1
         withheld = (
             f" {counted[:1].upper()}{counted[1:]} "
@@ -3267,12 +3272,12 @@ def shared_grounding_reach(
     return [
         f"Of the {_number_word(len(set(below))).lower()} ideas below, more than one "
         + (
-            "rests on the same finding: "
+            "cites the same source: "
             if len(shared) == 1
-            # "The same finding" is one finding, and a live run put three after the
+            # "The same source" is one source, and a live run put three after the
             # colon. Read as an expansion of the singular, the sentence promises one
-            # shared finding and the reader counts two more.
-            else f"rests on each of {_number_word(len(shared)).lower()} findings: "
+            # shared source and the reader counts two more.
+            else f"cites each of {_number_word(len(shared)).lower()} sources: "
         )
         # "Of them" once, on the first item: on a live run of three shared findings
         # it was on all three, and the tail of the sentence read as three copies of
@@ -3285,8 +3290,8 @@ def shared_grounding_reach(
             ]
         )
         + ". Each idea's Supporting Arguments section names the findings that idea "
-        "cites and not the other ideas citing them, so a fault in a shared finding "
-        "reaches further than the section reporting it." + withheld,
+        "cites and not the other ideas drawing on the same papers, so a fault in a "
+        "shared source reaches further than the section reporting it." + withheld,
         "",
     ]
 
@@ -4721,7 +4726,9 @@ def _attributed_responses(reviews: Sequence[IdeaReview]) -> str:
     return " ".join(parts)
 
 
-def _fatal_flaw_notice(faulted: Sequence[IdeaReview]) -> str:
+def _fatal_flaw_notice(
+    faulted: Sequence[IdeaReview], rereviews: Sequence[CandidateReview] = ()
+) -> str:
     """Who recorded a fatal flaw against the idea, and where the finding is printed.
 
     The subsection is headed Critical Flaws and until this was added it could not
@@ -4729,6 +4736,14 @@ def _fatal_flaw_notice(faulted: Sequence[IdeaReview]) -> str:
     than what it is. So an idea whose correctness review had written the reason it does
     not work printed "the correctness review scored this idea at or below two of five"
     and sent the reader to a list of objections that did not contain the finding.
+
+    It then closed "and no reviewer withdrew it" without consulting the one stage that
+    could have: the re-reviews evolution runs against the rewrite. On an idea that was
+    rewritten and re-reviewed clean, the report asserted the flaw still stood in the
+    only sentence a reader would check, and the verdict that says otherwise was three
+    subsections below. A re-review is a verdict on the rewritten text and not a
+    withdrawal of a finding against this one, which is exactly the distinction the
+    sentence has to make rather than assume away.
     """
     flaws = sum(len(review.fatal_flaws) for review in faulted)
     # _joined_titles punctuates a list of idea titles, which are long enough to need
@@ -4761,9 +4776,25 @@ def _fatal_flaw_notice(faulted: Sequence[IdeaReview]) -> str:
         # That nothing in the run tested the items in that list is the reading
         # guide's, stated once over all of them. Restated here it was a second copy
         # of one sentence inside the subsection the guide is about.
-        + " printed in full under Deep Verification below, and no reviewer withdrew "
-        + ("it" if flaws == 1 else "any of them")
-        + "."
+        + " printed in full under Deep Verification below. "
+        + _flaw_standing(flaws, rereviews)
+    )
+
+
+def _flaw_standing(flaws: int, rereviews: Sequence[CandidateReview]) -> str:
+    """Whether anything later in the run went back over a recorded fatal flaw."""
+    it = "it" if flaws == 1 else "any of them"
+    if not rereviews:
+        return f"Nothing later in this run revisited {it}."
+    if any(review.fatal_flaws for review in rereviews):
+        return (
+            "The rewrite of this idea was re-reviewed and a fatal flaw was recorded "
+            "against the rewrite as well."
+        )
+    return (
+        "The rewrite of this idea was re-reviewed and no fatal flaw was recorded "
+        f"against the rewrite — a verdict on the rewritten text, not a withdrawal of "
+        f"{it}."
     )
 
 
@@ -4936,17 +4967,24 @@ def _motivation(facts: dict[str, str], cited: _CitedEvidence) -> str:
     What the idea cites is not all support. A cited record the evidence stage put no
     direction on is named here as that, and one it recorded as cutting against the
     question is reported with the idea's grounding rather than twice.
+
+    And the direction on file is to the research question, not to the idea citing it:
+    the evidence stage reads a claim against the goal, long before any idea exists.
+    Printed as "the findings this idea cites in support", a finding the specialist had
+    filed under Evidence Against inside the very same section was listed two
+    paragraphs above it as evidence for.
     """
     stated: list[str] = []
     if cited.supports:
         stated.append(
-            "The findings this idea cites in support: "
+            "The findings this idea cites that the evidence stage recorded as "
+            "arguing for the research question: "
             + _join(cited.supports, fallback="none.")
         )
     if cited.undirected:
         stated.append(
             ("What it cites " if cited.supports else "What this idea cites ")
-            + "with no direction recorded either way: "
+            + "with no direction recorded either way on the question: "
             + _join(cited.undirected, fallback="none.", named=cited.titled)
         )
     if not stated:
@@ -5051,6 +5089,7 @@ def _summary_sections(
     tie_straddles_cut: bool = False,
     cited: _CitedEvidence | None = None,
     novelty_field: Sequence[int] = (),
+    rereviews: Sequence[CandidateReview] = (),
 ) -> dict[str, str]:
     """The eight fixed Summary subsections the reference reports print per idea.
 
@@ -5134,7 +5173,7 @@ def _summary_sections(
                 # The chapter head printed this idea's accepted flaw in full a page
                 # above, so here it is recalled rather than quoted a second time.
                 accepted_flaw.reprise if accepted_flaw else "",
-                _fatal_flaw_notice(faulted) if faulted else "",
+                _fatal_flaw_notice(faulted, rereviews) if faulted else "",
                 _low_score_notice(scored_low_only) if scored_low_only else "",
             )
             if item
@@ -6171,6 +6210,7 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
                     ),
                     cited=_cited_evidence(record, candidate),
                     novelty_field=novelty_field,
+                    rereviews=record.rereviews_of_latest(candidate.id),
                 ),
                 table_rows=_table_rows(candidate),
                 reviews=reviews,
