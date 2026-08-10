@@ -843,6 +843,26 @@ button {
   margin-bottom: 0;
 }
 
+/* The list keeps the rhythm of the paragraphs around it: the browser default
+   indents it forty pixels and spaces it a full line, which reads as a break in
+   the section rather than as part of the sentence that introduces it. */
+.message-copy ul {
+  margin: 0 0 0.8em;
+  padding-left: 1.3em;
+}
+
+.message-copy ul:last-child {
+  margin-bottom: 0;
+}
+
+.message-copy li {
+  margin: 0 0 0.35em;
+}
+
+.message-copy li:last-child {
+  margin-bottom: 0;
+}
+
 .artifact-section + .artifact-section {
   margin-top: 18px;
   padding-top: 18px;

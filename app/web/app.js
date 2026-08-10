@@ -154,10 +154,24 @@ function formatPlainText(value) {
         .trim()
         .split(/\n{2,}/)
         .filter(Boolean)
-        .map(
-          (paragraph) =>
-            `<p>${formatInline(paragraph).replaceAll("\n", "<br>")}</p>`,
-        )
+        .map((block) => {
+          // A block whose every line opens on a dash is a list, and the report
+          // writes one wherever a section holds more entries than a sentence can
+          // carry -- the findings an idea cites, the steps of a rewritten protocol,
+          // the clusters. Run through the paragraph branch they arrived as one
+          // block of dashes separated by line breaks.
+          const lines = block.split("\n");
+          if (lines.length > 1 && lines.every((line) => /^\s*[-*]\s+/.test(line))) {
+            const items = lines
+              .map(
+                (line) =>
+                  `<li>${formatInline(line.replace(/^\s*[-*]\s+/, ""))}</li>`,
+              )
+              .join("");
+            return `<ul>${items}</ul>`;
+          }
+          return `<p>${formatInline(block).replaceAll("\n", "<br>")}</p>`;
+        })
         .join("");
     })
     .join("");
