@@ -4296,17 +4296,22 @@ def _folded_for_series(item: object) -> str:
     return " ".join(str(item).split()).rstrip(".")
 
 
-def _join(items: Sequence[str], *, fallback: str, named: Iterable[str] = ()) -> str:
-    """Fold a payload list into prose; the reference reports carry no bare stubs."""
-    # Cleaned the same way the items are, because that is the form the series sees.
-    kept = {_folded_for_series(item) for item in named}
-    cleaned = [
+def _kept_for_series(items: Sequence[str]) -> list[str]:
+    """The items a series prints: the stubs and the serialised payloads are not."""
+    return [
         _folded_for_series(item)
         for item in items
         if str(item).strip()
         and str(item).strip().lower() not in _STUB_VALUES
         and not _looks_serialised(str(item))
     ]
+
+
+def _join(items: Sequence[str], *, fallback: str, named: Iterable[str] = ()) -> str:
+    """Fold a payload list into prose; the reference reports carry no bare stubs."""
+    # Cleaned the same way the items are, because that is the form the series sees.
+    kept = {_folded_for_series(item) for item in named}
+    cleaned = _kept_for_series(items)
     if not cleaned:
         return fallback
     # An item that is itself two sentences cannot be a conjunct: folded in, its second
@@ -5342,6 +5347,11 @@ def _cited_series(items: Sequence[str], cited: _CitedEvidence) -> str:
     two statements resting on one record produced "at [9], [9]", which names one
     place twice and tells a reader nothing about which two.
     """
+    return _join(_cited_items(items, cited), fallback="none.", named=cited.titled)
+
+
+def _cited_items(items: Sequence[str], cited: _CitedEvidence) -> list[str]:
+    """One direction's cited findings, one entry each, before they are set."""
     fresh = [item for item in items if item not in cited.restated]
     above = [cited.restated[item] for item in items if item in cited.restated]
     if above:
@@ -5350,7 +5360,30 @@ def _cited_series(items: Sequence[str], cited: _CitedEvidence) -> str:
         fresh.append(
             f"the {noun} printed above under Evidence Assessment citing {_names(markers)}"
         )
-    return _join(fresh, fallback="none.", named=cited.titled)
+    return fresh
+
+
+_SERIES_IN_A_SENTENCE = 320
+"""How much cited text a sentence carries before the findings are set as a list."""
+
+
+def _cited_setting(lead_in: str, items: Sequence[str], cited: _CitedEvidence) -> str:
+    """One direction's findings, set as a sentence or as a list of their own.
+
+    A finding recorded by a Deep Research pass is a paragraph as often as it is a
+    sentence, and several of them folded into one series is a wall: a live idea's
+    Motivation ran two thousand characters without a break, five multi-sentence
+    findings deep, and nothing in it told the reader where one finding stopped and
+    the next began. Past the length a reader can hold, they are set one to a line.
+    """
+    entries = _kept_for_series(_cited_items(items, cited))
+    series = _join(entries, fallback="none.", named=cited.titled)
+    if len(series) <= _SERIES_IN_A_SENTENCE or len(entries) < 2:
+        return f"{lead_in}{series}"
+    # One to a line, each keeping the capital it was written with: a list has no
+    # series for an entry to be folded into, and a paper's name is not a sentence.
+    listed = "\n".join(f"- {_sentence(entry)}" for entry in entries)
+    return f"{lead_in.rstrip()}\n\n{listed}"
 
 
 def _motivation(facts: dict[str, str], cited: _CitedEvidence) -> str:
@@ -5407,16 +5440,23 @@ def _motivation(facts: dict[str, str], cited: _CitedEvidence) -> str:
             "does."
         )
         stated.append(
-            "The findings this idea cites that the evidence stage recorded as "
-            "arguing for the research question: "
-            + _cited_series(cited.supports, cited)
-            + against
+            _cited_setting(
+                "The findings this idea cites that the evidence stage recorded as "
+                "arguing for the research question: ",
+                cited.supports,
+                cited,
+            )
         )
+        if against:
+            stated.append(against.strip())
     if cited.undirected:
         stated.append(
-            ("What it cites " if cited.supports else "What this idea cites ")
-            + "with no direction recorded either way on the question: "
-            + _cited_series(cited.undirected, cited)
+            _cited_setting(
+                ("What it cites " if cited.supports else "What this idea cites ")
+                + "with no direction recorded either way on the question: ",
+                cited.undirected,
+                cited,
+            )
         )
     if not stated:
         stated.append(
@@ -5429,22 +5469,25 @@ def _motivation(facts: dict[str, str], cited: _CitedEvidence) -> str:
             if cited.contradicts
             else "No finding in this report's evidence is cited for this idea."
         )
-    lead = " ".join(stated) + " "
     if not _stated(facts, "Discriminating predictions"):
-        return lead + (
+        stated.append(
             "No discriminating prediction was stated for it"
             + ("" if cited else " either")
             + ", so there is nothing here that a result could confirm or refute, and "
             "the case for the idea rests on its mechanism alone."
         )
-    # That no result in this run tested the prediction is true of every prediction in
-    # the report -- the run proposes work rather than doing any -- so it is stated in
-    # the preamble above the ideas rather than under each of the seven ideas whose
-    # case rests on one.
-    return lead + (
-        ("The rest of the case " if cited.supports else "The case ")
-        + "for it is the discriminating prediction under Description."
-    )
+    else:
+        # That no result in this run tested the prediction is true of every prediction
+        # in the report -- the run proposes work rather than doing any -- so it is
+        # stated in the preamble above the ideas rather than under each of the seven
+        # ideas whose case rests on one.
+        stated.append(
+            ("The rest of the case " if cited.supports else "The case ")
+            + "for it is the discriminating prediction under Description."
+        )
+    # A section holding a list is a sequence of blocks, and the sentences around the
+    # list are blocks of their own; one holding none is the paragraph it always was.
+    return ("\n\n" if any("\n" in block for block in stated) else " ").join(stated)
 
 
 def _novelty_standing(review: IdeaReview | None, field: Sequence[int]) -> str:

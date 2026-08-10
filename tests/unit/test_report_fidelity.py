@@ -1517,6 +1517,115 @@ def test_an_idea_citing_sources_is_not_told_it_cites_no_evidence():
     )
 
 
+def test_findings_too_long_to_read_as_a_series_are_set_one_to_a_line():
+    """A finding a Deep Research pass records is a paragraph as often as a sentence,
+    and several folded into one series is a wall: a live idea's Motivation ran two
+    thousand characters unbroken, five multi-sentence findings deep, with nothing in
+    it to tell a reader where one finding stopped and the next began."""
+    from coscientist.models import EvidenceClaim, EvidencePacket, SourceRecord
+    from coscientist.narrative import _cited_evidence, _motivation
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="src_1",
+                url="https://example.org/alumina",
+                title="Atomic layer deposition of alumina",
+                verification_status="verified",
+            )
+        ],
+        claims=[
+            EvidenceClaim(
+                id=f"claim_{index}",
+                source_id="src_1",
+                claim=text,
+                relation="supports",
+            )
+            for index, text in enumerate(
+                (
+                    "A single- to few-layer HfO2 nanoparticle coating on NCM85 "
+                    "cathodes improves capacity retention to about seventy per cent "
+                    "after two hundred cycles at 0.2C, against fifty-eight per cent "
+                    "for the uncoated control.",
+                    "The HfO2 coating inhibits the release of lattice oxygen and "
+                    "prevents the formation of sulphur dioxide gas, mitigating the "
+                    "interfacial side reactions that build charge transfer "
+                    "resistance over the life of the cell.",
+                ),
+                start=1,
+            )
+        ],
+    )
+    candidate = _candidate("cand_a")
+    candidate.evidence_ids = ["claim_1", "claim_2"]
+
+    motivation = _motivation(
+        {"Discriminating predictions": "Retention diverges by cycle 200."},
+        _cited_evidence(record, candidate),
+    )
+    lines = motivation.splitlines()
+
+    assert lines[0].endswith("arguing for the research question:")
+    assert [line for line in lines if line.startswith("- ")] == [
+        "- A single- to few-layer HfO2 nanoparticle coating on NCM85 cathodes "
+        "improves capacity retention to about seventy per cent after two hundred "
+        "cycles at 0.2C, against fifty-eight per cent for the uncoated control.",
+        "- The HfO2 coating inhibits the release of lattice oxygen and prevents the "
+        "formation of sulphur dioxide gas, mitigating the interfacial side reactions "
+        "that build charge transfer resistance over the life of the cell.",
+    ]
+    # The sentence that closes the section is its own block rather than a tail run
+    # onto the last bullet, where it would read as part of that finding.
+    assert lines[-1] == (
+        "The rest of the case for it is the discriminating prediction under "
+        "Description."
+    )
+
+
+def test_two_short_findings_stay_in_the_sentence_that_introduces_them():
+    """A list of two clauses a reader takes in at a glance costs more than it pays."""
+    from coscientist.models import EvidenceClaim, EvidencePacket, SourceRecord
+    from coscientist.narrative import _cited_evidence, _motivation
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="src_1",
+                url="https://example.org/alumina",
+                title="Atomic layer deposition of alumina",
+                verification_status="verified",
+            )
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_1",
+                source_id="src_1",
+                claim="Thin coatings raise retention",
+                relation="supports",
+            ),
+            EvidenceClaim(
+                id="claim_2",
+                source_id="src_1",
+                claim="Thick coatings raise impedance",
+                relation="supports",
+            ),
+        ],
+    )
+    candidate = _candidate("cand_a")
+    candidate.evidence_ids = ["claim_1", "claim_2"]
+
+    motivation = _motivation({}, _cited_evidence(record, candidate))
+
+    assert "\n" not in motivation
+    assert "Thin coatings raise retention, and thick coatings raise impedance." in (
+        motivation
+    )
+
+
 def test_a_finding_the_specialist_read_the_other_way_says_so_where_it_is_reused():
     """The direction on file is the evidence stage's reading of the research question,
     read long before any idea exists. On the disconfirming idea of a live run -- that
