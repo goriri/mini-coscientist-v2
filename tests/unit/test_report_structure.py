@@ -6730,3 +6730,133 @@ def test_a_run_that_searched_for_itself_keeps_the_search_in_its_desk_work(
 
     assert "An evidence base this run did not gather" not in report
     assert "Every stage of it is desk work: a literature search" in report
+
+
+def _chapter_lead(rich_session: Session, opening: str) -> str:
+    """The paragraph of the compiled report that starts with ``opening``."""
+    return next(
+        line
+        for line in compile_dossier(rich_session).splitlines()
+        if line.startswith(opening)
+    )
+
+
+def test_the_generation_strategies_are_named_where_the_chapter_counts_them(
+    rich_session: Session,
+):
+    """The chapter opened "across the strategies described above" over an idea count.
+    Nothing above it holds such a list -- the chapters before describe research
+    directions and mechanism clusters, and neither uses the word -- so a reader
+    looking back for the set to read eight ideas against found no set."""
+    lead = _chapter_lead(rich_session, "The generator produced")
+
+    assert "described above" not in lead
+    assert (
+        "Four generation strategies worked the question in parallel: evidence "
+        "first, mechanism first, analogy transfer, and competing explanation." in lead
+    )
+
+
+def test_a_run_that_recorded_no_strategy_names_none(rich_session: Session):
+    """The names come off the candidates, so a run that recorded none has to open the
+    chapter without a dangling colon where the series would have been."""
+    from dataclasses import replace
+
+    from coscientist.narrative import _section_four, build_idea_briefs
+
+    record = load_record(rich_session)
+    briefs = [replace(brief, strategy="") for brief in build_idea_briefs(record)]
+
+    lead = _section_four(record, briefs).core[0]
+
+    assert "worked the question in parallel" not in lead
+    assert lead.startswith(
+        "The generator produced six ideas, each stated as a claim that can be "
+        "shown to be wrong. They are set out here in rank order"
+    )
+
+
+def test_the_review_passes_are_named_as_the_rest_of_the_report_names_them(
+    rich_session: Session,
+):
+    """Written out by hand, the lead-in invented two names nothing else uses. A reader
+    who went looking for the "methods and feasibility" or "safety and governance"
+    pass found the methods and statistics reviewer and the ethics, safety and
+    governance reviewer on the cover, and no way to tell whether five had run or
+    seven."""
+    lead = _chapter_lead(rich_session, "Five independent reviews were run")
+
+    assert (
+        "Five independent reviews were run against each idea: evidence and "
+        "correctness; novelty; methods and statistics; impact; and ethics, safety "
+        "and governance." in lead
+    )
+    assert "methods and feasibility" not in lead
+    assert "reviews were run against each idea: safety and governance" not in lead
+
+
+def test_the_score_legend_counts_the_routes_to_a_two_that_it_lists(
+    rich_session: Session,
+):
+    """ "Two different reviews therefore print the same number" opened a colon that
+    then listed three ways of reaching a two, so a reader counting them found one
+    more than the sentence promised -- in the paragraph that defines how every score
+    in the report is to be read."""
+    lead = _chapter_lead(rich_session, "Five independent reviews were run")
+
+    assert "Reviews that reached different verdicts therefore print the same" in lead
+    assert "Two different reviews therefore print" not in lead
+
+
+def test_the_score_legend_sends_the_reader_where_both_halves_are_printed(
+    rich_session: Session,
+):
+    """It sent them to Deep Verification, which holds the fatal flaws and the
+    objections -- the one subsection that prints neither the recommendation nor the
+    confidence the sentence has just said the number cannot be read without."""
+    lead = _chapter_lead(rich_session, "Five independent reviews were run")
+    pointer = lead.split("has to be read off the review itself,")[1]
+
+    assert "printed under Reviews in the idea's own section" in pointer
+    assert "Deep Verification" not in pointer
+
+
+def test_the_success_criteria_are_set_apart_only_where_there_is_a_second_block(
+    rich_session: Session,
+):
+    """The cover prints the comparison criteria only where the run recorded some, so
+    on a run that recorded none the sentence sent a reader back to page one for a
+    block that is not there -- four lines after the same section had told them no
+    cross-candidate criterion was recorded."""
+    from coscientist.narrative import _section_two
+
+    record = load_record(rich_session)
+    record.population.comparison_criteria = []
+
+    lead = next(
+        paragraph
+        for paragraph in _section_two(record).core
+        if paragraph.startswith("Success for the goal as a whole")
+    )
+
+    assert "is stated under Criteria on the cover. No stage of this run" in lead
+    assert "apart from the comparison criteria" not in lead
+    assert "score well under the reviews and still fail to advance the goal" in lead
+
+
+def test_a_goal_too_long_to_print_whole_is_still_shortened_in_its_own_mood(
+    rich_session: Session,
+):
+    """Deriving a title strips the terminal punctuation, so a question of more than
+    twelve words came back as a statement and the cover asserted what the goal,
+    printed under it, asks."""
+    rich_session.question = (
+        "Can a thin protective surface coating meaningfully improve the cycle life "
+        "of commercial lithium-ion battery cathodes under fast charging?"
+    )
+
+    report = compile_dossier(rich_session)
+
+    assert report.splitlines()[0].endswith("?")
+    # And the chapter headings that hang the title off a preposition stay out of it.
+    assert "Ranked Research Ideas for Can a" not in report

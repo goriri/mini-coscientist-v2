@@ -7137,8 +7137,18 @@ _NO_EVIDENCE = (
 
 
 def _goal_title(session: Session) -> str:
-    """A short document title, since the raw question runs to a paragraph."""
-    return derive_idea_title(session.question, max_words=12)
+    """A short document title, since the raw question runs to a paragraph.
+
+    In the mood the goal was written in. Deriving a title strips the terminal
+    punctuation, so a question of more than twelve words came back as a statement
+    and the cover asserted what the goal, printed under it, asks: "Does a
+    Protective Coating Improve Rechargeable Battery Cycle Life". The full question
+    is on the same page, so a shortened one cannot be read as the whole of it.
+    """
+    title = derive_idea_title(session.question, max_words=12)
+    if session.question.rstrip().endswith("?") and not title.rstrip().endswith("?"):
+        return f"{title}?"
+    return title
 
 
 def _for_the_goal(session: Session) -> str:
@@ -7149,7 +7159,15 @@ def _for_the_goal(session: Session) -> str:
     Interphase Coating Extend Lithium-ion Battery Cycle Life?" changes mood halfway
     through and ends on punctuation the heading did not ask for. The document's title
     is that question, set one page above, so the qualifier adds nothing there either.
+
+    Read off the question rather than off the title, because the title is the
+    question cut to twelve words with its punctuation stripped: a fourteen-word
+    goal cleared this guard and set "Ranked Research Ideas for Does a Protective
+    Coating Improve Rechargeable Battery Cycle Life" over the ideas chapter, and
+    the same words again over Candidate Ideas.
     """
+    if session.question.rstrip().endswith("?"):
+        return ""
     title = _goal_title(session)
     return "" if title.rstrip().endswith("?") else f" for {title}"
 
@@ -7502,6 +7520,14 @@ def _labelled_bullets(items: Sequence[str]) -> str:
     return "\n".join(bullets)
 
 
+def _reviewed_by() -> str:
+    """The five review passes as a series, named as the rest of the report names them."""
+    names = [
+        _AGENT_NAMES[reviewer].removesuffix(" review") for reviewer in _REVIEWER_NAMES
+    ]
+    return "; ".join([*names[:-1], f"and {names[-1]}"])
+
+
 def _section_two(record: ResearchRecord) -> _Draft:
     criteria = record.population.comparison_criteria if record.population else []
     plan = record.plan
@@ -7536,9 +7562,16 @@ def _section_two(record: ResearchRecord) -> _Draft:
         )
     ]
     core.append(
-        "Five independent reviews were run against each idea: evidence and "
-        "correctness, novelty, methods and feasibility, impact, and safety and "
-        "governance. Safety is read separately from impact because it decides whether "
+        # The five as the rest of the document names them. Written out by hand this
+        # sentence invented two names nothing else uses -- "methods and feasibility"
+        # and "safety and governance" -- so a reader who went looking for either
+        # found the methods and statistics reviewer and the ethics, safety and
+        # governance reviewer on the cover twenty lines above, and no way to tell
+        # whether five passes had run or seven. Semicolons because the last of the
+        # five has a comma inside it.
+        "Five independent reviews were run against each idea: "
+        + _reviewed_by()
+        + ". Safety is read separately from impact because it decides whether "
         "the work may proceed at all rather than whether it is worth proceeding. Each "
         # The legend used to read the scale straight off the recommendation --
         # five advance, three revise, two insufficient, one reject -- and then
@@ -7557,20 +7590,41 @@ def _section_two(record: ResearchRecord) -> _Draft:
         # after it -- that neither can be read off the number alone -- contradicted
         # the example it had just given. The number is two facts added together, and
         # what a reader can do about that is go to the review.
-        "below 0.30. Two different reviews therefore print the same number: a four "
-        "is a confidently held revise or an advance its reviewer was diffident "
-        "about, and a two is a confident rejection, an unmoved finding that the "
-        "evidence is too thin, or a revise held below 0.30. Which of them a given "
-        "score is has to be read off the review itself, printed in full under Deep "
-        "Verification in the idea's own section. A reviewer who records a "
+        # "Two different reviews therefore print the same number" over a colon that
+        # then lists three ways of reaching a two: the reader counts the routes,
+        # finds one more than the sentence promised, and cannot tell whether the
+        # legend is wrong or incomplete -- in the paragraph that defines how every
+        # score in the report is to be read.
+        "below 0.30. Reviews that reached different verdicts therefore print the "
+        "same number: a four is a confidently held revise or an advance its "
+        "reviewer was diffident about, and a two is a confident rejection, an "
+        "unmoved finding that the evidence is too thin, or a revise held below "
+        # Deep Verification holds the fatal flaws and the objections. The
+        # recommendation and the confidence -- the two facts this paragraph has just
+        # said the number cannot be read without -- are under Reviews, so the
+        # sentence sent a reader to the one subsection that prints neither.
+        "0.30. Which of them a given score is has to be read off the review itself, "
+        "printed under Reviews in the idea's own section, where each review states "
+        "its recommendation and the confidence it held it at. A reviewer who records a "
         "fatal flaw caps the score at two whatever the recommendation, because an "
         "unresolved fatal flaw is disqualifying rather than merely costly."
     )
     if plan and plan.success_criteria:
         core.append(
             "Success for the goal as a whole was defined separately from per-idea "
-            "scoring, and is stated under Criteria on the cover, in its own block "
-            "apart from the comparison criteria the scoring used. No stage of this "
+            "scoring, and is stated under Criteria on the cover"
+            # Only where there is a second block to be apart from. The cover prints
+            # the comparison criteria only when the run recorded some, so on a run
+            # that recorded none this sentence sent a reader back to page one for a
+            # block that is not there -- four lines after the same section had told
+            # them no cross-candidate criterion was recorded.
+            + (
+                ", in its own block apart from the comparison criteria the scoring "
+                "used. "
+                if criteria
+                else ". "
+            )
+            + "No stage of this "
             # "Nothing in this run measured an idea against it" was a claim about the
             # whole run resting on the absence of a stage: reviewers and judges write
             # about the goal constantly, and one of them may well have weighed an idea
@@ -7578,8 +7632,9 @@ def _section_two(record: ResearchRecord) -> _Draft:
             # narrower statement -- no score on this page is a score against them --
             # and the old closing clause then made the opposite promise, that the
             # ranking exposes the gap. Nothing in the run measures it, so it cannot.
-            "run scored an idea against it. An idea can therefore score well on the "
-            "comparison criteria and still fail to advance the goal, and no ranking "
+            "run scored an idea against it. An idea can therefore score well "
+            + ("on the comparison criteria" if criteria else "under the reviews")
+            + " and still fail to advance the goal, and no ranking "
             "below closes that gap: it has to be closed by reading the success "
             "criteria against whichever idea is being considered."
         )
@@ -8060,9 +8115,24 @@ def _section_four(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
     title = f"Candidate Ideas{_for_the_goal(record.session)}"
     withdrawals = record.withdrawals
     generated = len(briefs) + len(withdrawals)
+    # "across the strategies described above" named a list nothing above it holds:
+    # the chapters before this one describe research directions and mechanism
+    # clusters, and the word strategy appears in neither. A reader looked back for a
+    # set to check eight ideas against and found no such set.
+    strategies = list(
+        dict.fromkeys(brief.strategy for brief in briefs if brief.strategy)
+    )
     core = [
-        f"The generator produced {_plural(generated, 'idea')} across the strategies "
-        "described above, each stated as a claim that can be shown to be wrong. They "
+        f"The generator produced {_plural(generated, 'idea')}, "
+        "each stated as a claim that can be shown to be wrong."
+        + (
+            f" {_number_word(len(strategies))} generation "
+            f"{'strategy' if len(strategies) == 1 else 'strategies'} worked the "
+            f"question in parallel: {_series(strategies)}."
+            if strategies
+            else ""
+        )
+        + " They "
         "are set out here in rank order, each with the same five-row grid so that they "
         "can be read against one another. The grid carries the idea in the "
         "specialist's own words: the mechanism it rests on, the prediction that "
