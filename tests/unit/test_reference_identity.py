@@ -185,6 +185,81 @@ def test_a_title_that_is_nothing_but_a_hostname_still_says_it_is_untitled():
     )
 
 
+def test_a_locator_that_spells_the_paper_out_names_the_entry_the_search_did_not():
+    """Eight of the twenty-four entries of a live reference list read "Untitled source
+    on <host>". Six of those eight locators carried the document's name in their own
+    path, so the list withheld from the reader a name it was already holding."""
+    researchgate = _lead(
+        "https://www.researchgate.net/publication/299544966_Ultrathin_Al2O3_Coatings_"
+        "for_Improved_Cycling_Performance_and_Thermal_Stability_of_"
+        "LiNi05Co02Mn03O2_Cathode_Material"
+    )
+    aip = _lead(
+        "https://pubs.aip.org/aip/apr/article/8/3/031301/124962/"
+        "Understanding-the-roles-of-atomic-layer-deposition",
+        title="www.pubs.aip.org",
+    )
+    blog = _lead(
+        "https://blog.epectec.com/why-dot-un-38.3-is-required-for-lithium-batteries"
+    )
+
+    # The catalogue's record number in front of the name is the catalogue's, and the
+    # slug's own capitals are the title's and are kept.
+    assert _reference_title(researchgate) == (
+        "Ultrathin Al2O3 Coatings for Improved Cycling Performance and Thermal "
+        "Stability of LiNi05Co02Mn03O2 Cathode Material"
+    )
+    assert _reference_title(aip) == "Understanding the roles of atomic layer deposition"
+    assert _reference_title(blog) == (
+        "Why dot un 38.3 is required for lithium batteries"
+    )
+
+
+def test_a_locator_carrying_an_identifier_rather_than_a_name_still_says_untitled():
+    """The other two of the eight, plus the two the rule has to refuse: a path is only
+    read as a name where it reads as prose, which one function word in it settles.
+    "PR2024_701_Ihala-Gamaralalage_Chanaka_Safety-Reliability" is a report number and
+    three surnames, and "lithium-ion-batteries-ald-coatings-forge-nano" is a topic
+    followed by the site's own name -- neither is what the paper is called."""
+    numeric = _lead("https://www.mdpi.com/2313-0105/11/6/209")
+    authors = _lead(
+        "https://www.sandia.gov/app/uploads/sites/82/2024/08/"
+        "PR2024_701_Ihala-Gamaralalage_Chanaka_Safety-Reliability.pdf"
+    )
+    site_name = _lead(
+        "http://www.forgenano.com/archivesite/"
+        "lithium-ion-batteries-ald-coatings-forge-nano/"
+    )
+
+    assert _reference_title(numeric) == "Untitled source on mdpi.com"
+    assert _reference_title(authors) == "Untitled source on sandia.gov"
+    assert _reference_title(site_name) == "Untitled source on forgenano.com"
+
+
+def test_an_entry_named_from_its_address_says_that_is_where_the_name_came_from():
+    """A slug cannot mark which of its hyphens joined a compound -- "solid-state"
+    comes back as two words -- and the path may have been shortened by the server. The
+    name is worth printing and is not what the document calls itself, so the entry
+    that prints it says so, and only that entry does."""
+    from coscientist.narrative import _reference_naming
+
+    lead = _lead(
+        "https://ecoenergyvista.com/electric-vehicles/"
+        "when-were-solid-state-batteries-invented-the-surprising-1970"
+    )
+    title, named_by_address = _reference_naming(lead)
+
+    assert title == "When were solid state batteries invented the surprising 1970"
+    assert named_by_address
+    line = _reference_line(
+        Citation(number=3, title=title, url=lead.canonical_url, named_by_address=True)
+    )
+    assert "Named from its address, the search having returned no title for it." in line
+
+    titled = _reference_line(Citation(number=4, title=PAPER, url="https://a.org/b"))
+    assert "Named from its address" not in titled
+
+
 def test_an_unfollowable_redirect_says_a_link_was_recorded_and_stopped_working():
     """ "No link to this source was recorded" was printed over a recorded link."""
     line = _reference_line(Citation(number=5, title=PAPER, url=f"{REDIRECT}a"))

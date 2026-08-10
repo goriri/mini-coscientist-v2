@@ -594,10 +594,20 @@ def _reference_line(
     title = citation.title.rstrip() + distinguisher
     stop = "" if title.endswith((".", "?", "!")) else "."
     standing = _entry_standing(citation) if mark_standing else ""
+    # Where the search returned no title the name is read off the locator's own path,
+    # which is a good deal better than "Untitled source on researchgate.net" and is
+    # still not what the document calls itself: the path may have been shortened, and
+    # its hyphens do not say which of them joined a compound. The entry says so, once,
+    # and only on the entries it is true of.
+    named_by_address = (
+        " Named from its address, the search having returned no title for it."
+        if citation.named_by_address
+        else ""
+    )
     if names_a_document(citation.url):
         return (
             f"{citation.number}. {title}{stop} [{_link_text(citation.url)}]"
-            f"({citation.url}){standing}"
+            f"({citation.url}){named_by_address}{standing}"
         )
     # "No resolvable locator was recorded" is the renderer describing its own state,
     # and it is not even accurate: what discovery returned for these is usually a

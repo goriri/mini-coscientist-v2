@@ -220,6 +220,11 @@ class Citation:
     # a list where no entry recorded it and the appendix names ideas rather than
     # entries, so the mark now travels with the entry that has to carry it.
     verification_status: str = "discovered_unverified"
+    # Whether ``title`` was read off the locator's path because the search returned
+    # none. It is a good deal better than "Untitled source on researchgate.net" and
+    # it is still not what the document calls itself, so the entry that prints it
+    # says where it came from.
+    named_by_address: bool = False
 
 
 class CitationRegistry:
@@ -502,15 +507,19 @@ class CitationRegistry:
 
     def references(self) -> list[Citation]:
         """The cited leads only, in citation order, titled rather than linked."""
-        return [
-            Citation(
-                number=index,
-                title=_reference_title(self._leads[url]),
-                url=url,
-                verification_status=self._leads[url].verification_status,
+        references = []
+        for index, url in enumerate(self._ordered, start=1):
+            title, named_by_address = _reference_naming(self._leads[url])
+            references.append(
+                Citation(
+                    number=index,
+                    title=title,
+                    url=url,
+                    verification_status=self._leads[url].verification_status,
+                    named_by_address=named_by_address,
+                )
             )
-            for index, url in enumerate(self._ordered, start=1)
-        ]
+        return references
 
 
 _HOSTNAME_TITLE = re.compile(r"^(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}$", re.IGNORECASE)
@@ -766,8 +775,72 @@ def _states_a_claim(title: str) -> bool:
     return bool(_CLAUSE_VERB.search(title)) and capitalised / len(words) < 0.4
 
 
+# Words a title has and an identifier has not. A path segment carrying one was
+# written as a sentence; a segment carrying none is a record number, a filename or a
+# run of surnames.
+_TITLE_FUNCTION_WORDS = frozenset(
+    """a an the of for and or in on to with by from via at as is are was were be
+    its their this that into under over between against through during why how what
+    when where which who using toward towards about after before without within
+    versus vs not no""".split()
+)
+
+# What a server appends to the name of the thing it is serving.
+_LOCATOR_EXTENSIONS = (".pdf", ".html", ".htm", ".php", ".aspx", ".full", ".abstract")
+
+
+def _name_from_locator(url: str) -> str:
+    """The document's name where the address carries it and the search did not.
+
+    Eight of the twenty-four entries of a live reference list read "Untitled source
+    on <host>" over a locator whose own path spelled the paper out --
+    ".../publication/299544966_Ultrathin_Al2O3_Coatings_for_Improved_Cycling_Performance_and_Thermal_Stability_of_LiNi05Co02Mn03O2_Cathode_Material".
+    A reference that names nothing is a reference no reader can use, and the name was
+    already in hand.
+
+    Only where the segment reads as prose rather than as an identifier, which one
+    function word in it settles: "Understanding-the-roles-of-atomic-layer-deposition"
+    has "the" and "of" and is the paper's name;
+    "PR2024_701_Ihala-Gamaralalage_Chanaka_Safety-Reliability" (a report number and
+    three surnames) and "lithium-ion-batteries-ald-coatings-forge-nano" (a topic and
+    the site's own name) have none, and are left to say they are untitled. A slug
+    cannot mark which of its hyphens joined a compound, so "solid-state" comes back
+    as two words -- which is why the entry says where the name came from.
+    """
+    if not url.startswith(("http://", "https://")) or GROUNDING_REDIRECT_MARKER in url:
+        return ""
+    _, _, remainder = url.partition("://")
+    _, _, path = remainder.partition("/")
+    host = _publisher_of(url).replace(".", "")
+    for segment in reversed(path.partition("?")[0].partition("#")[0].split("/")):
+        lowered = segment.lower()
+        for suffix in _LOCATOR_EXTENSIONS:
+            if lowered.endswith(suffix):
+                segment = segment[: -len(suffix)]
+                break
+        words = [word for word in re.split(r"[-_+]", segment) if word]
+        # A catalogue number in front of the name belongs to the catalogue.
+        while words and words[0].isdigit():
+            words.pop(0)
+        if len(words) < 4 or "".join(words).lower() in host:
+            continue
+        if not any(word.lower() in _TITLE_FUNCTION_WORDS for word in words):
+            continue
+        name = " ".join(words)
+        # A slug is lower-cased whatever case the title was set in; one that kept its
+        # capitals kept them from the title, so only the flattened form is restored.
+        return name if name != name.lower() else name[:1].upper() + name[1:]
+    return ""
+
+
 def _reference_title(lead: SourceLead) -> str:
     """Prefer the annotation title: the canonical URL is a grounding redirect."""
+    return _reference_naming(lead)[0]
+
+
+def _reference_naming(lead: SourceLead) -> tuple[str, bool]:
+    """The entry's name, and whether the locator rather than the search supplied it."""
+    named_by_address = False
     title = _without_search_chrome(" ".join(lead.title.split()), lead.canonical_url)
     if _states_a_claim(title):
         # The claim is printed where the run recorded it as a finding. Here it would
@@ -785,16 +858,20 @@ def _reference_title(lead: SourceLead) -> str:
         # publisher. A live list printed "Untitled source lead." -- a reference
         # saying nothing whatever about what it referred to -- next to a locator
         # that said acs.org. Only a lead that has neither falls through to it now.
-        title = _untitled_on(_publisher_of(lead.canonical_url))
+        title = _name_from_locator(lead.canonical_url)
+        named_by_address = bool(title)
+        title = title or _untitled_on(_publisher_of(lead.canonical_url))
     elif _HOSTNAME_TITLE.match(title):
         # Discovery falls back to the hostname when the search result carries no
         # title, so the reference list printed entries reading "www.mdpi.com" as
         # though that were the name of a paper. It is a publisher, and saying which
         # publisher and that the title is missing is both shorter and true.
-        title = _untitled_on(title.removeprefix("www."))
+        located = _name_from_locator(lead.canonical_url)
+        named_by_address = bool(located)
+        title = located or _untitled_on(title.removeprefix("www."))
     if lead.year:
         title = f"{title} ({lead.year})"
-    return title
+    return title, named_by_address
 
 
 @dataclass(frozen=True)
@@ -10138,9 +10215,19 @@ def _shortlist_caveats(
     ]
     if excluded_at_cut:
         included_at_cut = [brief.title for brief in shortlisted if brief.elo == cut]
+        # Two sentences and not one clause pair, because either side may itself be a
+        # list, and a list of names that carry their own "and"s is marked off with
+        # semicolons. Nested inside a comma-joined pair that read as a grade
+        # inversion: "... Coated Cathodes made the shortlist on 1184, and
+        # Low-Temperature ALD Al2O3 HF-Scavenging and Phase Stabilization; and ALD
+        # Al2O3 as HF Scavenger ... finished on the same 1184 and did not" -- the
+        # semicolon outranks the comma before it, so the first name looked like a
+        # clause that had lost its verb. Ending the first sentence makes the semicolon
+        # the strongest mark inside the second, which is what a list separator has to
+        # be.
         caveats.append(
             f"The cut fell inside a tie. {_joined_titles(included_at_cut)} made the "
-            f"shortlist on {cut}, and "
+            f"shortlist on {cut}. "
             + _joined_titles(excluded_at_cut)
             + f" finished on the same {cut} and did not. Nothing in the tournament "
             "separates them: the last "

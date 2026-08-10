@@ -1008,6 +1008,37 @@ def test_a_shortlist_cut_inside_a_tie_says_the_last_place_was_a_tie_break():
     assert "Excluded finished on the same 1184 and did not" in caveats[0]
 
 
+def test_a_tie_of_several_names_does_not_nest_a_semicolon_list_inside_a_clause_pair():
+    """The two sides of the tie are two sentences, because either can be a list.
+
+    Joined by ", and" the live line read "... Coated Cathodes made the shortlist on
+    1184, and Low-Temperature ALD Al2O3 HF-Scavenging and Phase Stabilization; and ALD
+    Al2O3 as HF Scavenger and Phase Stabilizer on NMC811 finished on the same 1184 and
+    did not" -- a semicolon separating two names sat inside a comma-joined pair, which
+    outranks it, so the first name read as a clause with no verb.
+    """
+    from coscientist.narrative import _shortlist_caveats
+
+    long_a = "Low-Temperature ALD Al2O3 HF-Scavenging and Phase Stabilization"
+    long_b = "ALD Al2O3 as HF Scavenger and Phase Stabilizer on NMC811"
+    briefs = [
+        _brief("Leader", [], elo=1300, shortlisted=True),
+        _brief(
+            "Defect-Induced Current Focusing and Accelerated Pitting",
+            [],
+            elo=1184,
+            shortlisted=True,
+        ),
+        _brief(long_a, [], elo=1184),
+        _brief(long_b, [], elo=1184),
+    ]
+
+    caveat = _shortlist_caveats([briefs[0], briefs[1]], briefs)[0]
+
+    assert f"made the shortlist on 1184. {long_a}; and {long_b} finished" in caveat
+    assert "1184, and" not in caveat
+
+
 def test_a_clean_cut_draws_no_tie_caveat():
     from coscientist.narrative import _shortlist_caveats
 
