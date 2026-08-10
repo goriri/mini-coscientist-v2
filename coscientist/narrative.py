@@ -607,15 +607,47 @@ _AUTHORS_ONLY = re.compile(
 # case rather than the title case a journal sets a name in. Checked against the
 # sixty-three titles that run recorded, they select those two and nothing else.
 _CLAUSE_VERB = re.compile(
-    r"\b(?:is|are|was|were|has|have|had|utilizes?)\b", re.IGNORECASE
+    r"\b(?:is|are|was|were|has|have|had|utilizes?|confirms?|shows?|reveals?"
+    r"|demonstrates?|suggests?|indicates?|requires?|verifies|verify|reports?)\b",
+    re.IGNORECASE,
+)
+
+# The pass's own markup for the pipeline, left on the end of a statement that was
+# stored where a title goes: a facet tag and the URL it was recorded against. The
+# Knowledge Base strips this from every sentence it prints and the reference list
+# did not, so entry 6 of a live report was a forty-five word claim ending
+# "[safety_governance; https://www." -- in a bibliography.
+_STATEMENT_MARKUP = re.compile(r"\[\s*[a-z_]+\s*;\s*https?://", re.IGNORECASE)
+
+# No journal sets a paper's name starting on a discourse connective. A statement
+# lifted out of the middle of a report does: two more entries of that same list
+# opened "While primary supporting literature heavily verifies..." and
+# "Furthermore, explicit compliance with international safety and governance...".
+_PROSE_OPENER = re.compile(
+    r"^\s*(?:furthermore|moreover|however|additionally|therefore|consequently"
+    r"|while|in addition|in contrast|notably|conversely|thus)\b[,\s]",
+    re.IGNORECASE,
 )
 
 
 def _states_a_claim(title: str) -> bool:
-    """Whether what was stored as a title is a sentence about the field."""
+    """Whether what was stored as a title is a sentence about the field.
+
+    The verb list was tuned against the sixty-three titles of one run, and the next
+    run's statements reached for verbs that were not on it -- confirm, verifies,
+    requires -- so three claims went into the reference list as the names of papers.
+    A wider list is still a guess about wording, so the two signals that do not
+    depend on any word choice are checked first: markup no title ever carries, and
+    a sentence opener no title ever uses.
+    """
+    if _STATEMENT_MARKUP.search(title) or _PROSE_OPENER.match(title):
+        return True
     words = title.split()
     if len(words) < 10 or title.rstrip().endswith("?"):
         return False
+    # Long enough that no paper is named this way, whatever verb it reached for.
+    if len(words) >= 25:
+        return True
     capitalised = sum(1 for word in words if word[:1].isupper())
     return bool(_CLAUSE_VERB.search(title)) and capitalised / len(words) < 0.4
 

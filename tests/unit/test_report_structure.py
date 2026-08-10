@@ -5309,6 +5309,50 @@ def test_a_claim_recorded_where_a_title_belongs_is_not_printed_as_a_paper_name()
         ) == (kept)
 
 
+def test_a_claim_is_caught_by_what_it_carries_not_by_the_verb_it_reached_for():
+    """The guard above tests for a clause verb off a list tuned against the sixty-
+    three titles of one run. The next run's statements reached for confirm, verifies
+    and requires, none of them on it, and three of twenty reference entries were
+    claims printed as the names of papers -- one of them forty-five words ending
+    "[safety_governance; https://www." in a bibliography. Two signals decide it
+    without guessing at wording: markup no title carries, and an opener none uses."""
+    from coscientist.narrative import _reference_title
+
+    for statement in (
+        "Experimental protocols strictly adhering to the use of standardized CR2032 "
+        "coin cells equipped with a defined lithium metal foil counter electrode "
+        "confirm that uncoated baseline cells suffer from severe dendrite "
+        "proliferation [safety_governance; https://www.",
+        "While primary supporting literature heavily verifies the mechanistic safety "
+        "benefits of ALD coatings, comprehensive scientific due diligence requires "
+        "addressing all evidence types [safety_governance; https://www",
+        "Furthermore, explicit compliance with international safety and governance "
+        "testing frameworks—most notably UN 38",
+    ):
+        assert (
+            _reference_title(
+                SourceLead(
+                    canonical_url="https://www.mdpi.com/2075-4701/15/8/892",
+                    title=statement,
+                )
+            )
+            == "Untitled source on mdpi.com"
+        ), statement[:40]
+
+    # The widened verb list still has to leave a paper named with one of those verbs
+    # alone. Title case is what separates them, and it is checked before the verb.
+    for kept in (
+        "Operando XRD Reveals Phase Transitions in Ni-Rich NMC811 Cathodes During "
+        "Extended High-Voltage Cycling",
+        "In Situ Spectroscopy Shows That Alucone Coatings Suppress Transition Metal "
+        "Dissolution in Layered Oxides",
+    ):
+        assert (
+            _reference_title(SourceLead(canonical_url="https://x/1", title=kept))
+            == kept
+        )
+
+
 def test_an_entry_that_has_only_the_authors_says_it_has_no_title():
     """ "22. Zhao et al." was a whole reference entry: the authors came out of a table
     cell in a pass report and the title stayed in the next column."""
