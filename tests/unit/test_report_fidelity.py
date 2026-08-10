@@ -1965,6 +1965,42 @@ def test_a_finding_that_cuts_against_more_than_one_idea_is_stated_once():
     assert sum("stated at the head of this section" in p for p in chapters) == 2
 
 
+def test_several_shared_contradicting_findings_are_set_one_to_a_line():
+    """Each entry is a finding followed by the ideas that cite it.
+
+    A live report ran five of them into the three sentences that introduce them for
+    2,889 characters. A reader checking what a named idea has to answer has only the
+    titles to find it by, and those sit at the end of each entry, mid-paragraph.
+    """
+    findings = [
+        "Atomic layer deposition of Al2O3 on commercial-grade NMC811 electrodes "
+        "yields no significant difference in long-term capacity retention.",
+        "An amorphous Al2O3 coating laid down from an alkoxide precursor extracts "
+        "lithium from the bulk during annealing and degrades capacity retention.",
+    ]
+    briefs = [
+        _brief("Alpha", [], facts=FACTS, contradicting_claims=findings),
+        _brief("Beta", [], facts=FACTS, contradicting_claims=findings),
+    ]
+
+    core, _ = _section_four_text(briefs)
+    block = next(part for part in core.split("\n\n") if findings[0] in part)
+    assert block.splitlines() == [
+        f"- {findings[0]} Cited by Alpha and Beta.",
+        f"- {findings[1]} Cited by Alpha and Beta.",
+    ]
+
+    # Two short ones stay in the paragraph, where a list would cost more than it pays.
+    short = ["Coatings raise the overpotential.", "Coatings add cost."]
+    brief_pair = [
+        _brief("Alpha", [], facts=FACTS, contradicting_claims=short),
+        _brief("Beta", [], facts=FACTS, contradicting_claims=short),
+    ]
+    inline, _ = _section_four_text(brief_pair)
+    assert "\n- " not in inline
+    assert "pass over it. Coatings raise the overpotential. Cited by" in inline
+
+
 def test_a_finding_that_cuts_against_one_idea_stays_under_that_idea():
     briefs = [
         _brief("Alpha", [], facts=FACTS, contradicting_claims=[CUTS_AGAINST]),

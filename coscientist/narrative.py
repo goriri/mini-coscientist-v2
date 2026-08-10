@@ -8920,6 +8920,13 @@ def _shared_contradiction_notice(
         + "."
         for claim in shared
     ]
+    # One finding to a line where several are stated. Each is a finding followed by
+    # the ideas that cite it, and a live report ran five of them into the three
+    # sentences that introduce them for 2,889 characters -- a reader checking what a
+    # named idea has to answer has only the titles to find it by, and those sit at
+    # the end of each entry, mid-paragraph.
+    if len(stated) > 1 and sum(map(len, stated)) > _SERIES_IN_A_SENTENCE:
+        return lead + "\n\n" + "\n".join(f"- {entry}" for entry in stated)
     return " ".join([lead, *stated])
 
 
