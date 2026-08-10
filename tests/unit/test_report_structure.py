@@ -6659,6 +6659,23 @@ def test_a_gap_that_names_nothing_still_carries_no_badge(rich_session: Session):
     assert [badge for heading, badge, _ in notes if heading == "Evidence gaps"] == [""]
 
 
+def test_the_reading_guide_admits_the_one_gap_that_does_carry_a_label():
+    """The guide stated the rule with no exception -- "A gap carries no label" -- while
+    the renderer badges a gap written around a record this run could not stand behind.
+    A live report printed a labelled gap two bullets under the sentence denying such a
+    thing exists, so the reader had a rule and a counterexample and no way to tell
+    which was the report's."""
+    from coscientist.narrative import DEEP_DIVE_PREAMBLE
+
+    guide = " ".join(" ".join(DEEP_DIVE_PREAMBLE).split())
+
+    assert "A gap carries no label" in guide
+    assert (
+        "unless the specialist wrote the gap around a document this run could not "
+        "stand behind, and then it carries **[Retracted or Unretrievable]**" in guide
+    )
+
+
 def _generated_by(rich_session: Session, agent: str) -> str:
     """The provenance appendix of a run whose generation stage fanned out."""
     from coscientist.dossier import _provenance_appendix

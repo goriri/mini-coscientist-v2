@@ -1518,7 +1518,7 @@ def test_a_finding_the_idea_already_restated_above_is_carried_by_its_number():
     assert motivation.startswith(
         "The findings this idea cites that the evidence stage recorded as arguing for "
         "the research question: Coating uniformity varies with precursor dose [2], and "
-        "the statement printed above under Evidence Assessment at [1]."
+        "the statement printed above under Evidence Assessment citing [1]."
     )
 
 
@@ -4161,14 +4161,45 @@ def test_a_flaw_the_rewrite_was_re_reviewed_clean_of_is_not_said_to_still_stand(
         rank=1,
         elo=1200,
         shortlisted=False,
-        rereviews=[_review("cand_a", recommendation="advance")],
+        rereviews=[
+            _review(
+                "cand_a", criterion="evidence_correctness", recommendation="advance"
+            )
+        ],
     )["Critical Flaws"]
 
     assert "no reviewer withdrew it" not in critical
     assert (
-        "The rewrite of this idea was re-reviewed and no fatal flaw was recorded "
-        "against the rewrite — a verdict on the rewritten text, not a withdrawal of "
-        "it." in critical
+        "The rewrite of this idea was re-reviewed on the criterion that recorded it "
+        "and no fatal flaw was recorded against the rewrite — a verdict on the "
+        "rewritten text, not a withdrawal of it." in critical
+    )
+
+
+def test_a_rewrite_re_reviewed_on_another_criterion_is_not_an_all_clear():
+    """The all-clear was printed whenever any re-review came back without a flaw. On
+    a live run the flaw was the feasibility review's, the rewrite was re-reviewed on
+    safety alone, and the idea's Critical Flaws read "no fatal flaw was recorded
+    against the rewrite" -- eighteen lines below a paragraph saying feasibility was
+    not run again. Nobody had looked, and the sentence a reader checks said cleared."""
+    from coscientist.narrative import _summary_sections
+
+    critical = _summary_sections(
+        _facts(),
+        [_idea_review(section="Feasibility", score=1, fatal_flaws=["No such cell."])],
+        rank=1,
+        elo=1200,
+        shortlisted=False,
+        rereviews=[
+            _review("cand_a", criterion="safety_governance", recommendation="advance")
+        ],
+    )["Critical Flaws"]
+
+    assert "no fatal flaw was recorded against the rewrite" not in critical
+    assert (
+        "The rewrite of this idea was re-reviewed, but the feasibility review did "
+        "not run again, so no verdict on the page says whether the rewrite answers "
+        "the flaw it recorded." in critical
     )
 
 

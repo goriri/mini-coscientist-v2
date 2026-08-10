@@ -1085,7 +1085,10 @@ DEEP_DIVE_PREAMBLE = (
     "on more than one record takes the label of the weakest of them, because a "
     "reader needs the reason to distrust a statement before the reasons to trust "
     "it. A gap carries no label, because a statement that no evidence exists is "
-    "not one that can be grounded. These labels and the grounding verdict beside "
+    "not one that can be grounded — unless the specialist wrote the gap around a "
+    "document this run could not stand behind, and then it carries **[Retracted "
+    "or Unretrievable]** like any other statement naming that record. These "
+    "labels and the grounding verdict beside "
     "each idea are counted from different fields — the labels from the records "
     "each statement names, the verdict from the citation list the specialist filed "
     "with the idea — so an idea whose verdict reads grounded can carry unsourced "
@@ -4811,12 +4814,23 @@ def _fatal_flaw_notice(
         # guide's, stated once over all of them. Restated here it was a second copy
         # of one sentence inside the subsection the guide is about.
         + " printed in full under Deep Verification below. "
-        + _flaw_standing(flaws, rereviews)
+        + _flaw_standing(flaws, sections, rereviews)
     )
 
 
-def _flaw_standing(flaws: int, rereviews: Sequence[CandidateReview]) -> str:
-    """Whether anything later in the run went back over a recorded fatal flaw."""
+def _flaw_standing(
+    flaws: int, sections: Sequence[str], rereviews: Sequence[CandidateReview]
+) -> str:
+    """Whether anything later in the run went back over a recorded fatal flaw.
+
+    Which criterion was re-run decides this, not how many were. A live run recorded
+    the flaw under feasibility, re-reviewed the rewrite on safety alone, and printed
+    "no fatal flaw was recorded against the rewrite" -- true of the safety review and
+    read by any reader as the flaw having been looked at again and not found. The
+    paragraph eighteen lines above had already said the other four criteria "were not
+    run again". An all-clear nobody looked for is the one thing this sentence must
+    not say.
+    """
     it = "it" if flaws == 1 else "any of them"
     if not rereviews:
         return f"Nothing later in this run revisited {it}."
@@ -4825,10 +4839,26 @@ def _flaw_standing(flaws: int, rereviews: Sequence[CandidateReview]) -> str:
             "The rewrite of this idea was re-reviewed and a fatal flaw was recorded "
             "against the rewrite as well."
         )
+    checked = {
+        CRITERION_SECTIONS.get(review.criterion, review.criterion).lower()
+        for review in rereviews
+    }
+    missing = [section for section in sections if section not in checked]
+    if missing:
+        named, theirs = (
+            (f"the {missing[0]} review", "the flaw it recorded")
+            if len(missing) == 1
+            else (f"the {_names(missing)} reviews", "the flaws they recorded")
+        )
+        return (
+            f"The rewrite of this idea was re-reviewed, but {named} did not run "
+            f"again, so no verdict on the page says whether the rewrite answers "
+            f"{theirs}."
+        )
     return (
-        "The rewrite of this idea was re-reviewed and no fatal flaw was recorded "
-        f"against the rewrite — a verdict on the rewritten text, not a withdrawal of "
-        f"{it}."
+        "The rewrite of this idea was re-reviewed on the criterion that recorded "
+        f"{it} and no fatal flaw was recorded against the rewrite — a verdict on the "
+        f"rewritten text, not a withdrawal of {it}."
     )
 
 
@@ -4987,19 +5017,27 @@ def _conclusion(
 
 
 def _cited_series(items: Sequence[str], cited: _CitedEvidence) -> str:
-    """One direction's cited findings, the ones printed above named by number.
+    """One direction's cited findings, the ones printed above named by their source.
 
     They are collapsed into one item rather than named one at a time: "the statement
-    printed above under Evidence Assessment at [5], and the statement printed above
-    under Evidence Assessment at [6]" says the same nine words twice to carry two
-    numbers.
+    printed above under Evidence Assessment citing [5], and the statement printed
+    above under Evidence Assessment citing [6]" says the same nine words twice to
+    carry two numbers.
+
+    "citing", not "at": the marker is the source the statement rests on, and a live
+    report read "the statements printed above under Evidence Assessment at [1] and
+    [2]" over bullets that carry a standing label and no number at all, so the reader
+    was sent to a position that is not printed. The markers are also deduplicated --
+    two statements resting on one record produced "at [9], [9]", which names one
+    place twice and tells a reader nothing about which two.
     """
     fresh = [item for item in items if item not in cited.restated]
     above = [cited.restated[item] for item in items if item in cited.restated]
     if above:
         noun = "statement" if len(above) == 1 else "statements"
+        markers = list(dict.fromkeys(above))
         fresh.append(
-            f"the {noun} printed above under Evidence Assessment at {_names(above)}"
+            f"the {noun} printed above under Evidence Assessment citing {_names(markers)}"
         )
     return _join(fresh, fallback="none.", named=cited.titled)
 
