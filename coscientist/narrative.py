@@ -11559,10 +11559,15 @@ def _minority_note(record: ResearchRecord, candidate_id: str) -> str:
             # "The rest of a thin set" describes several survivors, and a region with
             # two ideas in it has one. The reader was left to work out that "the rest"
             # was the idea named in the same sentence.
+            # "The rest of a thin set" is an adjective the numbers have to earn, and
+            # in a live report they did not: the protected idea shared its region with
+            # three others, half the field, under a sentence calling the set thin. The
+            # count is the fact, and a reader can judge thinness from it.
             + (
                 "would leave the region resting on that idea alone."
                 if len(neighbours) == 1
-                else "would leave the region resting on the rest of a thin set."
+                else "would leave the region resting on the other "
+                f"{_number_word(len(neighbours)).lower()}."
             )
         )
     # Protection and exclusion are separate decisions taken by separate stages, and a
@@ -11741,9 +11746,14 @@ def connections_lead_in(counts: _ConnectionCounts) -> str:
             "a region rests on a single idea, so dropping it closes the region "
             "rather than narrowing it"
         )
+        # Not "few enough that they would likely fail together": the one live report
+        # to print this had the protected idea sharing its region with three others,
+        # half of everything the run generated, over a line calling them few. What the
+        # case rests on is the shared fate, which holds however many occupants there
+        # are; how many there are is on the bullet itself.
         shared = (
-            "a region has more than one occupant but few enough that they would "
-            "likely fail together"
+            "a region has more than one occupant, and the ideas in a region tend to "
+            "fail together"
         )
         if counts.sole_minority and counts.shared_minority:
             cover = (

@@ -6742,6 +6742,9 @@ def test_the_minority_lead_in_counts_the_entries_not_the_cases_it_distinguishes(
     assert "The remaining three entries are the inverse case" in both
     assert "two entries where a region rests on a single idea" in both
     assert "one entry where a region has more than one occupant" in both
+    # And no count of how many occupants that is. The lead-in covers every shared
+    # case in the run, and one live report's was a region holding half the field.
+    assert "few enough" not in both
 
 
 def test_the_minority_lead_in_stops_saying_remaining_when_it_is_not_last():

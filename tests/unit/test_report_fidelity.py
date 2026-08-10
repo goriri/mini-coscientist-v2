@@ -3100,6 +3100,42 @@ def test_an_idea_the_clustering_placed_in_several_regions_is_not_said_to_have_on
     assert "resting on that idea alone" in single
 
 
+def test_a_protected_idea_sharing_a_region_with_several_is_told_how_many():
+    """ "Would leave the region resting on the rest of a thin set" stood over a region
+    holding four of a live run's eight ideas -- half the field, called thin."""
+    from coscientist.models import (
+        CandidatePopulation,
+        ResearchCluster,
+        ResearchLandscape,
+    )
+    from coscientist.narrative import _minority_note
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.population = CandidatePopulation(
+        candidates=[_candidate(f"cand_{letter}") for letter in "abcd"]
+    )
+    record.titles = {
+        "cand_a": "An alucone coating",
+        "cand_b": "A dual-layer coating",
+        "cand_c": "A nanolaminate coating",
+        "cand_d": "A titanate buffer",
+    }
+    record.landscape = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Hybrid interphases",
+                candidate_ids=["cand_a", "cand_b", "cand_c", "cand_d"],
+                shared_mechanism="The layer conducts lithium.",
+                shared_outcome="Impedance stays flat.",
+            )
+        ]
+    )
+
+    note = _minority_note(record, "cand_a")
+    assert "would leave the region resting on the other three." in note
+    assert "thin set" not in note
+
+
 def _section_one_core(record: ResearchRecord) -> str:
     from coscientist.narrative import _section_one
 
