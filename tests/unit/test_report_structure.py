@@ -5257,6 +5257,63 @@ def test_a_governance_finding_names_the_evidence_it_cites():
     )
 
 
+def test_a_debate_turn_names_the_review_it_answers_and_not_the_id_it_is_filed_under():
+    """A live transcript read "However, the `methods_statistics` review rightly points
+    out a methodological flaw", and nothing else in that report calls the pass
+    `methods_statistics` -- it is headed "Feasibility" and named "the methods and
+    statistics review" wherever a person wrote the sentence. Panelists reach for the
+    criterion ids the same way, and for the reviewer as a person, so all of those are
+    covered here in the one turn."""
+    from coscientist.models import PairwiseComparison, TournamentState
+    from coscientist.narrative import ResearchRecord, _name_ids_in_prose
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.tournament = TournamentState(
+        comparisons=[
+            PairwiseComparison(
+                round_number=1,
+                candidate_a_id="cand_1",
+                candidate_b_id="cand_2",
+                presented_first_id="cand_1",
+                winner_id="cand_1",
+                rationale="The methods_feasibility review is answered by the protocol.",
+                judge="llm_debate",
+                debate_turns=[
+                    "However, the `methods_statistics` review rightly points out a "
+                    "methodological flaw, and the ethics_safety_governance agent and "
+                    "the reflection reviewer both stand behind it.",
+                    "The `safety_governance` finding is the only one left open.",
+                ],
+            )
+        ]
+    )
+
+    _name_ids_in_prose(record)
+
+    comparison = record.tournament.comparisons[0]
+    printed = " ".join([*comparison.debate_turns, comparison.rationale])
+    assert "methods_statistics" not in printed
+    assert "ethics_safety_governance" not in printed
+    assert "methods_feasibility" not in printed and "safety_governance" not in printed
+    assert "the methods and statistics review rightly points out" in printed
+    assert "the ethics, safety and governance review and" in printed
+    # The person, where the sentence was built around the person.
+    assert "the evidence and correctness reviewer both stand behind it" in printed
+    assert "The safety review finding is the only one left open." in printed
+    assert "The feasibility review is answered by the protocol." in printed
+
+
+def test_every_reviewer_the_report_names_is_a_reviewer_a_panelist_can_name():
+    """The substitution above holds its own table of ids, and a specialist added to
+    the roster without an entry in it goes back to reaching the reader as an enum."""
+    from coscientist.narrative import _REVIEW_IDS, _REVIEWER_NAMES
+
+    for reviewer, name in _REVIEWER_NAMES.items():
+        assert reviewer in _REVIEW_IDS, reviewer
+        # The table is keyed on the pass; the roster names the person doing it.
+        assert _REVIEW_IDS[reviewer].replace("review", "reviewer") == name.lower()
+
+
 def _discovery_with(statements: list[str], leads: list[SourceLead]):
     """A record whose discovery recorded those statements under one direction."""
     from coscientist.models import DiscoveryManifest, DiscoveryNarrative

@@ -2277,13 +2277,55 @@ _STRATEGY_PROSE = {
 }
 _STRATEGY_ENUM = re.compile("|".join(sorted(_STRATEGY_PROSE, key=len, reverse=True)))
 
+# The ids the specialists are filed under, against the review each one is called
+# everywhere a person wrote the sentence. A live debate turn read "the
+# `methods_statistics` review rightly points out a methodological flaw", which names a
+# row in the pipeline's registry: the report heads that pass "Feasibility", the
+# provenance table calls it the methods and statistics review, and the reader is left
+# with a third name for it that no other line of the report uses. Both the agent ids
+# and the criterion ids reach transcripts, so both are here. Every id carries an
+# underscore, which is what keeps the criterion "novelty" from taking the English word
+# with it; "reflection" is the exception, and it is only ever substituted where a
+# review noun follows it.
+_REVIEW_IDS = {
+    "reflection": "evidence and correctness review",
+    "evidence_correctness": "evidence and correctness review",
+    "novelty_review": "novelty review",
+    "methods_statistics": "methods and statistics review",
+    "methods_feasibility": "feasibility review",
+    "impact_review": "impact review",
+    "impact_safety": "impact review",
+    "ethics_safety_governance": "ethics, safety and governance review",
+    "safety_governance": "safety review",
+}
+_REVIEW_ID_NOUN = r"review(?:er)?s?|agents?|stages?|passe?s?"
+_REVIEW_ID_ALTERNATION = "|".join(sorted(_REVIEW_IDS, key=len, reverse=True))
+_REVIEW_ID = re.compile(
+    # Backticked, the id is quoted as an id and stands alone; bare, only a following
+    # review noun says the panelist meant the pass rather than, say, a file.
+    rf"`(?P<quoted>{_REVIEW_ID_ALTERNATION})`(?:\s+(?P<quoted_noun>{_REVIEW_ID_NOUN}))?"
+    rf"|\b(?P<bare>{_REVIEW_ID_ALTERNATION})\s+(?P<bare_noun>{_REVIEW_ID_NOUN})\b",
+    re.IGNORECASE,
+)
+
+
+def _named_review(match: re.Match[str]) -> str:
+    """The review as the report names it, for an id a panelist quoted verbatim."""
+    named = _REVIEW_IDS[(match["quoted"] or match["bare"]).lower()]
+    # "the fatal flaw flagged by the reflection reviewer" is about the person, and
+    # the sentence built around it reads as one, so only the head noun moves.
+    noun = (match["quoted_noun"] or match["bare_noun"] or "").lower()
+    return named.replace("review", "reviewer") if noun.startswith("reviewer") else named
+
+
 # Vocabulary the specialists share with the pipeline but not with the reader. Each of
 # these reached a live report inside a reviewer's own sentence. "Candidate proposes
 # that ZnO acts as a chemical HF scavenger" names a row in the population table, and
 # a reader who has been reading about ideas for forty pages meets a new noun for the
 # thing they have been reading about. "No evidence available in the provided packet"
 # names the JSON the reviewer was handed; the reader was handed a report.
-_HOUSE_TERMS: tuple[tuple[re.Pattern[str], str], ...] = (
+_HouseTerm = tuple[re.Pattern[str], str | Callable[[re.Match[str]], str]]
+_HOUSE_TERMS: tuple[_HouseTerm, ...] = (
     (
         re.compile(
             r"\b(?:provided|current|given|supplied|attached|evidence)\s+packet\b",
@@ -2296,20 +2338,14 @@ _HOUSE_TERMS: tuple[tuple[re.Pattern[str], str], ...] = (
     # word is a sentence opening on the noun, never "Candidate Ideas" or a title.
     (re.compile(r"\bCandidate\b(?= [a-z])"), "The idea"),
     (re.compile(r"\b(the|this|that|The|This|That) candidate\b"), r"\1 idea"),
-    # "reflection" is the pipeline's own name for the evidence-and-correctness pass.
-    # It is stripped from the review headings, so a debate turn that said "the
-    # reflection review points out" left the report calling one review two different
-    # things, one of them a stage id. Panelists reach for the same stage id under
-    # other nouns: "flagged by the reflection reviewer" and "the fatal flaw flagged
-    # by the reflection agent" both reached a live transcript, and "agent" names a
-    # process the reader has never been shown.
-    (
-        re.compile(
-            r"\breflection (?:review(?:er)?s?|agents?|stages?|passe?s?)\b",
-            re.IGNORECASE,
-        ),
-        "evidence and correctness review",
-    ),
+    # Every specialist under the id it is filed under rather than the name the rest
+    # of the report gives it. "Reflection review" is the worst of them, because
+    # reflection is the stage's internal word for reviewing and says nothing about
+    # what that reviewer read, and panelists reach for the id under other nouns too:
+    # "flagged by the reflection reviewer" and "the fatal flaw flagged by the
+    # reflection agent" both reached a live transcript, where "agent" names a process
+    # the reader has never been shown.
+    (_REVIEW_ID, _named_review),
 )
 
 
