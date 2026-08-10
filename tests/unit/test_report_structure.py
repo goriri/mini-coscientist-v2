@@ -1865,6 +1865,50 @@ def test_a_source_the_search_never_returned_is_accounted_for_where_it_is_counted
     assert f"the corpus is {_plural(searched + 1, 'lead')}" in discovery
 
 
+def test_the_leads_behind_the_documents_are_credited_to_the_corpus_not_to_the_search(
+    rich_session: Session,
+):
+    """The Knowledge Summary counts the leads its documents came from, and the corpus
+    is not what the search returned: the evidence stage carries sources into it that
+    the search never found, which the provenance appendix says four chapters below.
+    Reading the whole total back to the search put "the literature search returned
+    eighty-five leads" over "returned 83 source leads"."""
+    from coscientist.narrative import _number_word, load_record
+
+    discovery = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "DiscoveryManifest"
+    )
+    leads = discovery.payload["source_leads"]
+    # The same document under a second link, which is what the corpus folds and what
+    # makes the sentence under test print at all. And one lead the run went back to,
+    # since the sentence sits in the branch where something was checked.
+    leads.append({**leads[0], "canonical_url": f"{leads[0]['canonical_url']}?utm=1"})
+    leads[1]["verification_status"] = "verified"
+    packet = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "EvidencePacket"
+    )
+    packet.payload["sources"].append(
+        {
+            "id": "source_carried",
+            "url": "https://example.org/carried-by-the-evidence-stage",
+            "title": "A Paper The Search Did Not Return",
+            "verification_status": "verified",
+        }
+    )
+
+    citations = load_record(rich_session).citations
+    corpus = citations.verification_standing[1] + citations.folded_duplicates
+    report = compile_dossier(rich_session)
+
+    assert citations.folded_duplicates, "the fold is what prints the sentence"
+    assert "The literature search returned" not in report
+    assert f"The corpus holds {_number_word(corpus).lower()} leads" in report
+
+
 def test_a_search_that_found_the_whole_corpus_is_not_told_it_found_less(
     rich_session: Session,
 ):

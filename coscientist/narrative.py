@@ -9706,12 +9706,18 @@ def _reference_standing(record: ResearchRecord) -> str:
                 else "this run has read."
             )
         )
-    # The provenance appendix states how many leads the search returned, this states
-    # how many documents they came to, and the two figures stood four chapters apart
-    # with nothing between them saying what happened to the difference.
+    # The provenance appendix states how many leads the corpus holds, this states how
+    # many documents they came to, and the two figures stood four chapters apart with
+    # nothing between them saying what happened to the difference.
+    #
+    # "The corpus holds", not "the literature search returned". The corpus is the
+    # leads the search returned plus any the evidence stage listed against a claim
+    # without the search having found them, which the provenance appendix says in as
+    # many words -- so crediting the whole of it to the search put "the literature
+    # search returned eighty-five leads" here and "returned 83 source leads" there.
     folded = record.citations.folded_duplicates
     reconciled = (
-        f" The literature search returned {_number_word(total + folded).lower()} "
+        f" The corpus holds {_number_word(total + folded).lower()} "
         f"leads to reach {'them' if total != 1 else 'it'}: "
         f"{_plural(folded, 'lead')} named a document another lead had already named."
         if folded
