@@ -7521,16 +7521,18 @@ def _section_four(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
             # subject, two in the predicate, and an "is that" that does not distribute
             # over the semicolon between them. The count is on the brief, so the
             # sentence can agree with it.
+            #
+            # One reading is now said the same way as several, because "is that" also
+            # needs the reading to be a clause and a specialist writes half of them as
+            # a thing to do instead: "The reading it has to displace is that using ALD
+            # LiNbO3 as an alternative high-k dielectric and lithium-ion conductor."
+            # reached a live report as a sentence with no verb in it. After a colon the
+            # reading stands however the specialist wrote it.
             competing = brief.alternatives
             if not competing:
                 displace = (
                     "No competing reading was recorded against it, so nothing here "
                     "says what a positive result would have to rule out."
-                )
-            elif len(competing) == 1:
-                displace = (
-                    "The reading it has to displace is that "
-                    f"{_spliced(brief.facts['Alternative explanations'])}."
                 )
             else:
                 displace = (

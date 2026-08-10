@@ -1838,6 +1838,32 @@ def test_a_rank_the_tournament_did_not_decide_is_not_reported_as_a_result():
     assert "It finished rank 1 on an Elo of 1290." in four
 
 
+def test_a_lone_competing_reading_is_stated_however_the_specialist_wrote_it():
+    """ "The reading it has to displace is that using ALD LiNbO3 as an alternative
+    high-k dielectric and lithium-ion conductor." -- a live sentence with no verb in
+    it. Half the specialists write a competing reading as a thing to do rather than
+    as a claim, and "is that" cannot take one of those. After a colon either shape
+    stands, which is how the paragraph already states two of them."""
+    import dataclasses
+
+    from coscientist.narrative import _section_four
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    reading = (
+        "Using ALD LiNbO3 as an alternative high-k dielectric and lithium-ion conductor"
+    )
+    facts = _facts() | {"Alternative explanations": f"{reading}."}
+    brief = dataclasses.replace(_brief("A coating", [], facts=facts), alternatives=[""])
+
+    four = " ".join(
+        paragraph
+        for section in _section_four(record, [brief]).subsections
+        for paragraph in section.paragraphs
+    )
+    assert f"It has one competing reading to displace: {reading[0].lower()}" in four
+    assert "is that using" not in four
+
+
 def test_the_prose_above_a_grid_points_forward_to_it_and_not_back():
     """ "Beyond the prediction in the grid, <twenty-word title> is separated from…"
 
