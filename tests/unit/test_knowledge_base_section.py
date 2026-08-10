@@ -218,6 +218,26 @@ def test_the_pass_that_closed_the_gaps_is_headed_with_what_it_went_looking_for()
     assert "### Pass 3: The gaps the fan-out left open" in section
 
 
+def test_a_facet_outside_the_seven_is_not_read_as_a_pass_the_fan_out_planned():
+    """The bare heading came back on a live run served by the fix above.
+
+    Its gap pass was labelled ``long_term_safety`` -- no such facet is planned,
+    searched or scored, and the label came from the model that normalizes a pass
+    report rather than from the plan. Taken as a record of what the pass was sent
+    to cover it put the pass inside the fan-out, where the heading has to name one
+    of the seven and there was none to name.
+    """
+    section = _knowledge_summary(
+        _record(
+            _narrative(facet="supporting", pass_number=1),
+            _narrative(facet="methods", pass_number=2),
+            _narrative(facet="long_term_safety", pass_number=3, statements=[]),
+        )
+    )
+
+    assert "### Pass 3: The gaps the fan-out left open" in section
+
+
 def test_a_pass_before_the_fan_out_recorded_anything_is_not_read_as_the_gap_pass():
     """Ahead of every facet the run recorded, an unlabelled pass is an old session's
     -- the field did not exist when it was saved -- and its facet is still inferred."""

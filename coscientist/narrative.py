@@ -12163,9 +12163,15 @@ def _searched_knowledge_summary(record: ResearchRecord) -> str:
         # last for the same reason. Anything else unrecorded is a session saved
         # before the field existed, and there the facet is inferred from the
         # statements as it always was.
+        #
+        # Only one of the seven counts as a record. The model that normalizes a pass
+        # report fills this field in from the report where the pass was planned with
+        # none, and a live gap pass came back labelled with a facet name this run
+        # does not score: read as a record it made the pass look like one of the
+        # fan-out, and its heading lost its subject again.
         recorded = {
-            **{number: run.facet for number, run in empty.items()},
-            **{number: item.facet for number, item in written.items()},
+            number: item.facet if item.facet in FACET_PHRASES else ""
+            for number, item in {**empty, **written}.items()
         }
         fanned_out = min(
             (number for number, facet in recorded.items() if facet),

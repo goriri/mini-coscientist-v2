@@ -2027,13 +2027,20 @@ class IterativeEvidenceDiscovery:
                 normalizer=normalizer,
                 citation_urls=citation_urls,
             )
+            # What the pass was sent to cover, which for the gap-closing pass is
+            # nothing in particular: it is planned with no facet because it covers
+            # whatever the fan-out left open. The normalizer fills the field in from
+            # the report where the plan left it empty, and one live gap pass came
+            # back labelled with a facet name this run does not score -- a plan
+            # nothing planned, invented after the fact by a model reading the prose.
+            narrative.facet = run.facet
             if run.facet:
                 # The pass was sent to cover one facet, so that is what its
                 # statements are, whatever the keyword heuristic would have
                 # guessed from their wording. This is the whole reason a
                 # fan-out can score coverage honestly and a single broad report
-                # cannot.
-                narrative.facet = run.facet
+                # cannot. The gap pass covers several, so its statements keep the
+                # facets they were read with.
                 for statement in narrative.statements:
                     statement.facet = run.facet
             additions = _source_leads(

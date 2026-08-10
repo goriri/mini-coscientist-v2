@@ -13,7 +13,13 @@ from coscientist.evidence import (
     canonicalize_url,
     normalize_report,
 )
-from coscientist.models import EVIDENCE_FACETS, ResearchPlan, Session
+from coscientist.models import (
+    EVIDENCE_FACETS,
+    DeepResearchRun,
+    DiscoveryManifest,
+    ResearchPlan,
+    Session,
+)
 from coscientist.orchestration import _deep_research_enabled
 
 # Shape recorded from a completed Vertex AI Deep Research interaction
@@ -408,6 +414,43 @@ def test_the_fan_out_says_which_facets_the_budget_dropped():
     assert manifest.convergence_reason.startswith("fan_out_truncated_by_budget:")
     dropped = manifest.convergence_reason.split(":", 1)[1].split(",")
     assert dropped == list(EVIDENCE_FACETS[3:])
+
+
+def test_a_pass_records_the_facet_it_was_planned_with_and_not_one_read_off_it():
+    """The gap-closing pass is planned with no facet, and that is a fact about it.
+
+    The normalizer fills the field in anyway -- it is reading a report, not the
+    plan -- and a live gap pass came back labelled ``long_term_safety``, a facet
+    nothing in this run plans, searches or scores. Everything downstream reads the
+    field as what the pass was sent to cover, so an invented one puts the pass
+    inside the fan-out it was run to finish.
+    """
+    invented = json.dumps(
+        {
+            "question": "Q",
+            "facet": "long_term_safety",
+            "research_directions": ["Q"],
+            "statements": [],
+        }
+    )
+    session = Session(question="Q")
+    manifest = DiscoveryManifest(question="Q")
+    wave = [
+        DeepResearchRun(pass_number=1, facet="supporting", interaction_id="a"),
+        DeepResearchRun(pass_number=2, facet="", interaction_id="b"),
+    ]
+    payloads = {
+        "a": {"status": "completed", "output_text": "A supporting report."},
+        "b": {"status": "completed", "output_text": "A gap-closing report."},
+    }
+
+    IterativeEvidenceDiscovery(
+        FakeTransport([]),
+        EvidenceArtifactStore(bucket_name=""),
+        poll_interval_seconds=0,
+    )._ingest_wave(session, wave, payloads, manifest, normalizer=lambda _: invented)
+
+    assert [item.facet for item in manifest.narratives] == ["supporting", ""]
 
 
 def test_normalization_rejects_citations_not_in_originating_report():
