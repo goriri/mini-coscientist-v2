@@ -10056,6 +10056,13 @@ class _ConnectionCounts:
     minority entry as a region held open by one idea, six lines above an entry
     naming the other idea in that same region.
     """
+    unnameable: int = 0
+    """Entries whose ids reach no idea, printed after the ones that can be named.
+
+    Counted only so the minority clause stops calling itself "the remaining": that
+    word is positional, and a live report used it over two bullets with a third
+    below them. A reader who counts what the sentence promises finds one more.
+    """
     named_mechanisms: bool = True
     """Whether the clusters carry mechanisms that tell them apart.
 
@@ -10154,13 +10161,26 @@ def connections_lead_in(counts: _ConnectionCounts) -> str:
         # Singular where there is one of them. "The remaining entries are the inverse
         # case ... They are about how thinly a region is covered" stood over a single
         # bullet, and a reader who counts what a plural promises finds one entry.
-        clauses.append(
-            (
+        # "The remaining" is a claim about what is left in the list, so it holds only
+        # while the minority notes are the last thing in it. An entry whose ids reach
+        # no idea is printed below them, and over two minority bullets with one of
+        # those under them the sentence promised two and the reader counted three.
+        if counts.unnameable:
+            lead = (
+                "One further entry is the inverse case, a protected minority: "
+                if counts.minority == 1
+                else f"{_number_word(counts.minority)} further entries are the "
+                "inverse case, a protected minority: "
+            )
+        else:
+            lead = (
                 "The remaining entry is the inverse case, a protected minority: "
                 if counts.minority == 1
                 else f"The remaining {_number_word(counts.minority).lower()} entries "
                 "are the inverse case, a protected minority: "
             )
+        clauses.append(
+            lead
             + cover
             + ". "
             + ("It is" if counts.minority == 1 else "They are")
@@ -10302,6 +10322,7 @@ def _unexpected_connections(
             duplicates=len(duplicates),
             sole_minority=sole,
             shared_minority=len(minority) - sole,
+            unnameable=unnameable,
             named_mechanisms=_named_mechanisms(
                 record.landscape.clusters if record.landscape else []
             ),

@@ -5394,6 +5394,33 @@ def test_the_minority_lead_in_counts_the_entries_not_the_cases_it_distinguishes(
     assert "one entry where a region has more than one occupant" in both
 
 
+def test_the_minority_lead_in_stops_saying_remaining_when_it_is_not_last():
+    """ "The remaining two entries are the inverse case" stood over two minority
+    bullets and a third bullet under them, on a live run: an entry whose ids reach no
+    idea is printed after the ones that can be named, so "remaining" -- which is a
+    claim about what is left in the list, not a count of a kind -- was false by one.
+    """
+    from coscientist.narrative import _ConnectionCounts, connections_lead_in
+
+    trailed = connections_lead_in(
+        _ConnectionCounts(converging=4, shared_minority=2, unnameable=1)
+    )
+    assert "Two further entries are the inverse case" in trailed
+    assert "remaining" not in trailed
+
+    one_trailed = connections_lead_in(
+        _ConnectionCounts(converging=4, sole_minority=1, unnameable=2)
+    )
+    assert "One further entry is the inverse case" in one_trailed
+    assert "It is about how thinly a region is covered" in one_trailed
+    assert "remaining" not in one_trailed
+
+    # Nothing below the minority notes and "remaining" is the true word for them.
+    assert "The remaining two entries" in connections_lead_in(
+        _ConnectionCounts(converging=4, shared_minority=2)
+    )
+
+
 def test_one_finding_stated_at_three_lengths_is_one_finding():
     """A live run printed the same finding about electrolyte standardisation three
     times, in three different relation groups: once as the pass's own section heading
