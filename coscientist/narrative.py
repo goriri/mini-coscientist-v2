@@ -4759,17 +4759,55 @@ def _attributed_responses(reviews: Sequence[IdeaReview]) -> str:
     reviews, which is the case the list cannot show.
     """
     answering = [review for review in reviews if review.rebuttals]
+    numbered = _answered_item_numbers(reviews)
     parts = []
     if len(answering) < len(reviews):
         parts.append(
             f"{_opening(len(answering), 'review')} of this idea recorded a response."
         )
-    parts.extend(
-        f"The {review.section.lower()} review answered: "
-        f"{_join(review.rebuttals, fallback='')}"
-        for review in answering
-    )
+    for review in answering:
+        # A response is written at the objection it answers and refers back to it:
+        # "mitigating this risk", "The hypothesis explicitly identifies this risk",
+        # "The risk can be mitigated". Printed under a heading that carries no
+        # objection, the pronoun has nothing to point at, and a live idea's whole
+        # Addressed Objections section was five such answers to risks it never named.
+        # The objection is printed in full under Deep Verification and is not repeated
+        # here; what this needs is the number a reader can turn to.
+        at = numbered.get(review.section)
+        opening = f"The {review.section.lower()} review answered" + (
+            f" the objection it raised, item {at} under Deep Verification below:"
+            if at
+            else ":"
+        )
+        parts.append(f"{opening} {_join(review.rebuttals, fallback='')}")
     return " ".join(parts)
+
+
+def _answered_item_numbers(reviews: Sequence[IdeaReview]) -> dict[str, int]:
+    """Where a response can be pointed at one numbered objection, which number it is.
+
+    Nothing in the contract ties the n-th response to the n-th objection, which is why
+    Deep Verification reports only which review raised each item. A review that raised
+    one objection, recorded one response and recorded no fatal flaw is the case where
+    there is nothing to tie: one response, one thing it can be answering. Any review
+    that raised or answered more than once, or that also recorded a flaw the response
+    might be aimed at instead, is left with the plain attribution.
+    """
+    flaws = len(_fatal_flaws_raised(reviews))
+    positions: dict[str, list[int]] = {}
+    for index, (section, _, _) in enumerate(
+        _objections_raised(reviews), start=flaws + 1
+    ):
+        positions.setdefault(section, []).append(index)
+    return {
+        review.section: positions[review.section][0]
+        for review in reviews
+        if not review.stood_in
+        and not review.fatal_flaws
+        and len(review.objections) == 1
+        and len(review.rebuttals) == 1
+        and len(positions.get(review.section, ())) == 1
+    }
 
 
 def _fatal_flaw_notice(

@@ -3121,16 +3121,86 @@ def test_a_complete_set_of_responses_is_not_announced_before_it_is_listed(body: 
     of those reviews, under all eight ideas. A count short of the reviews is the case
     the list cannot show, so that one survives."""
     reviews = [
-        SimpleNamespace(section=section, rebuttals=["It holds."])
+        _answering(section, rebuttals=["It holds."])
         for section in ("Correctness", "Novelty")
     ]
-    silent = [SimpleNamespace(section="Feasibility", rebuttals=[])]
+    silent = [_answering("Feasibility", rebuttals=[])]
 
     assert _attributed_responses(reviews).startswith("The correctness review answered:")
     assert _attributed_responses([*reviews, *silent]).startswith(
         "Two reviews of this idea recorded a response."
     )
     assert "Every review of this idea recorded a response" not in body
+
+
+def _answering(
+    section: str,
+    *,
+    rebuttals: list[str],
+    objections: list[str] | None = None,
+    fatal_flaws: list[str] | None = None,
+) -> SimpleNamespace:
+    """One review as the responses section reads it: what it raised and what it said."""
+    return SimpleNamespace(
+        section=section,
+        rebuttals=rebuttals,
+        objections=objections or [],
+        fatal_flaws=fatal_flaws or [],
+        stood_in=False,
+    )
+
+
+def test_a_response_to_one_objection_says_which_objection_it_answers():
+    """Responses are written at the objection they answer and point back at it. Under
+    a heading that carries no objection the pronoun has nothing to point at: a live
+    idea's Addressed Objections read "mitigating this risk", "The hypothesis
+    explicitly identifies this risk" and "The risk can be mitigated" over five
+    answers, and named no risk anywhere in the section."""
+    reviews = [
+        _answering(
+            "Correctness",
+            objections=["No power calculation was given."],
+            rebuttals=["The LSV go/no-go test mitigates this risk."],
+        ),
+        _answering(
+            "Novelty",
+            objections=["The mechanism is well trodden."],
+            rebuttals=["The hypothesis identifies this risk."],
+        ),
+    ]
+
+    said = _attributed_responses(reviews)
+
+    assert (
+        "The correctness review answered the objection it raised, item 1 under Deep "
+        "Verification below: The LSV go/no-go test mitigates this risk." in said
+    )
+    assert "the novelty review answered the objection it raised, item 2" in said.lower()
+
+
+def test_a_response_that_could_answer_more_than_one_thing_is_not_pointed_at_one():
+    """Nothing in the contract ties the n-th response to the n-th objection, which is
+    why Deep Verification reports only which review raised each item. A review that
+    raised two objections, or that recorded a fatal flaw the response might be aimed
+    at instead, is exactly the case that tie cannot be made in."""
+    two = [
+        _answering(
+            "Correctness",
+            objections=["No power calculation.", "No blinding."],
+            rebuttals=["It holds."],
+        )
+    ]
+    flawed = [
+        _answering(
+            "Feasibility",
+            objections=["The reactor is unavailable."],
+            rebuttals=["It holds."],
+            fatal_flaws=["The chemistry is wrong."],
+        )
+    ]
+
+    assert _attributed_responses(two) == "The correctness review answered: It holds."
+    assert _attributed_responses(flawed) == "The feasibility review answered: It holds."
 
 
 def test_what_the_go_no_go_tests_are_for_is_said_once_above_the_ideas(body: str):
