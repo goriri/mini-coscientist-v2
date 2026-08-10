@@ -3958,6 +3958,7 @@ def test_a_goal_carrying_one_constraint_and_one_assumption_reads_as_singular():
     )
     assert "screened the ideas against it mechanically" in one
     assert "The plan also records one assumption the work rests on" in one
+    assert "It matters because an idea inherits every assumption" in one
     assert (
         "It is an inference rather than an observation, it was not tested in this "
         "run, and a reviewer who disagrees with it should expect the ideas that rest "
@@ -3970,6 +3971,7 @@ def test_a_goal_carrying_one_constraint_and_one_assumption_reads_as_singular():
     assert "The goal carries two explicit constraints that bound what may" in several
     assert "screened the ideas against them mechanically" in several
     assert "The plan also records two assumptions the work rests on" in several
+    assert "They matter because an idea inherits every assumption" in several
     assert "Each is an inference rather than an observation" in several
 
 

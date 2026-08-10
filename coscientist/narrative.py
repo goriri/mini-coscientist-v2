@@ -8164,8 +8164,8 @@ def _section_one(record: ResearchRecord) -> _Draft:
             "The plan also records "
             + _plural(len(plan.assumptions), "assumption")
             + " the work rests on, listed under Attributes on the cover. "
-            "They matter because an idea inherits every assumption its goal was framed "
-            "with. "
+            + ("It matters" if len(plan.assumptions) == 1 else "They matter")
+            + " because an idea inherits every assumption its goal was framed with. "
             + (
                 "It is an inference rather than an observation, it was not tested in "
                 "this run, and a reviewer who disagrees with it should expect the "
