@@ -46,11 +46,7 @@ class Citation:
     @property
     def grounded(self) -> bool:
         """Resolved *and* verified. Unresolved citations are never grounded."""
-        if self.claim is not None:
-            return self.claim.verification_status in GROUNDED_STATUSES
-        if self.source is not None:
-            return self.source.verification_status in GROUNDED_STATUSES
-        return False
+        return self.resolved and self.status in GROUNDED_STATUSES
 
     @property
     def discredited(self) -> bool:
@@ -58,8 +54,23 @@ class Citation:
 
     @property
     def status(self) -> str:
+        """Worst of the claim's own standing and the standing of its document.
+
+        A claim cannot stand better than the paper it was drawn from. Reading the
+        claim's status alone, a claim extracted before the run went back to its
+        source and failed to retrieve it kept "discovered_unverified": the
+        reference entry for that paper read "could not be retrieved ... nothing
+        here is grounded by it", the bullet citing it was badged a literature lead
+        for a reader to go and follow, and the idea resting on it was reported
+        unverified rather than discredited.
+        """
         if not self.resolved:
             return "unresolved"
+        if (
+            self.source is not None
+            and self.source.verification_status in DISCREDITED_STATUSES
+        ):
+            return self.source.verification_status
         if self.claim is not None:
             return self.claim.verification_status
         assert self.source is not None
@@ -172,6 +183,12 @@ def citation_rule(session: Session) -> str:
     )
 
 
+def _claim_source(
+    claim: EvidenceClaim | None, sources: dict[str, SourceRecord]
+) -> SourceRecord | None:
+    return sources.get(claim.source_id or "") if claim else None
+
+
 def resolve_candidate(
     candidate: Candidate, packet: EvidencePacket | None
 ) -> CandidateCitations:
@@ -183,7 +200,12 @@ def resolve_candidate(
             Citation(
                 reference=reference,
                 claim=claims.get(reference),
-                source=sources.get(reference),
+                # The document behind a cited claim, so the claim's standing can be
+                # read against it. Left unresolved, a claim was the only thing a
+                # citation to a claim knew about, and a claim carries no record of
+                # whether its paper came back.
+                source=sources.get(reference)
+                or _claim_source(claims.get(reference), sources),
             )
             for reference in candidate.evidence_ids
         ],

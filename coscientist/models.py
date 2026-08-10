@@ -25,6 +25,13 @@ STAGES = (
     "meta_review",
     "report",
 )
+FORKED_STAGES = ("scope", "evidence")
+"""The stages a fork carries over from the run it forked, rather than running.
+
+Named here because the report has to disclaim exactly these: a fork's stage count
+includes them, and the models that produced them land in its "Produced by" list
+beside the models it called itself.
+"""
 RESEARCH_MODES = (
     "experimental",
     "observational",

@@ -5257,8 +5257,20 @@ def _table_rows(candidate: Candidate) -> list[tuple[str, str]]:
 _AGENT_NAMES = {
     "goal_manager": "goal scoping",
     "evidence_discovery": "literature discovery",
+    "deep_research_discovery": "Deep Research discovery",
     "source_verification": "source verification",
     "generation": "idea generation",
+    # The four generators and the merge that folds them together. Missing from here,
+    # they fell through to the id with its underscores taken out, so the appendix
+    # credited "generation evidence first" and "generation aggregator" for work the
+    # summary table two chapters earlier files under "evidence first" -- and three of
+    # the four repair paragraphs, the only record of what the run changed, opened on
+    # a pipeline id as their subject.
+    "generation_evidence_first": "evidence-first generation",
+    "generation_mechanism_first": "mechanism-first generation",
+    "generation_analogy_transfer": "analogy-transfer generation",
+    "generation_competing_explanation": "competing-explanation generation",
+    "generation_aggregator": "idea aggregation",
     "reflection": "evidence and correctness review",
     "novelty_review": "novelty review",
     "methods_statistics": "methods and statistics review",
@@ -6426,11 +6438,22 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
             )
     # Claims last: where a claim and a source carry the same id, what the claim
     # says is closer to what the statement was citing it for.
+    source_standing = {
+        source.id: source.verification_status
+        for source in (record.evidence.sources if record.evidence else [])
+    }
     for claim in record.evidence.claims if record.evidence else []:
+        # The document's standing where the document is the reason not to trust the
+        # claim, which is the same worst-first rule the grounding verdict follows.
+        # A claim extracted before the run went back to its source and failed to
+        # retrieve it kept its own "discovered_unverified", so the badge beside it
+        # read "[Literature Lead]" -- a document to go and read -- over a reference
+        # entry that says the document could not be retrieved.
+        standing = source_standing.get(claim.source_id or "", "")
         index[claim.id] = _EvidenceRecord(
             claim.id,
             claim.claim,
-            claim.verification_status,
+            standing if standing in DISCREDITED_STATUSES else claim.verification_status,
             url=source_urls.get(claim.source_id or "", ""),
             relation=claim.relation,
         )
@@ -6570,14 +6593,19 @@ def _evidence_notes(
             text = _sentence(statement)
             if not text:
                 continue
-            # A gap is a statement that no evidence exists, so grounding it is
-            # not a question that can be asked of it.
+            cited = _cited_records(text, index)
+            # A gap is a statement that no evidence exists, so grounding it is not
+            # a question that can be asked of it -- unless the specialist wrote the
+            # gap as a citation. On a live run the record that discredited the
+            # top-ranked idea was cited in a gap and nowhere else, so the chapter
+            # opened on "its stated grounding is discredited" over bullets that all
+            # read verified or followable, and nothing on the page was the broken
+            # citation the warning is about.
             badge = (
-                ""
-                if heading == "Evidence gaps"
-                else _grounding_badge(
-                    text, verified, known, _cited_records(text, index)
-                )
+                _grounding_badge(text, verified, known, cited)
+                if heading != "Evidence gaps"
+                or any(entry.status in DISCREDITED_STATUSES for entry in cited)
+                else ""
             )
             notes.append(
                 (heading, badge, _stated_evidence(text, index, names, prefixes))

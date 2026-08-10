@@ -54,7 +54,7 @@ from .markdown_render import (
     strip_table_of_contents,
     table_of_contents,
 )
-from .models import FACET_PHRASES, MERGE_PRODUCER, Session
+from .models import FACET_PHRASES, FORKED_STAGES, MERGE_PRODUCER, Session
 from .narrative import (
     _AGENT_NAMES,
     _CONTRACT_FIELD_NAMES,
@@ -1747,6 +1747,17 @@ def _record_type(schema_name: str) -> str:
     return _RECORD_TYPES.get(schema_name, schema_name)
 
 
+# What the "Written by" column asks for, against the enum the payload is filed
+# under. Printed raw, four rows of a live table answered "Written by" with
+# "repaired", which names neither an author nor anything the page has defined by
+# the time the reader meets it.
+_WRITTEN_BY = {
+    "specialist": "the specialist",
+    "repaired": "the specialist, then repaired",
+    "deterministic_fallback": "a fixed template",
+}
+
+
 def _run_facts(record: ResearchRecord) -> list[str]:
     """What produced this document, in the terms someone would need to reproduce it.
 
@@ -1788,7 +1799,10 @@ def _run_facts(record: ResearchRecord) -> list[str]:
             f"Evidence forked from: {session.seeded_evidence_from} — this run did "
             "not search the literature. Its scope and evidence base were carried "
             "over from an earlier run of the same question, and the stage count "
-            "above includes an evidence stage it started past."
+            # Both of them, because both are carried: the bullet named only the
+            # evidence stage, so "8 of 8" less the one stage disclaimed read as
+            # seven stages of this run's own work where it was six.
+            "above includes the scope and evidence stages it started past."
         )
     # "Models: gemini-3.1-pro-preview, google_search_grounding" named a tool as a
     # model, in a field a reader uses to reproduce the run.
@@ -1796,11 +1810,24 @@ def _run_facts(record: ResearchRecord) -> list[str]:
     # Sorted case-insensitively, because a case-sensitive sort is not alphabetical to
     # a reader: it put "Google Search grounding" ahead of "a fixed template" and
     # "deep-research-preview" for no reason the page could show.
-    producers = sorted(
-        {_produced_by(note) for note in record.provenance if note.model},
-        key=str.lower,
-    )
-    facts.append(f"Produced by: {_listed(producers, fallback='not recorded')}")
+    produced: dict[bool, set[str]] = {True: set(), False: set()}
+    for note in record.provenance:
+        if note.model:
+            produced[note.stage in FORKED_STAGES].add(_produced_by(note))
+    producers = sorted(produced[True] | produced[False], key=str.lower)
+    fact = f"Produced by: {_listed(producers, fallback='not recorded')}"
+    # The forked scope and evidence carry their own provenance, so the models that
+    # wrote them land in this list beside the models this run called. A live fork
+    # named the Deep Research model here, unqualified, one bullet under the line
+    # saying the run did not search the literature -- in the field an auditor uses
+    # to reproduce it.
+    inherited = sorted(produced[True] - produced[False], key=str.lower)
+    if session.seeded_evidence_from and inherited:
+        fact += (
+            f" — of which {_listed(inherited)} produced the forked scope and "
+            "evidence rather than anything this run ran"
+        )
+    facts.append(fact)
     prompts = sorted(
         {note.prompt_version for note in record.provenance if note.prompt_version}
     )
@@ -2342,7 +2369,7 @@ def _fielded(details: Sequence[str]) -> list[str]:
     return [f"{field} {_names(pairs)}" if pairs else field for field, pairs in ordered]
 
 
-def _grouped_repairs(repairs: Sequence[str]) -> str:
+def _grouped_repairs(repairs: Sequence[str]) -> tuple[str, bool]:
     """The repair list as sentences: the shared reason once, each field named once.
 
     Every rescaled score carries the same parenthetical, and the renderer joined the
@@ -2382,15 +2409,11 @@ def _grouped_repairs(repairs: Sequence[str]) -> str:
     # The first stays lower case: it follows the colon in the sentence that says
     # which answer was repaired.
     sentences = [stated[0], *(part[0].upper() + part[1:] for part in stated[1:])]
-    return (". ".join(sentences) + ".") + (
-        # Which idea's copy of a field a value belongs to is not in the record, so
-        # the folded list cannot say, and a reader counting four novelty scores
-        # against eight ideas should not have to guess whether it can.
-        " The repair pass records the field it repaired and not which idea's copy of "
-        "it, so the values above are in the order it met them."
-        if repeated
-        else ""
-    )
+    # Whether any field was folded goes back to the caller rather than out on the
+    # end of this sentence: four stages were repaired the same way, so the caveat
+    # closed four consecutive paragraphs in the same thirty-one words -- the shape
+    # this function exists to take out of the sentence, put back around it.
+    return ". ".join(sentences) + ".", repeated
 
 
 def _provenance_appendix(record: ResearchRecord) -> list[str]:
@@ -2497,6 +2520,10 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
     # not evidence; it is only worth a column on the runs where it does vary.
     varied = len({note.source for note in record.provenance}) > 1
     header = ["Stage", "Specialist", "What it produced", "Produced by"]
+    # And the values under it as an answer to the question the header asks. The
+    # column printed the enum the payload is filed under, so four rows answered
+    # "Written by" with "repaired", which is not an author -- and the word is not
+    # defined until four paragraphs below the table.
     if varied:
         header.append("Written by")
     lines.extend(
@@ -2529,7 +2556,7 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
             _produced_by(note),
         ]
         if varied:
-            row.append(note.source.replace("_", " "))
+            row.append(_WRITTEN_BY.get(note.source, note.source.replace("_", " ")))
         if rows and rows[-1][0] == row:
             rows[-1] = (row, rows[-1][1] + 1)
             continue
@@ -2571,12 +2598,28 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
                 "",
             ]
         )
+    folded = False
     for note in record.repaired_stages:
+        stated, repeated = _grouped_repairs(
+            note.repairs or ["no repair detail was recorded"]
+        )
+        folded = folded or repeated
         lines.extend(
             [
                 f"The {_agent_name(note.agent)} answer was repaired before it "
-                "could be accepted: "
-                + _grouped_repairs(note.repairs or ["no repair detail was recorded"]),
+                "could be accepted: " + stated,
+                "",
+            ]
+        )
+    if folded:
+        # Once, under all of them. Which idea's copy of a field a value belongs to
+        # is not in the record, so the folded lists cannot say, and a reader
+        # counting four novelty scores against eight ideas should not have to guess
+        # whether they can.
+        lines.extend(
+            [
+                "The repair pass records the field it repaired and not which idea's "
+                "copy of it, so the values above are in the order it met them.",
                 "",
             ]
         )

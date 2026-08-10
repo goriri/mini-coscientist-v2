@@ -5338,7 +5338,12 @@ def test_the_integrity_lead_in_offers_only_the_verdicts_the_run_recorded(
     for citations in record.evidence_support.values():
         for citation in citations.citations:
             if citation.discredited:
-                (citation.claim or citation.source).verification_status = "inaccessible"
+                # Both, because a claim cannot stand better than its document: set
+                # on the claim alone, a claim drawn from a retracted paper is still
+                # a retraction.
+                for cited in (citation.claim, citation.source):
+                    if cited is not None:
+                        cited.verification_status = "inaccessible"
 
     assert evidence_integrity_cases(record) == ["its evidence could not be retrieved"]
 
@@ -6459,3 +6464,269 @@ def test_the_computed_fallback_does_not_restate_the_table_it_sits_under(
 
     assert "**What the tournament found.**" not in report
     assert "Final standings:" not in report
+
+
+def test_a_claim_cannot_stand_better_than_the_paper_it_was_drawn_from():
+    """A claim carries no record of whether its document came back, and the citation
+    read only the claim. So a claim extracted before the run went back to its source
+    and failed to retrieve it stayed "discovered_unverified": the reference entry for
+    that paper read "could not be retrieved ... nothing here is grounded by it", the
+    bullet citing it was badged a literature lead for a reader to go and follow, and
+    the idea resting on it was reported unverified rather than discredited."""
+    from coscientist.citations import resolve_candidate
+    from coscientist.models import (
+        Candidate,
+        EvidenceClaim,
+        EvidencePacket,
+        SourceRecord,
+    )
+
+    packet = EvidencePacket(
+        question="Does a coating help?",
+        sources=[
+            SourceRecord(
+                id="src",
+                url="https://example.org/thermal",
+                title="Operando gas analysis of NMC811",
+                verification_status="inaccessible",
+            )
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim",
+                claim="Uncoated NMC811 releases oxygen from 140 °C.",
+                source_id="src",
+                verification_status="discovered_unverified",
+            )
+        ],
+    )
+    candidate = Candidate(
+        title="Coat it",
+        claim="A coating raises the onset temperature.",
+        rationale="The oxygen release is the failure mode.",
+        mechanism_model="Scavenging",
+        validation_protocol="DSC-MS",
+        falsifier="No shift in the exotherm",
+        evidence_ids=["claim"],
+    )
+
+    resolved = resolve_candidate(candidate, packet)
+
+    assert resolved.support == "discredited"
+    assert resolved.discrediting_statuses == frozenset({"inaccessible"})
+    # And the citation says which of the two verdicts, so the warning naming it can.
+    assert [item.status for item in resolved.citations] == ["inaccessible"]
+
+
+def test_an_evidence_gap_that_names_a_broken_record_is_badged_as_one(
+    rich_session: Session,
+):
+    """The record that discredited the top-ranked idea of a live run was cited in an
+    evidence gap and nowhere else. Gaps carry no badge -- a gap is a statement that no
+    evidence exists -- so the chapter opened on "its stated grounding is discredited"
+    over bullets that all read verified or followable, and nothing on the page was the
+    broken citation the warning is about."""
+    from coscientist.narrative import DISCREDITED_BADGE, _evidence_notes
+
+    record = load_record(rich_session)
+    broken = next(
+        claim
+        for claim in record.evidence.claims
+        if claim.verification_status == "inaccessible"
+    )
+    candidate = record.population.candidates[0]
+    record.cited_evidence[candidate.id] = [[], [], [broken.id]]
+
+    notes = _evidence_notes(record, candidate)
+    gaps = [
+        (badge, text) for heading, badge, text in notes if heading == "Evidence gaps"
+    ]
+
+    assert gaps and gaps[0][0] == DISCREDITED_BADGE
+    # The statement itself is still the record's, not the id the specialist wrote.
+    assert broken.claim.rstrip(".") in gaps[0][1]
+
+
+def test_a_gap_that_names_nothing_still_carries_no_badge(rich_session: Session):
+    """Grounding is not a question that can be asked of "no study has measured this",
+    and a badge there would offer a reader a document to go and look for."""
+    from coscientist.narrative import _evidence_notes
+
+    record = load_record(rich_session)
+    candidate = record.population.candidates[0]
+    record.cited_evidence[candidate.id] = [
+        [],
+        [],
+        ["No published study cycles these cells beyond 500 cycles."],
+    ]
+
+    notes = _evidence_notes(record, candidate)
+
+    assert [badge for heading, badge, _ in notes if heading == "Evidence gaps"] == [""]
+
+
+def _generated_by(rich_session: Session, agent: str) -> str:
+    """The provenance appendix of a run whose generation stage fanned out."""
+    from coscientist.dossier import _provenance_appendix
+    from coscientist.narrative import ProvenanceNote
+
+    record = load_record(rich_session)
+    record.provenance.append(
+        ProvenanceNote(
+            stage="generate",
+            agent=agent,
+            schema_name="CandidatePopulation",
+            source="repaired",
+            repairs=["Candidate.score_novelty 8 -> 4 (answered on a 1-10 scale)"],
+            error="",
+            model="gemini-3.1-pro-preview",
+        )
+    )
+    return "\n".join(_provenance_appendix(record))
+
+
+def test_the_four_generators_are_named_as_the_summary_table_names_them(
+    rich_session: Session,
+):
+    """Missing from the name table, a generator fell through to its id with the
+    underscores taken out. The appendix credited "generation evidence first" for work
+    the Executive Candidate Summary files under "evidence first", and three of the
+    four repair paragraphs -- the only record of what the run changed -- opened on a
+    pipeline id as their grammatical subject."""
+    appendix = _generated_by(rich_session, "generation_evidence_first")
+
+    assert "generation evidence first" not in appendix
+    assert "| idea generation | evidence-first generation |" in appendix
+    assert "The evidence-first generation answer was repaired" in appendix
+
+
+def test_the_merge_of_the_generators_is_named_and_not_filed(rich_session: Session):
+    appendix = _generated_by(rich_session, "generation_aggregator")
+
+    assert "generation aggregator" not in appendix
+    assert "The idea aggregation answer was repaired" in appendix
+
+
+def test_the_written_by_column_answers_the_question_its_header_asks(
+    rich_session: Session,
+):
+    """The column printed the enum the payload is filed under, so four rows of a live
+    table answered "Written by" with "repaired" -- which names neither an author nor
+    anything the page has defined by the time a reader meets it."""
+    appendix = _generated_by(rich_session, "generation_evidence_first")
+    table = appendix.split("## What each stage produced")[1]
+
+    assert "| Written by |" in table
+    assert "| the specialist, then repaired |" in table
+    assert "| repaired |" not in table
+
+
+def test_the_repair_caveat_is_printed_once_under_all_the_stages_it_covers(
+    rich_session: Session,
+):
+    """Four stages were repaired the same way, so the same thirty-one words closed
+    four consecutive paragraphs -- the shape the grouping exists to take out of one
+    sentence, put back around four of them."""
+    from coscientist.dossier import _provenance_appendix
+    from coscientist.narrative import ProvenanceNote
+
+    record = load_record(rich_session)
+    for agent in ("generation_evidence_first", "generation_mechanism_first"):
+        record.provenance.append(
+            ProvenanceNote(
+                stage="generate",
+                agent=agent,
+                schema_name="CandidatePopulation",
+                source="repaired",
+                repairs=[
+                    f"Candidate.score_novelty {raw} -> {raw // 2} "
+                    "(answered on a 1-10 scale)"
+                    for raw in (8, 6)
+                ],
+                error="",
+                model="gemini-3.1-pro-preview",
+            )
+        )
+    appendix = "\n".join(_provenance_appendix(record))
+
+    assert appendix.count("in the order it met them") == 1
+    # And it still stands under both of the paragraphs it is about.
+    assert appendix.index("mechanism-first generation") < appendix.index(
+        "in the order it met them"
+    )
+
+
+def test_a_fork_counts_both_the_stages_it_started_past(rich_session: Session):
+    """ "8 of 8" less the one stage the bullet disclaimed read as seven stages of this
+    run's own work. A fork carries the scope over too, so it was six."""
+    rich_session.seeded_evidence_from = "session_earlier"
+
+    block = compile_dossier(rich_session).split("\n## Run\n", 1)[1]
+
+    assert "includes the scope and evidence stages it started past" in block
+
+
+def test_a_fork_says_which_of_the_models_it_names_it_never_called(
+    rich_session: Session,
+):
+    """ "Produced by" is the field an auditor reproduces a run from. On a fork it
+    listed the Deep Research model that built the forked corpus, unqualified, one
+    bullet under the line saying the run did not search the literature."""
+    from coscientist.narrative import ProvenanceNote
+
+    record = load_record(rich_session)
+    record.session.seeded_evidence_from = "session_earlier"
+    record.provenance.append(
+        ProvenanceNote(
+            stage="evidence",
+            agent="deep_research_discovery",
+            schema_name="DiscoveryManifest",
+            source="specialist",
+            repairs=[],
+            error="",
+            model="deep-research-preview-04-2026",
+        )
+    )
+    from coscientist.dossier import _run_facts
+
+    produced = next(
+        fact for fact in _run_facts(record) if fact.startswith("- Produced by:")
+    )
+
+    assert "deep-research-preview-04-2026" in produced
+    assert (
+        "of which deep-research-preview-04-2026 produced the forked scope and "
+        "evidence rather than anything this run ran" in produced
+    )
+
+
+def test_the_warnings_chapter_says_the_evidence_base_is_not_this_runs(
+    rich_session: Session,
+):
+    """The overview points at Warnings and Limitations as the place where every
+    limitation on the report is set out. A fork's chapter said nothing about the one
+    structural fact -- that the corpus was never searched here -- so a reader who did
+    what the overview told them to learned it only from Provenance, thirty pages on,
+    if at all."""
+    rich_session.seeded_evidence_from = "session_earlier"
+
+    report = compile_dossier(rich_session)
+    chapter = report.split("# Warnings and Limitations")[1].split("\n# ")[0]
+
+    assert "## An evidence base this run did not gather" in chapter
+    assert "session_earlier" in chapter
+    # And the standing limits no longer count a search among the stages this run ran.
+    assert "Every stage of it is desk work: a literature search" not in chapter
+    assert (
+        "desk work: a set of proposals written by models over literature an "
+        "earlier run gathered" in chapter
+    )
+
+
+def test_a_run_that_searched_for_itself_keeps_the_search_in_its_desk_work(
+    rich_session: Session,
+):
+    report = compile_dossier(rich_session)
+
+    assert "An evidence base this run did not gather" not in report
+    assert "Every stage of it is desk work: a literature search" in report

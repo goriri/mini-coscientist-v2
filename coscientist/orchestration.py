@@ -54,6 +54,7 @@ from .model_catalog import DEFAULT_LANGUAGE, DEFAULT_MODEL
 from .models import (
     EVIDENCE_FACETS,
     FACET_PHRASES,
+    FORKED_STAGES,
     MAX_VERIFICATION_BATCHES,
     MERGE_PRODUCER,
     STAGES,
@@ -323,7 +324,7 @@ class CoScientistWorkflow:
         carried = [
             artifact.model_copy(deep=True)
             for artifact in source.artifacts
-            if artifact.stage in ("scope", "evidence")
+            if artifact.stage in FORKED_STAGES
         ]
         if not any(
             artifact.stage == "evidence"

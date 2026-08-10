@@ -80,6 +80,7 @@ def run_advisories(
     advisories = [
         *_governance_advisory(record),
         *_broken_grounding_advisory(briefs),
+        *_forked_evidence_advisory(record),
         *_waived_gate_advisory(record),
         *_templated_stage_advisory(record),
         *_stood_in_review_advisory(record),
@@ -309,6 +310,36 @@ def _corpus_reconciliation(record: ResearchRecord, admitted: int) -> str:
         f"{_number_word(gathered).lower()} documents the literature search reached "
         "that Key Findings counts" + (f": {difference}. " if difference else ". ")
     )
+
+
+def _forked_evidence_advisory(record: ResearchRecord) -> list[Advisory]:
+    """A fork reasoned over a corpus it did not gather, which is a limit on all of it.
+
+    The Provenance chapter says so three times, and Provenance is the chapter a
+    reader consults for which run produced the document rather than for what
+    qualifies it. Warnings and Limitations, which the overview points at as the
+    place where every limitation on the report is set out, said nothing -- so a
+    reader who did what the overview told them to learned nothing about the single
+    structural fact that the evidence base is a second reading of an older search.
+    """
+    source = record.session.seeded_evidence_from
+    if not source:
+        return []
+    return [
+        Advisory(
+            title="An evidence base this run did not gather",
+            body=(
+                "This run searched no literature. Its research plan and its whole "
+                f"evidence base were carried over from {source}, an earlier run of "
+                "the same question, and what this run did with them starts at idea "
+                "generation. Nothing was re-searched and nothing published since "
+                "that search can be in the corpus, so the coverage of the question "
+                "is that earlier run's coverage and the References are its finding. "
+                "The passes, the source leads and the search cost recorded under "
+                "Provenance are what that run spent, not this one."
+            ),
+        )
+    ]
 
 
 def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
@@ -557,9 +588,18 @@ def _standing_limits_advisory(record: ResearchRecord) -> Advisory:
                 else ""
             )
             + "No experiment was performed in this run, no dataset was accessed and "
-            "no measurement was taken. Every stage of it is desk work: a literature "
-            "search, a set of proposals written by models, and reviews of those "
-            "proposals by other models. So every quantitative statement in the report "
+            "no measurement was taken. Every stage of it is desk work: "
+            # A fork ran no search of its own, and this sentence enumerates what the
+            # run consists of. Naming a literature search in it credited the run
+            # with the one stage three other lines of the report deny it did.
+            + (
+                "a set of proposals written by models over literature an earlier "
+                "run gathered, and reviews of those proposals by other models"
+                if session.seeded_evidence_from
+                else "a literature search, a set of proposals written by models, "
+                "and reviews of those proposals by other models"
+            )
+            + ". So every quantitative statement in the report "
             "is an expectation recorded by whichever specialist proposed it, and the "
             "research mode named on the cover"
             + (
