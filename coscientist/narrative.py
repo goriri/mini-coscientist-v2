@@ -2318,6 +2318,39 @@ def _named_review(match: re.Match[str]) -> str:
     return named.replace("review", "reviewer") if noun.startswith("reviewer") else named
 
 
+# The same ids standing as the subject of a sentence with no noun after them at all:
+# "Reflection also noted the risk of alucone oxidation at high voltages" reached a live
+# debate turn, where a reader who has been handed five named reviews meets a sixth
+# actor with a bare stage id for a name. A reporting verb has to follow, and the one id
+# that is also an English word is taken only where it opens the sentence and keeps its
+# capital -- "the specular reflection observed at 45 degrees" is a reflection.
+_REVIEW_ID_SUBJECTS = "|".join(
+    sorted((key for key in _REVIEW_IDS if "_" in key), key=len, reverse=True)
+)
+_REVIEW_ID_SAYS = re.compile(
+    rf"(?<![`\w])(?:(?P<subject>{_REVIEW_ID_SUBJECTS})|(?-i:(?P<plain>Reflection)))\b"
+    r"(?= (?:also |further |likewise |additionally |correctly |rightly )?"
+    r"(?:notes?|noted|flags?|flagged|points? out|pointed out|raises?|raised"
+    r"|identifies|identified|observes?|observed|highlights?|highlighted"
+    r"|warns?|warned|argues?|argued|concludes?|concluded)\b)",
+    re.IGNORECASE,
+)
+_ARTICLED = re.compile(r"\b(?:the|a|an|its|this|that|our)$", re.IGNORECASE)
+
+
+def _named_review_subject(match: re.Match[str]) -> str:
+    """The review as the report names it, for an id standing in for the reviewer."""
+    before = match.string[: match.start()].rstrip()
+    opens = not before or before[-1] in ".!?:;"
+    if match["plain"] and not opens:
+        return match.group(0)
+    named = _REVIEW_IDS[match.group(0).lower()]
+    if _ARTICLED.search(before):
+        return named
+    # An id that opened the sentence takes the sentence's capital with it.
+    return f"The {named}" if opens else f"the {named}"
+
+
 # Vocabulary the specialists share with the pipeline but not with the reader. Each of
 # these reached a live report inside a reviewer's own sentence. "Candidate proposes
 # that ZnO acts as a chemical HF scavenger" names a row in the population table, and
@@ -2346,6 +2379,7 @@ _HOUSE_TERMS: tuple[_HouseTerm, ...] = (
     # reflection agent" both reached a live transcript, where "agent" names a process
     # the reader has never been shown.
     (_REVIEW_ID, _named_review),
+    (_REVIEW_ID_SAYS, _named_review_subject),
 )
 
 

@@ -5282,7 +5282,9 @@ def test_a_debate_turn_names_the_review_it_answers_and_not_the_id_it_is_filed_un
                     "However, the `methods_statistics` review rightly points out a "
                     "methodological flaw, and the ethics_safety_governance agent and "
                     "the reflection reviewer both stand behind it.",
-                    "The `safety_governance` finding is the only one left open.",
+                    "The `safety_governance` finding is the only one left open. "
+                    "Reflection also noted the risk of oxidation at high voltages. "
+                    "The specular reflection observed at 45 degrees is unrelated.",
                 ],
             )
         ]
@@ -5301,6 +5303,10 @@ def test_a_debate_turn_names_the_review_it_answers_and_not_the_id_it_is_filed_un
     assert "the evidence and correctness reviewer both stand behind it" in printed
     assert "The safety review finding is the only one left open." in printed
     assert "The feasibility review is answered by the protocol." in printed
+    # A stage id standing as the subject, with no noun after it to give it away.
+    assert "The evidence and correctness review also noted the risk" in printed
+    # And the word in its own right, which a report on materials is entitled to use.
+    assert "The specular reflection observed at 45 degrees is unrelated." in printed
 
 
 def test_every_reviewer_the_report_names_is_a_reviewer_a_panelist_can_name():
