@@ -389,7 +389,7 @@ def test_the_waived_gate_says_why_its_total_is_not_the_references_total():
     )
     body = _waived_gate_advisory(record)[0].body
 
-    assert "One of the three sources admitted was retrieved and checked" in body
+    assert "Of the three sources admitted, one was retrieved and checked" in body
     assert "that one is marked as verified where it is cited" in body
     assert (
         "That total counts what the evidence stage admitted, which is not the " in body
@@ -399,6 +399,86 @@ def test_the_waived_gate_says_why_its_total_is_not_the_references_total():
     )
     assert "two documents there are leads the search returned that no admitted " in body
     assert "one source admitted here names no document that can be numbered" in body
+
+
+def test_the_waived_gates_four_counts_are_written_in_one_number_style():
+    """Four counts of two things in one paragraph, in two styles, with no rule to it.
+
+    House style spells to twelve and writes figures above. A live waiver read "Twelve
+    of the eighty-one sources admitted" and then, two sentences on, "the ninety
+    documents the literature search reached ... : 18 documents there are leads" -- the
+    same noun under the same colon written both ways, and the two spelled counts
+    spelled only because the sentence one of them opened cannot start on a numeral.
+    """
+    from coscientist.advisories import _waived_gate_advisory
+    from coscientist.models import EvidencePacket, SourceLead, SourceRecord
+    from coscientist.narrative import CitationRegistry
+
+    session = Session(question="Does a coating change cycle life?")
+    session.exploratory_evidence_accepted = True
+    record = ResearchRecord(session=session)
+    record.evidence = EvidencePacket(
+        question=session.question,
+        sources=[
+            SourceRecord(
+                url=f"https://s{index}.example/paper",
+                verification_status="verified"
+                if index < 15
+                else "discovered_unverified",
+            )
+            for index in range(81)
+        ],
+    )
+    record.citations = CitationRegistry(
+        [
+            SourceLead(
+                canonical_url=f"https://s{index}.example/paper", title=f"S{index}"
+            )
+            for index in range(104)
+        ]
+    )
+    body = _waived_gate_advisory(record)[0].body
+
+    assert "Of the 81 sources admitted, 15 were retrieved and checked" in body
+    assert "which is not the 104 documents the literature search reached" in body
+    assert "23 documents there are leads the search returned" in body
+    for spelled in ("eighty-one", "fifteen", "twenty-three", "hundred"):
+        assert spelled not in body, "a count above twelve is written in figures"
+
+
+def test_the_waived_gate_states_the_admitted_total_where_nothing_was_checked():
+    """ "That total" pointed at a total the branch above it had not printed.
+
+    Where at least one source was retrieved the paragraph opens on the admitted count,
+    and the reconciliation after it says that total is not the References total. Where
+    none was, the opening sentence named no number at all and the sentence after it
+    still opened "That total".
+    """
+    from coscientist.advisories import _waived_gate_advisory
+    from coscientist.models import EvidencePacket, SourceLead, SourceRecord
+    from coscientist.narrative import CitationRegistry
+
+    session = Session(question="Does a coating change cycle life?")
+    session.exploratory_evidence_accepted = True
+    record = ResearchRecord(session=session)
+    record.evidence = EvidencePacket(
+        question=session.question,
+        sources=[
+            SourceRecord(url=f"https://s{index}.example/paper") for index in range(3)
+        ],
+    )
+    record.citations = CitationRegistry(
+        [
+            SourceLead(
+                canonical_url=f"https://s{index}.example/paper", title=f"S{index}"
+            )
+            for index in range(5)
+        ]
+    )
+    body = _waived_gate_advisory(record)[0].body
+
+    assert "No source among the three sources admitted here was retrieved" in body
+    assert body.index("three sources admitted") < body.index("That total")
 
 
 def test_the_waived_gate_reconciles_nothing_where_the_two_totals_agree():

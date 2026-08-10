@@ -3685,11 +3685,23 @@ def _integrity_entries(record: ResearchRecord) -> list[tuple[str, str]]:
                     "discredited",
                     _stopped(
                         f"{title} cites evidence this session could not stand behind: "
+                        # Two claims drawn from one document are two records here and
+                        # one phrase on the page, because a claim is named after the
+                        # document it was drawn from. Listed as they came, a live
+                        # report set "the unretrieved claim drawn from Efficacy of
+                        # atomic layer deposition of Al2O3 on composite
+                        # LiNi0.8Mn0.1Co0.1O2 electrode for Li-ion batteries" three
+                        # times inside one series -- word for word, with nothing to
+                        # tell the reader which of the three was meant. What is
+                        # actionable is which documents will not hold, so each is
+                        # named once.
                         + _names(
-                            [
-                                names.get(item, f"`{item}`")
-                                for item in citations.discredited
-                            ]
+                            list(
+                                dict.fromkeys(
+                                    names.get(item, f"`{item}`")
+                                    for item in citations.discredited
+                                )
+                            )
                         )
                     )
                     + " Its claim is discredited.",
@@ -7954,6 +7966,18 @@ def _plural(count: int, singular: str, plural: str | None = None) -> str:
         return _counted(count, singular, plural)
     noun = _counted(count, singular, plural).partition(" ")[2]
     return f"{_number_word(count).lower()} {noun}"
+
+
+def _bare_count(count: int) -> str:
+    """A count standing where the noun it counts has already been given.
+
+    Same rule as ``_plural`` -- spelled to twelve, in figures above -- for the
+    position ``_plural`` cannot fill. ``_number_word`` spells at any size, which is
+    right only at the start of a sentence, and reaching for it here wrote two counts
+    of the same thing in two styles a line apart: "Twelve of the eighty-one sources
+    admitted" over "18 documents there are leads the search returned".
+    """
+    return _number_word(count).lower() if count < len(_NUMBER_WORDS) else str(count)
 
 
 # Prose does not open a sentence with a digit. "3 objections recurred across the

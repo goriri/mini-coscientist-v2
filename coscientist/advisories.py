@@ -26,9 +26,9 @@ from .narrative import (
     ResearchOverview,
     ResearchRecord,
     _actor_words,
+    _bare_count,
     _joined_titles,
     _listed,
-    _number_word,
     _plural,
     _stage_words,
     broken_grounding_clause,
@@ -118,7 +118,7 @@ def advisory_pointer(advisories: list[Advisory]) -> str:
         + (
             "one says the work should not proceed on the material it names"
             if len(blocking) == 1
-            else f"{_number_word(len(blocking)).lower()} say the work should not "
+            else f"{_bare_count(len(blocking))} say the work should not "
             "proceed on the material they name"
         )
         + f": {_listed([item.title.lower() for item in blocking])}. "
@@ -307,7 +307,11 @@ def _corpus_reconciliation(record: ResearchRecord, admitted: int) -> str:
     difference = _listed([item for item in stated if item])
     return (
         "That total counts what the evidence stage admitted, which is not the "
-        f"{_number_word(gathered).lower()} documents the literature search reached "
+        # In figures above twelve, like the two counts of the same documents in the
+        # difference it introduces: "the ninety documents the literature search
+        # reached ... : 18 documents there are leads" set the same noun under the same
+        # colon in two number styles.
+        f"{_plural(gathered, 'document')} the literature search reached "
         "that Key Findings counts" + (f": {difference}. " if difference else ". ")
     )
 
@@ -391,10 +395,15 @@ def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
                 f"output, and the {record.session.approval_profile} approval profile "
                 "this run used applies to the second of those, not the first. "
                 + (
-                    # Both counts are spelled, because "five sources of the 8
-                    # admitted" is one sentence written in two number styles.
-                    f"{_number_word(len(grounded))} of the "
-                    f"{_number_word(len(sources)).lower()} sources admitted "
+                    # Both counts in one style, and the style is the report's: spelled
+                    # to twelve, in figures above. Spelling both instead put "Twelve of
+                    # the eighty-one sources admitted" one sentence above "18 documents
+                    # there are leads the search returned", and "eighty-one" was spelled
+                    # only because the sentence it opens cannot start on a numeral.
+                    # Turned around, neither count is sentence-initial and both can be
+                    # written the way the rest of the report writes a count.
+                    f"Of the {_plural(len(sources), 'source')} admitted, "
+                    f"{_bare_count(len(grounded))} "
                     + ("was" if len(grounded) == 1 else "were")
                     + " retrieved and checked against the claim drawn from "
                     + ("it" if len(grounded) == 1 else "them")
@@ -408,9 +417,13 @@ def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
                     "exploratory leads rather than findings and should not be cited "
                     "as established. "
                     if grounded
-                    else "No source admitted here was retrieved and checked, so all "
-                    "of them are exploratory leads rather than findings and none "
-                    "should be cited as established. "
+                    # Carrying the admitted total through this branch too, because the
+                    # sentence after it opens "That total" and had nothing to point at
+                    # on a run where no source was checked.
+                    else f"No source among the {_plural(len(sources), 'source')} "
+                    "admitted here was retrieved and checked, so all of them are "
+                    "exploratory leads rather than findings and none should be cited "
+                    "as established. "
                 )
                 + _corpus_reconciliation(record, len(sources))
                 + "The gate should be re-run before any idea grounded on it is acted "

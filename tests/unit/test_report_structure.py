@@ -2507,6 +2507,76 @@ def test_a_missing_evidence_id_is_never_presented_as_grounding(
         assert brief.title in body
 
 
+def test_two_claims_drawn_from_one_document_name_that_document_once():
+    """A series that printed the same phrase three times over, word for word.
+
+    A claim is named after the document it was drawn from, so two claims out of one
+    paper are two records here and one phrase on the page. Listed as they came, a live
+    idea's line read "the unretrieved claim drawn from Efficacy of atomic layer
+    deposition of Al2O3 on composite LiNi0.8Mn0.1Co0.1O2 electrode for Li-ion
+    batteries" three times inside one series, with nothing to tell the reader which of
+    the three was meant or why the same document was listed again.
+    """
+    from coscientist.citations import CandidateCitations, Citation
+    from coscientist.models import EvidenceClaim, EvidencePacket, SourceRecord
+    from coscientist.narrative import ResearchRecord, _integrity_entries
+
+    coating = SourceRecord(
+        id="source_1",
+        url="https://a.example/paper",
+        title="Efficacy of atomic layer deposition of Al2O3",
+        verification_status="inaccessible",
+    )
+    fatigue = SourceRecord(
+        id="source_2",
+        url="https://b.example/paper",
+        title="Structural fatigue in Ni-rich cathodes",
+        verification_status="inaccessible",
+    )
+    claims = [
+        EvidenceClaim(
+            id="claim_1",
+            claim="Coatings above 2nm impede transport.",
+            source_id="source_1",
+        ),
+        EvidenceClaim(
+            id="claim_2", claim="Coatings below 1nm scavenge HF.", source_id="source_1"
+        ),
+        EvidenceClaim(
+            id="claim_3", claim="Microcracking dominates.", source_id="source_2"
+        ),
+    ]
+    record = ResearchRecord(
+        session=Session(question="Does a coating change cycle life?")
+    )
+    record.evidence = EvidencePacket(
+        question=record.session.question, sources=[coating, fatigue], claims=claims
+    )
+    record.titles["cand_1"] = "Insulating Kinetic Barrier"
+    record.evidence_support = {
+        "cand_1": CandidateCitations(
+            candidate_id="cand_1",
+            citations=[
+                Citation(
+                    reference=claim.id,
+                    claim=claim,
+                    source=coating if claim.source_id == "source_1" else fatigue,
+                )
+                for claim in claims
+            ],
+        )
+    }
+
+    line = next(
+        text for case, text in _integrity_entries(record) if case == "discredited"
+    )
+
+    assert line.count("Efficacy of atomic layer deposition of Al2O3") == 1
+    assert "Structural fatigue in Ni-rich cathodes" in line
+    # Two documents named, so the series is a pair rather than a comma list of three.
+    assert ", and " not in line
+
+
 def test_an_id_invented_in_a_statement_is_counted_by_the_warning_that_names_them(
     rich_session: Session,
 ):
