@@ -3066,7 +3066,62 @@ def test_a_turn_reaching_two_constraints_is_one_turn():
             "Must specify exact charge/discharge rates, voltage windows, and temperature",
         ],
     )
-    assert "constraints one and two, in one turn across the matches" in line
+    # "both", because the run declared two constraints and the turn reached each.
+    assert "both constraints, in one turn across the matches" in line
+
+
+def test_constraints_all_of_which_were_reached_are_not_recited_and_then_counted():
+    """A live report named all four constraints, one by one, and then added "Every
+    constraint is reached by at least one review" -- the list it had just printed,
+    said again as a finding. With no fifth to exclude, the numbers carry nothing the
+    count does not."""
+    from coscientist.models import PairwiseComparison, TournamentState
+    from coscientist.narrative import _constraint_coverage
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.population = CandidatePopulation(candidates=[_candidate("cand_a")])
+    reached_all = (
+        "No uncoated control cells are described, the charge/discharge rates and "
+        "voltage windows are never stated, and capacity retention after 500 cycles "
+        "is not reported."
+    )
+    record.reviews = [
+        ReviewSet(
+            reviews=[
+                _review(
+                    "cand_a", criterion="methods_feasibility", objections=[reached_all]
+                )
+            ]
+        )
+    ]
+    record.tournament = TournamentState(
+        comparisons=[
+            PairwiseComparison(
+                round_number=1,
+                candidate_a_id="cand_a",
+                candidate_b_id="cand_b",
+                presented_first_id="cand_a",
+                winner_id="cand_a",
+                rationale="The first idea is the more informative of the two.",
+                judge="llm_debate",
+                debate_turns=[reached_all],
+            )
+        ]
+    )
+
+    line = _constraint_coverage(
+        record,
+        [
+            "Must include uncoated control cells for direct comparison",
+            "Must specify exact charge/discharge rates, voltage windows, and temperature",
+            "Must report capacity retention after 500 cycles",
+        ],
+    )
+    assert "Read against the constraints, all three are reached" in line
+    assert "constraints one, two and three are reached" not in line
+    assert "Every constraint is reached" not in line
+    # The same list, in the debate sentence, where the noun is still needed.
+    assert "The tournament debates reach all three constraints" in line
 
 
 def test_a_constraint_neither_a_reviewer_nor_a_judge_reached_is_still_reported_once():

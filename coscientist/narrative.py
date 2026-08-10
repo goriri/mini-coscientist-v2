@@ -9412,7 +9412,7 @@ def _constraint_coverage(record: ResearchRecord, constraints: Sequence[str]) -> 
     reached_in_debate = sorted(index for index, count in argued.items() if count)
     debated = (
         " The tournament debates reach "
-        + _numbered_constraints(reached_in_debate)
+        + _numbered_constraints(reached_in_debate, total=len(constraints))
         + f", in {_plural(len(reaching), 'turn')} across the matches. A judge "
         "argues two ideas against the goal rather than screening one against a "
         "list, so what a turn says about a requirement is said about the pair in "
@@ -9455,7 +9455,11 @@ def _constraint_coverage(record: ResearchRecord, constraints: Sequence[str]) -> 
     ]
     silent = [index for index in untouched if index not in reached_in_debate]
     if not untouched:
-        tail = " Every constraint is reached by at least one review."
+        # Nothing to add: the sentence this tail followed has just named the
+        # constraints the reviews reach, and with none left out that sentence is
+        # already the statement "every constraint is reached by at least one
+        # review" made twice over.
+        tail = ""
     elif silent == untouched:
         # The debates added nothing to what the reviews missed, so the gap and the
         # silence are one fact. Stated as two sentences they read as two findings:
@@ -9488,7 +9492,13 @@ def _constraint_coverage(record: ResearchRecord, constraints: Sequence[str]) -> 
         )
     return (
         f"{held} Read against the constraints, "
-        + _numbered_constraints(sorted(spoken))
+        # "all four", not "all four constraints": the clause opening this sentence
+        # has just named them.
+        + (
+            _all_of(len(constraints))
+            if len(spoken) == len(constraints) > 1
+            else _numbered_constraints(sorted(spoken))
+        )
         + " "
         + ("is" if len(spoken) == 1 else "are")
         + f" reached by a reviewer's own words: {reached}. None of those reviewers was "
@@ -9520,9 +9530,22 @@ def _reaches(wanted: set[str], text: str) -> bool:
     return len(shared) >= 2 and len(shared) / len(wanted) >= 0.4
 
 
-def _numbered_constraints(indexes: Sequence[int]) -> str:
-    """ "constraints one, two and four", against the numbers printed above them."""
+def _all_of(total: int) -> str:
+    """ "all four", and "both" where English has the word for two."""
+    return "both" if total == 2 else f"all {_number_word(total).lower()}"
+
+
+def _numbered_constraints(indexes: Sequence[int], total: int = 0) -> str:
+    """ "constraints one, two and four", against the numbers printed above them.
+
+    Given the total, an exhaustive list is written as one: the numbers in
+    "constraints one, two, three and four" say nothing the count does not once
+    there is no fifth to exclude, and reciting them made the paragraph spell out
+    in a following sentence what the list had already been.
+    """
     words = [_number_word(index).lower() for index in indexes]
+    if total and len(words) == total > 1:
+        return f"{_all_of(total)} constraints"
     if len(words) == 1:
         return f"constraint {words[0]}"
     return f"constraints {', '.join(words[:-1])} and {words[-1]}"
