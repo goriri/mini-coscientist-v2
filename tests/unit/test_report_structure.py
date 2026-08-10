@@ -1803,6 +1803,26 @@ def test_a_run_that_did_its_own_searching_carries_no_fork_note(rich_session: Ses
     assert "Evidence forked from" not in report
 
 
+def test_a_fork_does_not_claim_the_corpus_as_literature_it_gathered(
+    rich_session: Session,
+):
+    """The Knowledge Base of a fork opens "This run did not search the literature",
+    and two chapters above it the overview introduced the same corpus as "The
+    literature this run gathered" and the novelty chapter as "the literature this run
+    retrieved". The report claimed the search and disclaimed it, and a reader who met
+    the claims first carried the wrong provenance into every novelty judgement."""
+    rich_session.seeded_evidence_from = "session_earlier"
+
+    report = compile_dossier(rich_session)
+
+    assert "The literature this run gathered" not in report
+    assert "the literature this run retrieved" not in report
+    assert "The literature carried into this run from session_earlier" in report
+    assert "the literature carried into this run from session_earlier" in report
+    # The sentence the two contradicted is still the one that says where it came from.
+    assert "This run did not search the literature." in report
+
+
 def test_a_source_the_search_never_returned_is_accounted_for_where_it_is_counted(
     rich_session: Session,
 ):

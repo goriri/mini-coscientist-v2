@@ -8719,7 +8719,7 @@ def _section_seven(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draf
             # three and then two more. A section that compares against the literature
             # does have to say what it is comparing against -- but saying where it is
             # does that, and the reader has just read it.
-            "The comparison is against the literature this run retrieved: the "
+            f"The comparison is against the literature {_gathered_corpus(record)}: the "
             f"{_plural(len(statements), 'finding')} stated in full under Main "
             "Research Directions above. The standing of those findings is the "
             "standing of every novelty judgement below."
@@ -8956,8 +8956,22 @@ def _cited_reference_standing(record: ResearchRecord) -> str:
     )
 
 
+def _gathered_corpus(record: ResearchRecord) -> str:
+    """Whose search produced the corpus, as the clause after "the literature".
+
+    A forked run does no searching: the Knowledge Base opens by saying so, naming the
+    session the corpus came from. Two chapters above it, the same corpus was
+    introduced as "the literature this run gathered" and again as "the literature
+    this run retrieved" -- so the report both claimed and disclaimed the search, and
+    a reader who met the claims first carried the wrong provenance into everything
+    the novelty judgements rest on.
+    """
+    source = record.session.seeded_evidence_from
+    return f"carried into this run from {source}" if source else "this run gathered"
+
+
 def _reference_standing(record: ResearchRecord) -> str:
-    """Whether the sources this run gathered were read, said in one sentence.
+    """Whether the sources the run's corpus holds were read, said in one sentence.
 
     This used to be the flat assertion that every one of them was a lead nobody had
     checked, printed on every run whatever verification had established. On the run
@@ -9004,7 +9018,16 @@ def _reference_standing(record: ResearchRecord) -> str:
     if checked == total:
         return (
             "Every one of them was retrieved and checked against the document it "
-            "names, so a marker in the text points at a source this run has read."
+            "names, so a marker in the text points at a source "
+            + (
+                # The reading happened in the session the corpus was forked from, and
+                # the Knowledge Base says as much. Crediting it to this run here is
+                # the same overstatement, made about the one thing a reader most
+                # wants to attribute correctly.
+                "the run this one was forked from has read."
+                if record.session.seeded_evidence_from
+                else "this run has read."
+            )
         )
     # The provenance appendix states how many leads the search returned, this states
     # how many documents they came to, and the two figures stood four chapters apart
@@ -9129,9 +9152,9 @@ def _section_eight(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draf
             # "the sources this report draws on are listed under References" put the
             # corpus figure over the list anyway, so "fifteen of the fifty-nine" stood
             # as a claim about a list holding six entries.
-            "The literature this run gathered stands behind the sections below, and "
-            "those of its sources the report goes on to cite are listed under "
-            "References. " + _reference_standing(record)
+            f"The literature {_gathered_corpus(record)} stands behind the sections "
+            "below, and those of its sources the report goes on to cite are listed "
+            "under References. " + _reference_standing(record)
         )
     else:
         core.append(
