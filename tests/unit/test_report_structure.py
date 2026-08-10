@@ -3851,6 +3851,31 @@ def test_a_debate_turn_is_read_from_the_side_whose_section_prints_it():
     )
 
 
+def test_a_label_the_debater_stopped_capitalising_is_still_a_label():
+    """A judge capitalises it introducing the positions and drops the capital arguing.
+
+    Eight lower-case ones stood in one live report -- "That is the main clarifying
+    question for hypothesis 2" -- on a page that names no hypothesis by number and
+    had substituted every capitalised label around them.
+    """
+    from coscientist.narrative import _sided
+
+    turn = "For hypothesis 1 the risk is washing. Is hypothesis 2 kinetically sound?"
+
+    assert _sided(turn, first=True) == (
+        "For this idea the risk is washing. Is the opposing idea kinetically sound?"
+    )
+
+
+def test_a_formula_is_not_read_as_a_label_a_debater_dropped_the_capital_from():
+    """Lower-cased the bare initial is chemistry, and this is a chemistry report."""
+    from coscientist.narrative import _sided
+
+    turn = "Residual h2 evolves at the cathode, and H2O is titrated below 10 ppm."
+
+    assert _sided(turn, first=True) == turn
+
+
 def test_an_idea_named_by_its_position_is_re_sided_like_one_named_by_number():
     """A judge who writes "the first proposal" names a slot, not an idea.
 

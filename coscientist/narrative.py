@@ -6167,7 +6167,15 @@ def _not_opened_on_a_numeral(text: str, *, kind: str) -> str:
     return f"The {kind} is that {stated}" if stated[0].isdigit() else stated
 
 
-_HYPOTHESIS_LABEL = re.compile(r"\b(?:Hypothesis|H)\s?([12])\b")
+# The word in whatever case the debater wrote it. A judge capitalises the label
+# while it is introducing the two positions and drops the capital once it is arguing
+# from them, and eight lower-case ones stood in one live report -- "That is the main
+# clarifying question for hypothesis 2", on a page that names no hypothesis by
+# number and had substituted every capitalised label around it.
+#
+# The bare initial keeps its capital, because lower-cased it is a formula rather than
+# a label: "h2" appears nowhere in a report that writes H2O throughout.
+_HYPOTHESIS_LABEL = re.compile(r"\b(?:(?i:hypothesis)|H)\s?([12])\b")
 
 # The same two slots named by position rather than by number. A judge wrote "avoids
 # the fundamental material instability that plagues the first proposal", which the
