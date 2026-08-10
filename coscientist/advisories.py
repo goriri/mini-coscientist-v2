@@ -208,12 +208,19 @@ def _broken_grounding_advisory(briefs: tuple[IdeaBrief, ...]) -> list[Advisory]:
                 "than evidence-backed, whatever their rank says."
             )
         )
+    # The heading names the same two cases the paragraph under it does. It used to
+    # assert the stronger one alone -- a live report opened on "one says the work
+    # should not proceed on the material it names: ideas citing evidence that has been
+    # retracted", and every one of the four ideas it went on to list had cited a claim
+    # that could not be retrieved, with no retraction anywhere among them. A reader who
+    # checks the heading against the record finds the record does not support it, and
+    # then has no reason to trust the heading that does.
     if not retracted:
         title = "Ideas citing evidence that does not exist"
     elif not absent:
-        title = "Ideas citing evidence that has been retracted"
+        title = "Ideas citing evidence that was retracted or could not be retrieved"
     else:
-        title = "Ideas citing evidence that is absent or retracted"
+        title = "Ideas citing evidence that is absent, retracted or unretrievable"
     return [
         Advisory(
             title=title,

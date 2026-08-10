@@ -81,7 +81,7 @@ def test_the_body_pointer_names_the_blocking_warnings_rather_than_counting_them(
     body, appendix = _halves(rich_session)
 
     assert "a waived evidence gate" in body
-    assert "ideas citing evidence that is absent or retracted" in body
+    assert "ideas citing evidence that is absent, retracted or unretrievable" in body
     assert "should not proceed on the material they name" in body
     # Named, not reproduced: the paragraph itself is in one place only.
     assert "Waiving the gate is a distinct act" not in body
@@ -200,6 +200,47 @@ def test_a_run_whose_only_broken_grounding_was_retracted_is_not_told_it_cited_no
     assert "does not exist in this session" not in body
     assert "resolve to no record" not in body
     assert "discredited rather than evidence-backed" in body
+
+
+def test_the_heading_over_the_broken_grounding_claims_no_more_than_the_group_holds(
+    rich_session: Session,
+):
+    """The heading asserted the stronger of the two cases the paragraph reports.
+
+    A live report opened on "one says the work should not proceed on the material it
+    names: ideas citing evidence that has been retracted", and every one of the four
+    ideas it went on to list had cited a claim that could not be retrieved -- no
+    retraction anywhere among them. Evidence integrity in the same report called each
+    of the four "the unretrieved claim drawn from ...".
+    """
+    record = load_record(rich_session)
+    original = tuple(build_idea_briefs(load_record(rich_session)))
+
+    def _headings(verdicts: list[str]) -> list[str]:
+        marked = list(verdicts) + ["grounded"] * (len(original) - len(verdicts))
+        briefs = tuple(
+            replace(
+                brief,
+                support=verdict,
+                unresolved_evidence_ids=(
+                    ["claim_001"] if verdict == "unsupported" else []
+                ),
+            )
+            for brief, verdict in zip(original, marked, strict=True)
+        )
+        return [
+            item.title
+            for item in run_advisories(record, briefs=briefs)
+            if item.title.startswith("Ideas citing evidence")
+        ]
+
+    assert _headings(["discredited"]) == [
+        "Ideas citing evidence that was retracted or could not be retrieved"
+    ]
+    assert _headings(["unsupported"]) == ["Ideas citing evidence that does not exist"]
+    assert _headings(["unsupported", "discredited"]) == [
+        "Ideas citing evidence that is absent, retracted or unretrievable"
+    ]
 
 
 def test_a_single_broken_idea_is_written_about_in_the_singular(rich_session: Session):
