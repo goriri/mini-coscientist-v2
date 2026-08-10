@@ -874,8 +874,53 @@ def _review_tally(review) -> str:
     return f"This review {' and '.join(parts)}."
 
 
+def shared_review_tally(briefs: Sequence[IdeaBrief]) -> tuple[list[str], bool]:
+    """The count above, where every review of every idea recorded the same one.
+
+    The count says of a review that it answered at all rather than stood on its
+    objection, which is worth a sentence where the reviews differ. On a live run of
+    eight ideas they did not: "This review raised one objection and recorded one
+    response." stood between the findings and the score of all five reviews of all
+    eight, forty times, saying nothing about the review under which it was printed
+    that was not equally true of the other thirty-nine. Where it does not vary it is
+    a property of the run, so it is stated once with the other properties of the run
+    and each review closes on its findings and its score.
+    """
+    scored = [review for brief in briefs for review in brief.reviews]
+    tallies = {_review_tally(review) for review in scored}
+    # Anything that varies stays where it is: a review that recorded no response is
+    # the one this sentence exists to distinguish, and a hoisted count would say of
+    # it what is true only of the others.
+    if len(scored) < 2 or len(tallies) != 1:
+        return [], False
+    # A placeholder raised nothing and answered nothing, and is printed as the
+    # placeholder it is; counting it among the reviews below would put words in the
+    # mouth of a reviewer that never wrote one.
+    if any(
+        review.stood_in or not (review.objections or review.rebuttals)
+        for review in scored
+    ):
+        return [], False
+    said = next(iter(tallies)).removeprefix("This review ").rstrip(".")
+    return (
+        [
+            f"Each of the {_number_word(len(scored)).lower()} reviews below "
+            f"{said}, and that is the same under every idea, so it is given here "
+            "rather than under each of them. What a review raised is printed under "
+            "Deep Verification in the idea's own section and what it answered under "
+            "Addressed Objections; what is said here is only that none of them "
+            "stood on its objection without answering.",
+            "",
+        ],
+        True,
+    )
+
+
 def _review_block(
-    brief: IdeaBrief, hoisted: frozenset[tuple[str, str, str]] = frozenset()
+    brief: IdeaBrief,
+    hoisted: frozenset[tuple[str, str, str]] = frozenset(),
+    *,
+    tally_hoisted: bool = False,
 ) -> list[str]:
     """The five-to-six review sections, four of which close on a matched score."""
     lines: list[str] = ["### Reviews", "", "#### Summary", ""]
@@ -922,7 +967,7 @@ def _review_block(
             for finding in review.findings:
                 lines.extend([finding, ""])
             lines.extend(_review_finding_tables(review))
-            if review.objections or review.rebuttals:
+            if (review.objections or review.rebuttals) and not tally_hoisted:
                 lines.extend([_review_tally(review), ""])
             # The reference reports close every scored review with a matched pair, so
             # a reader can check the verdict against the number without scrolling.
@@ -1283,6 +1328,7 @@ def _idea_deep_dive(
     authors_own_hoisted: bool = False,
     hoisted_questions: frozenset[tuple[str, str, str]] = frozenset(),
     hoisted_matches: frozenset[str] = frozenset(),
+    tally_hoisted: bool = False,
     transcribed: set[tuple[int, frozenset[str]]] | None = None,
 ) -> list[str]:
     lines = [
@@ -1321,7 +1367,7 @@ def _idea_deep_dive(
     lines.extend(_self_rating(brief))
     lines.extend(_evidence_assessment(brief))
     lines.extend(_revised_form_block(brief))
-    lines.extend(_review_block(brief, hoisted_questions))
+    lines.extend(_review_block(brief, hoisted_questions, tally_hoisted=tally_hoisted))
     lines.extend(_match_summary(brief, hoisted_matches, transcribed))
     return lines
 
@@ -2481,6 +2527,8 @@ def compile_dossier(session: Session) -> str:
     # And who decided the matches nobody argued, which is the tournament's fact rather
     # than any one idea's.
     match_notes, hoisted_matches = shared_match_notes(briefs)
+    # And the count of what each review raised and answered, where it did not vary.
+    tally, tally_hoisted = shared_review_tally(briefs)
     # Collected before anything is laid out, because the overview carries the count
     # and the count cannot be taken from a chapter that has not been built yet.
     advisories = run_advisories(record, overview=overview, briefs=tuple(briefs))
@@ -2523,6 +2571,7 @@ def compile_dossier(session: Session) -> str:
         # that it is one finding grounding them.
         lines += shared_grounding_reach(record, briefs)
         lines += questions
+        lines += tally
         lines += shared_coherence_notes(briefs)
         lines += match_notes
         # And what the specialist's own sections are, which is a fact about the
@@ -2540,6 +2589,7 @@ def compile_dossier(session: Session) -> str:
             authors_own_hoisted=bool(authors_own),
             hoisted_questions=frozenset(hoisted_questions),
             hoisted_matches=hoisted_matches,
+            tally_hoisted=tally_hoisted,
             transcribed=transcribed,
         )
     lines += _advisory_appendix(advisories)

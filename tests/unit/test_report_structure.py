@@ -26,6 +26,7 @@ from coscientist.dossier import (
     _verdict_line,
     compile_dossier,
     shared_match_notes,
+    shared_review_tally,
 )
 from coscientist.models import (
     ApprovalProfile,
@@ -3503,6 +3504,40 @@ def test_an_objection_is_printed_once_per_idea_and_counted_under_its_review(
         # The count still stands where the reader meets the review that raised it.
         assert re.search(r"This review raised \w+ objections?\.", dive)
         assert "#### Deep Verification" in dive
+
+
+def test_the_count_under_a_review_is_hoisted_where_no_review_differs_on_it(body: str):
+    """The count distinguishes a review that answered from one that stood on its
+    objection, and on a live run of eight ideas none of them differed: "This review
+    raised one objection and recorded one response." stood between the findings and
+    the score of all five reviews of all eight, forty times over."""
+    reviews = [
+        SimpleNamespace(
+            objections=["It is thin."], rebuttals=["It is not."], stood_in=False
+        )
+        for _ in range(40)
+    ]
+    briefs = [SimpleNamespace(reviews=reviews[index::8]) for index in range(8)]
+
+    said, hoisted = shared_review_tally(briefs)
+    assert hoisted
+    assert said[0].startswith(
+        "Each of the forty reviews below raised one objection and recorded one "
+        "response, and that is the same under every idea"
+    )
+
+    # One review that answered nothing is the case the sentence exists to mark, so
+    # the count goes back under each review rather than being said over all of them.
+    quiet = [*reviews[:-1], SimpleNamespace(**{**vars(reviews[-1]), "rebuttals": []})]
+    assert shared_review_tally([SimpleNamespace(reviews=quiet)]) == ([], False)
+    # A placeholder raised nothing at all, and is not a reviewer to speak for.
+    stood_in = [
+        *reviews[:-1],
+        SimpleNamespace(**{**vars(reviews[-1]), "stood_in": True}),
+    ]
+    assert shared_review_tally([SimpleNamespace(reviews=stood_in)]) == ([], False)
+    # The fixture's reviews do differ, so its report still carries the count in place.
+    assert "This review raised" in body
 
 
 def test_a_response_is_printed_once_per_idea_and_counted_under_its_review(
