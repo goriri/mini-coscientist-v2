@@ -421,12 +421,17 @@ def _governance_block(record: ResearchRecord) -> list[str]:
                     "",
                 ]
             )
+    # A list of one is not numbered. The lead four lines above says "One governance
+    # adjudication is recorded for this run", and a live report then headed it
+    # "1. Override -- fatal flaw accepted", which sends a reader down the page after
+    # a second decision the run never took.
+    numbered = len(record.adjudications) > 1
     for index, note in enumerate(record.adjudications, start=1):
         outcome = "withdrawal" if note.withdrawn else "override"
         reason = " ".join(note.justification.split())
         lines.extend(
             [
-                f"### {index}. {note.heading}",
+                f"### {index}. {note.heading}" if numbered else f"### {note.heading}",
                 "",
                 # No "Adjudicated by" line: the resolution sentence opens with the
                 # adjudicator's name and the justification below is attributed to it

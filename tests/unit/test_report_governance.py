@@ -346,6 +346,21 @@ def test_every_adjudication_gets_its_own_reported_decision(rich_session):
         assert _flat(flaw) in _flat(block)
 
 
+def test_the_only_decision_of_a_run_is_not_headed_as_the_first_of_several(
+    rich_session,
+):
+    """A live report said "One governance adjudication is recorded for this run" and
+    headed it "1. Override -- fatal flaw accepted" four lines below, which numbers a
+    list of one and sends a reader looking for a decision the run never took."""
+    overridden = _override(rich_session, _population_ids(rich_session)[0])
+    title = load_record(rich_session).title_for(overridden)
+
+    block = _section(compile_dossier(rich_session), "## Governance adjudications")
+    decisions = [line for line in block.splitlines() if line.startswith("### ")]
+
+    assert decisions == [f"### Override — fatal flaw accepted: {title}"]
+
+
 def test_the_report_does_not_pass_off_a_typed_name_as_a_verified_one(rich_session):
     """``--adjudicator`` is free text and nothing checks it, so a report that says a
     fatal safety flaw was accepted by "a named person" is inviting the reader to read
