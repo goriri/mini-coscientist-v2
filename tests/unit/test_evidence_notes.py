@@ -221,6 +221,24 @@ def test_an_id_inside_a_sentence_is_read_out_as_the_record_it_names():
     assert badge == VERIFIED_BADGE
 
 
+def test_an_id_the_specialist_opened_the_statement_with_takes_the_sentence_capital():
+    """A live bullet read "**[Literature Lead]** the unverified source Molecular Layer
+    Deposition of Organic-Inorganic Hafnium Oxynitride Hybrid Films for Electrochemical
+    Applications demonstrates MLD of HfON for electrochemical systems" -- a lower-case
+    article opening the sentence, beside bullets whose statements held no id and so
+    began with a capital. The phrase standing in for an id opens on its article, and
+    the capital belongs to whatever word opens the statement."""
+    ((_heading, badge, said),) = _notes(
+        evidence_against=["pass4_stmt_5 is why thickness cannot be pushed further."]
+    )
+
+    assert badge == LEAD_BADGE
+    assert said == (
+        "The finding that increased coating thickness causes severe mass transfer "
+        "resistance at the particle surface is why thickness cannot be pushed further."
+    )
+
+
 def test_an_id_naming_nothing_this_run_holds_says_so_rather_than_standing_alone():
     """The naming table answers an unresolvable id with "the unverified cited claim",
     which printed alone was a bullet that said nothing at all."""

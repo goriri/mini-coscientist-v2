@@ -6108,11 +6108,21 @@ def _stated_evidence(
     prefix = _CITED_PREFIX.match(text)
     if prefix and prefix.group(1) in index:
         text = _sentence(text[prefix.end() :])
-    return _sentence(
-        _BARE_REFERENCE.sub(
-            lambda match: names.get(match.group(0), match.group(0)), text
-        )
-    )
+
+    def _named(match: re.Match[str]) -> str:
+        name = names.get(match.group(0))
+        if name is None:
+            return match.group(0)
+        # An id that opened the statement takes the sentence's capital with it, the
+        # way the naming pass over the review prose does. Left as it was recorded,
+        # the phrase standing in for the id opens on its article: a live report set
+        # "**[Literature Lead]** the unverified source Molecular Layer Deposition of
+        # Organic-Inorganic Hafnium Oxynitride Hybrid Films for Electrochemical
+        # Applications demonstrates MLD of HfON for electrochemical systems" beside
+        # bullets whose statements held no id and so began with a capital.
+        return name[:1].upper() + name[1:] if match.start() == 0 else name
+
+    return _sentence(_BARE_REFERENCE.sub(_named, text))
 
 
 def _shared_qualifications(record: ResearchRecord) -> list[str]:
