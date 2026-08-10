@@ -6959,6 +6959,37 @@ def test_a_run_that_recorded_no_strategy_names_none(rich_session: Session):
     )
 
 
+def test_the_chapter_that_first_prints_an_elo_says_what_one_is(rich_session: Session):
+    """Every idea in this chapter closes on "It finished rank 1 on an Elo of 1290".
+    On a live report the first sentence saying what an Elo was came thirty-odd uses
+    later, in the caption under Table 10 -- past the standings, past this whole
+    chapter, past every sentence asking the reader to weigh one rating on another."""
+    from coscientist.narrative import _section_four, build_idea_briefs
+
+    record = load_record(rich_session)
+    core = _section_four(record, build_idea_briefs(record)).core
+
+    gloss = next(item for item in core if "Elo" in item)
+
+    assert "every idea starts the tournament on the same rating" in gloss
+    assert "not a score any reviewer gave" in gloss
+
+
+def test_a_run_with_no_ratings_does_not_explain_the_rating(rich_session: Session):
+    """The gloss is there for the number beside each idea, so a run that never
+    reached the tournament has no number to explain and no chapter to explain it in."""
+    from dataclasses import replace
+
+    from coscientist.narrative import _section_four, build_idea_briefs
+
+    record = load_record(rich_session)
+    briefs = [replace(brief, elo=0, rank=0) for brief in build_idea_briefs(record)]
+
+    core = _section_four(record, briefs).core
+
+    assert not any("starts the tournament on the same rating" in item for item in core)
+
+
 def test_the_review_passes_are_named_as_the_rest_of_the_report_names_them(
     rich_session: Session,
 ):

@@ -8397,6 +8397,21 @@ def _section_four(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
         "does not repeat those; the reviews each idea received and the matches it "
         "played are in its own section later in this report."
     ]
+    # Where the word is first used, which is here. Each idea below closes on "It
+    # finished rank 1 on an Elo of 1290", and a live report said what an Elo was for
+    # the first time thirty-odd uses later, in the caption under Table 10 -- past the
+    # standings table, past the whole of this chapter, past every sentence that asks
+    # the reader to weigh one rating against another.
+    if any(brief.elo for brief in briefs):
+        core.append(
+            "The rank each idea closes on is the tournament's, and the Elo beside it "
+            "is the rating that produced it: every idea starts the tournament on the "
+            "same rating, and each match moves the winner's up and the loser's down "
+            "by an amount that grows with how unexpected the result was. It is a "
+            "record of results against the other ideas here, not a score any reviewer "
+            "gave, and it says nothing about how an idea would fare against ideas "
+            "this run never generated."
+        )
     grounding, grounding_hoisted = shared_support_notices(
         [brief.support for brief in briefs]
     )
