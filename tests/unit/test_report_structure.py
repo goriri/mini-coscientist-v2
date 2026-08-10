@@ -5257,6 +5257,46 @@ def test_a_governance_finding_names_the_evidence_it_cites():
     )
 
 
+def test_naming_an_id_does_not_take_the_quotes_off_the_words_around_it():
+    """The pass that names ids swept every apostrophe-and-space out of any field that
+    held one, to clear the quotes it had orphaned. A live mechanism read "This
+    inorganic 'brick layer is overcoated with a 2-3 nm conformal conductive polymer
+    'mortar layer" -- both closing quotes eaten, in a sentence whose only id was
+    somewhere else entirely."""
+    from coscientist.models import Candidate, CandidatePopulation
+    from coscientist.narrative import ResearchRecord, _name_ids_in_prose
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.population = CandidatePopulation(
+        candidates=[
+            Candidate(
+                id="cand_nacre",
+                title="A Nacre-Mimetic Shield",
+                claim="A double layer holds the particles together.",
+                rationale="The idea rests on 'claim_2_1' and nothing else.",
+                mechanism_model=(
+                    "This inorganic 'brick' layer is overcoated with a conductive "
+                    "polymer 'mortar' layer, as 'cand_nacre' sets out."
+                ),
+                validation_protocol="Coin cells against an uncoated control.",
+                falsifier="The layer cracks anyway.",
+            )
+        ]
+    )
+
+    _name_ids_in_prose(record)
+
+    candidate = record.population.candidates[0]
+    assert "'brick' layer" in candidate.mechanism_model
+    assert "'mortar' layer" in candidate.mechanism_model
+    # The quotes that were around an id come off with it: what stands there now is a
+    # name this report gave the record, not anything the writer quoted.
+    assert "'" not in candidate.mechanism_model.split("layer, as ")[1]
+    assert (
+        "'claim_2_1'" not in candidate.rationale and "'the" not in candidate.rationale
+    )
+
+
 def test_a_debate_turn_names_the_review_it_answers_and_not_the_id_it_is_filed_under():
     """A live transcript read "However, the `methods_statistics` review rightly points
     out a methodological flaw", and nothing else in that report calls the pass

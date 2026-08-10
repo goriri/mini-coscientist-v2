@@ -2212,6 +2212,9 @@ _RECORD_ID = re.compile(
     # the source ... already explore dry-coating methods" reached a live report.
     re.IGNORECASE,
 )
+# An id in quotation marks is the writer quoting the identifier, and what replaces it
+# is a name rather than a quotation, so the marks come off with the id they are around.
+_QUOTED_RECORD_ID = re.compile(rf"['\"]({_RECORD_ID.pattern})['\"]", re.IGNORECASE)
 
 
 def _standing(status: str) -> str:
@@ -2543,10 +2546,15 @@ def _name_ids_in_prose(record: ResearchRecord) -> None:
 
     def replace_text(text: str) -> str:
         if _RECORD_ID.search(text):
-            # A trailing quote around the id would be orphaned by the substitution.
-            text = (
-                _RECORD_ID.sub(_named, text).replace("'the ", "the ").replace("' ", " ")
-            )
+            # A quote around the id would be orphaned by the substitution, and it is
+            # taken off the id it is around rather than swept out of the sentence: the
+            # sweep this replaces ran over the whole field for every apostrophe
+            # followed by a space, and a live mechanism read "This inorganic 'brick
+            # layer is overcoated with a conductive polymer 'mortar layer" -- two
+            # closing quotes eaten in one sentence, in a field that never held an id
+            # inside quotation marks at all.
+            text = _QUOTED_RECORD_ID.sub(r"\1", text)
+            text = _RECORD_ID.sub(_named, text)
             text = _DOUBLE_NAMED_SOURCE.sub(_double_named, text)
         # A field holding nothing but the enum is the enum, not prose about it, and
         # the renderer formats those itself -- rewriting them here turned every
