@@ -10368,7 +10368,35 @@ def _leads_of_theirs_are_cited(
     )
 
 
+def _forked_corpus_note(record: ResearchRecord) -> str:
+    """Said where this run did not search: the corpus below came from another run.
+
+    Everything under this heading -- the passes, what each was asked, what each
+    returned, and the cost of running them -- is the record of a search that happened
+    in a different session. Printed without this sentence it reads as work this run
+    did, and two forks of one corpus read as two independent searches that happened
+    to agree.
+    """
+    source = record.session.seeded_evidence_from
+    if not source:
+        return ""
+    return (
+        "This run did not search the literature. Its scope and its whole evidence "
+        f"base were carried over from an earlier run of the same question, {source}, "
+        "and everything reported under this heading -- the passes, what each was "
+        "asked, and what each returned -- is that run's search rather than this "
+        "one's. Nothing here corroborates it: a second reading of one corpus is one "
+        "corpus. What this run did with it starts at idea generation."
+    )
+
+
 def _knowledge_summary(record: ResearchRecord) -> str:
+    forked = _forked_corpus_note(record)
+    searched = _searched_knowledge_summary(record)
+    return f"{forked}\n\n{searched}" if forked else searched
+
+
+def _searched_knowledge_summary(record: ResearchRecord) -> str:
     narratives = [
         narrative
         for narrative in (record.discovery.narratives if record.discovery else [])

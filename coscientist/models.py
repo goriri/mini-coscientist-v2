@@ -936,6 +936,18 @@ class Session(Contract):
     # visible by reading it. Chosen per run at launch rather than globally: an
     # API caller driving the pipeline unattended has nobody at that gate.
     evidence_review: bool = False
+    seeded_evidence_from: str = ""
+    """The earlier session this run took its scope and evidence base from.
+
+    Gathering the corpus is the long, expensive half of a run: eight Deep Research
+    passes against one question, which a second run of that same question would buy
+    again to reach the same place. A fork skips them and starts at generation.
+
+    Recorded on the session because the report has to say it. Without this field the
+    dossier reprints the corpus's own provenance -- eight passes, twenty-four dollars
+    -- as though this run had done that work, and a reader comparing two forks of one
+    corpus would take them for two independent searches agreeing with each other.
+    """
     exploratory_evidence_accepted: bool = False
     budget: ResearchBudget = Field(default_factory=ResearchBudget)
     artifacts: list[Artifact] = Field(default_factory=list)

@@ -62,14 +62,17 @@ def _record(
     ran: int | None = None,
     leads: Sequence[SourceLead] = (),
     numbers: dict[str, int] | None = None,
+    seeded_from: str = "",
 ) -> SimpleNamespace:
     """``ran`` is how many passes the manifest recorded, which need not be how many
     of them came back with a report to print. ``leads`` and ``numbers`` are what a
     pass turned up and which of it the running text has cited by the time this
-    section is built."""
+    section is built. ``seeded_from`` is the earlier run this one forked its whole
+    corpus from, which is what everything below this heading then belongs to."""
     passes = len(narratives) if ran is None else ran
     assigned = numbers or {}
     return SimpleNamespace(
+        session=SimpleNamespace(seeded_evidence_from=seeded_from),
         citations=SimpleNamespace(numbered=assigned.get),
         discovery=SimpleNamespace(
             narratives=list(narratives),
@@ -274,6 +277,29 @@ def test_nothing_is_claimed_for_a_pass_whose_leads_carry_no_number_yet():
 
     assert "cited here even so" not in section
     assert "no finding from those passes was carried into the evidence base" in section
+
+
+def test_a_forked_corpus_says_it_was_searched_by_another_run():
+    """Everything under this heading -- the passes, what each was asked, what each
+    returned -- is the record of a search that happened in a different session. Left
+    unsaid it reads as this run's work, and two forks of one corpus read as two
+    independent searches that happened to agree."""
+    section = _knowledge_summary(
+        _record(_narrative(), checked=False, seeded_from="session_abc123")
+    )
+
+    assert section.startswith("This run did not search the literature")
+    assert "session_abc123" in section
+    # And the report of the search is still printed below it, unedited: the note
+    # says whose search this was, not what the search found.
+    assert "What follows is the literature search's own report" in section
+    assert "achieved 5 nm coatings." in section
+
+
+def test_a_run_that_did_its_own_searching_is_not_told_it_did_not():
+    assert "did not search the literature" not in _knowledge_summary(
+        _record(_narrative())
+    )
 
 
 def test_an_unchecked_search_still_opens_with_whose_claim_this_is():

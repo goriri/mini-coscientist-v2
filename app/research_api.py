@@ -95,6 +95,11 @@ class CreateResearchSession(BaseModel):
     # completion would simply park at evidence forever. The web launcher asks
     # for it explicitly; nothing else inherits it.
     evidence_review: bool = False
+    # An earlier run of this same question whose scope and evidence base this one
+    # starts from. Gathering the corpus is the long half of a run -- eight Deep
+    # Research passes, an hour, twenty-four dollars -- and asking the same question
+    # again buys them a second time to arrive at the same place.
+    seed_evidence_from: str = ""
 
 
 class ResearchDecision(BaseModel):
@@ -656,6 +661,22 @@ def create_research_session(
         # not a server fault. It used to surface as a bare 500 with the reason
         # visible only in the Cloud Run log.
         raise HTTPException(status_code=400, detail=str(error)) from error
+    if request.seed_evidence_from:
+        # The 404 and the 400 say different things: an id nobody holds is a typo in
+        # the field, and a run that cannot be forked is a run the caller has to pick
+        # differently. Reported as one status they were indistinguishable in the
+        # launcher, which is where the id is pasted in.
+        try:
+            source = _ledger().load(request.seed_evidence_from)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No session {request.seed_evidence_from} to fork.",
+            ) from error
+        try:
+            workflow.seed_evidence_from(source)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
     kind = "auto" if workflow.approval_profile == ApprovalProfile.AUTO else "initial"
     deletion_token = secrets.token_urlsafe(32)
     _ledger().set_delete_token_hash(

@@ -284,6 +284,82 @@ class CoScientistWorkflow:
             )
             self._persist(event)
 
+    def seed_evidence_from(self, source: Session) -> None:
+        """Take an earlier run's scope and evidence base instead of searching again.
+
+        Gathering the corpus is the long half of a run -- eight Deep Research passes
+        against one question, an hour and twenty-four dollars -- and a second run of
+        the same question buys them again to arrive at the same place. A fork starts
+        at generation on the corpus the first run built.
+
+        The question has to be the one that corpus was searched against. Coverage is
+        scored per research direction and per facet, both keyed on that question, so
+        a corpus carried to a different one would publish a coverage figure for gaps
+        nobody ever searched for. The language has to match for the same reason the
+        model need not: the scope prose travels, the reasoning over it does not.
+
+        The whole evidence half of the record travels, superseded drafts included.
+        They are how that corpus came to be -- the passes, the revisions, the searches
+        that returned nothing -- and a fork that carried only the final artifact would
+        present a corpus nobody had ever revised. What does not travel is the
+        decisions: nobody in this run approved that evidence, and the audit trail is
+        not the place to invent a person who did.
+        """
+        if self.session.artifacts or self.session.current_stage:
+            raise ValueError("Only a run that has not started can be seeded.")
+        if "evidence" not in self.workflow_stages:
+            raise ValueError("This workflow version has no evidence stage to seed.")
+        if source.question.strip() != self.session.question:
+            raise ValueError(
+                f"The evidence base of {source.id} was searched against a different "
+                "question, and its coverage is scored against that one. A fork keeps "
+                "the question."
+            )
+        if source.language != self.session.language:
+            raise ValueError(
+                f"The scope of {source.id} is written in {source.language}; this run "
+                f"reports in {self.session.language}."
+            )
+        carried = [
+            artifact.model_copy(deep=True)
+            for artifact in source.artifacts
+            if artifact.stage in ("scope", "evidence")
+        ]
+        if not any(
+            artifact.stage == "evidence"
+            and artifact.schema_name == "EvidencePacket"
+            and artifact.status == ArtifactStatus.ACCEPTED
+            for artifact in carried
+        ) or not any(
+            artifact.stage == "scope"
+            and artifact.schema_name == "ResearchPlan"
+            and artifact.status == ArtifactStatus.ACCEPTED
+            for artifact in carried
+        ):
+            raise ValueError(
+                f"{source.id} has no accepted evidence base to fork: a run has to "
+                "have cleared its scope and evidence stages before another can start "
+                "from them."
+            )
+        self.session.artifacts = carried
+        self.session.seeded_evidence_from = source.id
+        # The gate this flag asks for stands in the evidence stage, which a fork
+        # starts past. Left set, the session recorded a stop the run was never
+        # going to make, and the launcher's own summary of the run said so.
+        self.session.evidence_review = False
+        self.session.current_stage = self.workflow_stages.index("generate")
+        self._persist(
+            self._event(
+                "evidence_seeded",
+                "supervisor",
+                payload={
+                    "source_session_id": source.id,
+                    "artifact_ids": [artifact.id for artifact in carried],
+                },
+                stage="evidence",
+            )
+        )
+
     @property
     def done(self) -> bool:
         return self.session.current_stage >= len(self.workflow_stages)

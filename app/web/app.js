@@ -81,6 +81,8 @@ const elements = {
   languageChoice: document.querySelector("#languageChoice"),
   evidenceReview: document.querySelector("#evidenceReview"),
   evidenceReviewNote: document.querySelector("#evidenceReviewNote"),
+  seedEvidenceFrom: document.querySelector("#seedEvidenceFrom"),
+  seedEvidenceNote: document.querySelector("#seedEvidenceNote"),
   currentSessionCard: document.querySelector("#currentSessionCard"),
   currentSessionName: document.querySelector("#currentSessionName"),
   currentSessionState: document.querySelector("#currentSessionState"),
@@ -1875,6 +1877,7 @@ async function createGuidedWorkflow(prompt, pending) {
       // disabled above and must not ask for a gate nothing will stop at.
       evidence_review:
         elements.evidenceReview.checked && !elements.evidenceReview.disabled,
+      seed_evidence_from: elements.seedEvidenceFrom.value.trim(),
     }),
   });
   renderWorkflow(workflow, pending, true);
@@ -1894,10 +1897,15 @@ function selectMode(mode) {
     elements.modelChoice,
     elements.languageChoice,
     elements.evidenceReview,
+    elements.seedEvidenceFrom,
   ].forEach((control) => {
     control.hidden = mode === "conversation";
     control.closest(".profile-control").hidden = mode === "conversation";
   });
+  // The note sits outside the control it belongs to, so hiding the field left
+  // three lines of prose about forking a corpus under a composer with nothing
+  // to fork it in.
+  elements.seedEvidenceNote.hidden = mode === "conversation";
   syncEvidenceReviewControl();
 }
 
@@ -1906,14 +1914,23 @@ function syncEvidenceReviewControl() {
   // promise a stop that never happens. The server settles it the same way; the
   // box says so before the run starts rather than after it has finished.
   const auto = elements.approvalProfile.value === "auto";
-  elements.evidenceReview.disabled = auto;
+  // A fork starts at generation, so the evidence stage this gate belongs to is
+  // one this run never enters. Left enabled, the box was checkable and then
+  // silently did nothing -- the run went straight to four generators reasoning
+  // over a corpus the person had just asked to see first.
+  const forked = Boolean(elements.seedEvidenceFrom.value.trim());
+  const off = auto || forked;
+  elements.evidenceReview.disabled = off;
   const control = elements.evidenceReview.closest(".profile-control");
-  control.classList.toggle("disabled", auto);
-  control.title = auto
+  control.classList.toggle("disabled", off);
+  control.title = off
     ? ""
     : "Stops after discovery and shows the corpus, its coverage and its gaps, before four generators reason over it.";
+  elements.evidenceReviewNote.textContent = auto
+    ? "An auto run accepts every stage it produces, so nothing would be waiting at this gate."
+    : "A forked run does not search, so it never reaches this gate. Open the earlier run to read its evidence base.";
   elements.evidenceReviewNote.hidden =
-    !auto || state.mode === "conversation" || control.hidden;
+    !off || state.mode === "conversation" || control.hidden;
 }
 
 async function openResearchSession(sessionId, { restore = false } = {}) {
@@ -2175,6 +2192,7 @@ document.querySelectorAll("[data-prompt]").forEach((button) => {
 });
 
 elements.approvalProfile.addEventListener("change", syncEvidenceReviewControl);
+elements.seedEvidenceFrom.addEventListener("input", syncEvidenceReviewControl);
 elements.newInquiry.addEventListener("click", newInquiry);
 elements.copySession.addEventListener("click", async () => {
   if (!state.sessionId) {

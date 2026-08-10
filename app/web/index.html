@@ -340,6 +340,26 @@
                 An auto run accepts every stage it produces, so nothing would be
                 waiting at this gate.
               </p>
+              <!-- Searching the literature is the long half of a run: eight Deep
+                   Research passes against one question, an hour of waiting, and
+                   a bill to match. Asking the same question again buys them a
+                   second time to arrive at the same corpus. -->
+              <label class="profile-control" for="seedEvidenceFrom">
+                Reuse an earlier run's evidence
+                <input
+                  id="seedEvidenceFrom"
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="session_… (optional)"
+                />
+              </label>
+              <p class="profile-note" id="seedEvidenceNote">
+                The earlier run has to have asked this same question in this same
+                language, and to have cleared its evidence stage. This run then
+                starts at idea generation, and its report says the corpus was
+                not its own.
+              </p>
             </div>
             <label for="promptInput">Research question</label>
             <textarea
