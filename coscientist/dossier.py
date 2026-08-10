@@ -1389,7 +1389,13 @@ def _idea_deep_dive(
     # the ideas instead of eight times below.
     lines.extend(
         [
-            f"Evidence support: {brief.support_label}."
+            # Hoisting left "Evidence support: unverified." standing alone, a thousand
+            # lines below the paragraph that says what the word means -- and this is
+            # the page a reader is on when they decide whether to act on the idea.
+            # The Executive Candidate Summary says where its evidence column is
+            # explained; the idea's own heading said nothing.
+            f"Evidence support: {brief.support_label} — the verdict explained under "
+            "Candidate Ideas above."
             if grounding_hoisted
             else brief.support_notice,
             "",

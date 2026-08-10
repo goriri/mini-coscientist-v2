@@ -2209,6 +2209,37 @@ def test_a_hoisted_grounding_verdict_is_still_named_beside_its_own_idea(
     assert body.count("Its grounding is marked unverified.") == len(shared)
 
 
+def test_a_hoisted_verdict_under_a_deep_dive_says_where_it_is_explained(
+    rich_session: Session,
+):
+    """The deep dive printed "Evidence support: unverified." and nothing else, a
+    thousand lines below the paragraph that says what the word means -- and that page
+    is where a reader is standing when they decide whether to act on the idea. The
+    Executive Candidate Summary already says where its evidence column is explained."""
+    from dataclasses import replace
+
+    from coscientist.dossier import _idea_deep_dive
+
+    record = load_record(rich_session)
+    briefs = [
+        replace(brief, support="unverified", unresolved_evidence_ids=[])
+        if not brief.support_is_alarming
+        else brief
+        for brief in build_idea_briefs(record)
+    ]
+    shared = [brief for brief in briefs if brief.support == "unverified"]
+    assert len(shared) > 1, "the fixture no longer shares a verdict between ideas"
+
+    chapter = "\n".join(_idea_deep_dive(record, shared[0], grounding_hoisted=True))
+
+    assert (
+        "Evidence support: unverified — the verdict explained under Candidate Ideas "
+        "above." in chapter
+    )
+    # Hoisted means hoisted: the explanation itself is still stated in one place.
+    assert "rests on retrieved text rather than on checked evidence" not in chapter
+
+
 def test_a_finding_more_than_one_idea_rests_on_is_reported_as_carrying_them_both(
     rich_session: Session,
 ):
