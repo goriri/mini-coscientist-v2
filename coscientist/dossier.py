@@ -55,7 +55,7 @@ from .markdown_render import (
     strip_table_of_contents,
     table_of_contents,
 )
-from .models import MERGE_PRODUCER, Session
+from .models import FACET_PHRASES, MERGE_PRODUCER, Session
 from .narrative import (
     _AGENT_NAMES,
     DEEP_DIVE_PREAMBLE,
@@ -1863,7 +1863,40 @@ _DISCOVERY_STOPS = {
     ),
     "deep_research_timed_out": "the search exceeded its deadline and was abandoned",
     "empty_deep_research_report": "the search returned without a report",
+    # Three reasons the orchestrator records and this table did not hold, so the
+    # fallback below printed them: a live appendix read "It stopped because the run
+    # recorded gap_directed_search.", which names an identifier out of the source
+    # and tells a reader deciding how much of the field this report saw nothing.
+    "gap_directed_search": (
+        "the last passes were aimed at the gaps the fan-out left open, and the "
+        "search ended with them rather than searching the question again"
+    ),
+    "deep_research_start_failed": (
+        "no pass of the search could be started, so nothing here came back from one"
+    ),
 }
+
+
+def _stop_reason(reason: str) -> str:
+    """What stopped the search, in words, whatever token the manifest recorded."""
+    if reason in _DISCOVERY_STOPS:
+        return _DISCOVERY_STOPS[reason]
+    if reason.startswith("fan_out_truncated_by_budget:"):
+        # The token carries its own payload: the facets the pass budget never
+        # reached. Naming them is the point of the reason, and the fallback below
+        # printed them as a comma-joined list of enum members.
+        dropped = [
+            FACET_PHRASES.get(facet, facet.replace("_", " "))
+            for facet in reason.partition(":")[2].split(",")
+            if facet
+        ]
+        return (
+            "the pass budget was reached before the fan-out was complete, so "
+            + _joined_titles(dropped, fallback="no facet")
+            + (" was" if len(dropped) == 1 else " were")
+            + " never searched"
+        )
+    return f"the run recorded {reason or 'no reason'}"
 
 
 def _discovery_provenance(record: ResearchRecord) -> list[str]:
@@ -1959,7 +1992,7 @@ def _discovery_provenance(record: ResearchRecord) -> list[str]:
             )
             + f", at an estimated cost of ${discovery.estimated_cost_usd:.2f}, and "
             f"returned {_plural(leads, 'source lead')}. It stopped because "
-            + _DISCOVERY_STOPS.get(reason, f"the run recorded {reason or 'no reason'}")
+            + _stop_reason(reason)
             + "."
         )
     incomplete = [

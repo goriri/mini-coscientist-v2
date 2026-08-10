@@ -1680,6 +1680,39 @@ def test_the_discovery_sentence_counts_its_passes_in_one_notation(
     assert line.startswith("Deep Research ran two passes, of which one completed, ")
 
 
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        # The one a live appendix printed raw: "It stopped because the run recorded
+        # gap_directed_search." -- an identifier out of the orchestrator, in the one
+        # sentence a reader consults to judge how much of the field was searched.
+        ("gap_directed_search", "the last passes were aimed at the gaps the fan-out"),
+        ("deep_research_start_failed", "no pass of the search could be started"),
+        (
+            "fan_out_truncated_by_budget:negative_null,corrections_retractions",
+            "the pass budget was reached before the fan-out was complete, so negative "
+            "or null results and corrections or retractions affecting the sources "
+            "used were never searched",
+        ),
+    ],
+)
+def test_a_stop_reason_is_written_in_words_and_not_as_its_token(
+    rich_session: Session, reason: str, expected: str
+):
+    manifest = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "DiscoveryManifest"
+    )
+    manifest.payload["convergence_reason"] = reason
+
+    line = _discovery_line(rich_session)
+
+    assert expected in line
+    assert reason not in line
+    assert "the run recorded" not in line
+
+
 def test_the_discovery_appendix_of_a_fork_says_the_search_was_not_its_own(
     rich_session: Session,
 ):
