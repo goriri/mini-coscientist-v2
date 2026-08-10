@@ -86,6 +86,7 @@ from .narrative import (
     evidence_integrity_cases,
     evidence_integrity_ideas,
     evidence_integrity_lines,
+    evidence_integrity_shapes,
     load_record,
     shared_coherence_notes,
     shared_grounding_reach,
@@ -2228,11 +2229,18 @@ def _sources_per_pass(record: ResearchRecord) -> list[str]:
     for lead in leads:
         for number in dict.fromkeys(lead.originating_passes):
             by_pass.setdefault(number, []).append(lead.canonical_url)
-    if len(by_pass) < 2:
+    # Every pass the run started, not only the ones that came back with something. The
+    # rows were built from the leads alone, so a pass that returned none was left out
+    # rather than shown as empty: a live appendix went from Pass 5 to Pass 7 under a
+    # paragraph saying Deep Research ran eight passes, and the pass with no row is
+    # exactly the one a reader would want accounted for.
+    statuses = {run.pass_number: run.status for run in discovery.runs}
+    numbers = sorted(set(by_pass) | set(statuses))
+    if len(numbers) < 2:
         return []
     rows = []
-    for number in sorted(by_pass):
-        found = by_pass[number]
+    for number in numbers:
+        found = by_pass.get(number, [])
         cited = sorted(
             {
                 marked
@@ -2240,6 +2248,15 @@ def _sources_per_pass(record: ResearchRecord) -> list[str]:
                 if (marked := record.citations.numbered(url)) is not None
             }
         )
+        state = statuses.get(number, "completed")
+        if not found:
+            rows.append(
+                f"Pass {number} returned no source leads."
+                if state == "completed"
+                else f"Pass {number} returned no source leads; it is recorded as "
+                f"{state.replace('_', ' ')}."
+            )
+            continue
         rows.append(
             f"Pass {number} returned {_plural(len(found), 'source lead')}"
             + (
@@ -2430,6 +2447,41 @@ def _grouped_repairs(repairs: Sequence[str]) -> tuple[str, bool]:
     return ". ".join(sentences) + ".", repeated
 
 
+def _integrity_lead(
+    record: ResearchRecord,
+    integrity: Sequence[str],
+    cases: Sequence[str],
+    covered: int,
+) -> str:
+    """How to read the list, told the way the list is actually grouped.
+
+    Two of the four cases have something idea-specific to say and take a line each;
+    the other two say the same thing about several ideas and are stated once. The
+    lead-in described only the second grouping -- "Each line below names the ideas it
+    applies to" -- and a live appendix printed it over five lines that each named one
+    idea and the documents behind it, which is the other grouping exactly.
+    """
+    by_idea, by_case = evidence_integrity_shapes(record)
+    if len(integrity) == 1:
+        return (
+            " The line below names the "
+            + ("idea" if covered == 1 else "ideas")
+            + " it "
+            "applies to."
+        )
+    if not by_case:
+        return " Each line below names one idea and the evidence in question."
+    if not by_idea:
+        return (
+            " Each line below states one of the "
+            f"{_number_word(len(cases)).lower()} and names the ideas it applies to."
+        )
+    return (
+        " Each line below names either one idea and the evidence in question, or one "
+        "of the cases and the ideas it covers."
+    )
+
+
 def _provenance_appendix(record: ResearchRecord) -> list[str]:
     """Where each stage's payload came from, so a template can never pass as reasoning."""
     lines = ["# Provenance", "", "## Run", "", *_run_facts(record), ""]
@@ -2489,17 +2541,7 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
                     )
                 )
                 + f": {stated}."
-                + (
-                    " The line below names the "
-                    + ("idea" if covered == 1 else "ideas")
-                    + " it applies to."
-                    if len(integrity) == 1
-                    else " Each line below states one of the "
-                    f"{_number_word(len(cases)).lower()} and names the ideas it "
-                    "applies to."
-                    if len(cases) > 1
-                    else " Each line below names the ideas it applies to."
-                ),
+                + _integrity_lead(record, integrity, cases, covered),
                 "",
                 *_bullets(integrity),
                 "",

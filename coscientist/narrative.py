@@ -3485,6 +3485,26 @@ def evidence_integrity_cases(record: ResearchRecord) -> list[str]:
     return [stated[case] for case in ordered]
 
 
+# The two cases that have something idea-specific to print -- which document was
+# retracted, which id was invented -- and so take a line each. The other two carry
+# nothing that varies between the ideas in them and are stated once for all of them.
+_IDEA_NAMED_CASES = frozenset({"unresolved", "discredited"})
+
+
+def evidence_integrity_shapes(record: ResearchRecord) -> tuple[int, int]:
+    """How many integrity lines name one idea, and how many name a set of them.
+
+    The lead-in over the list told the reader that "Each line below names the ideas it
+    applies to", which is the shape of exactly the two cases a live run did not print.
+    What stood under it was five lines of one idea naming its own unretrievable
+    documents -- the inverse grouping, so a reader looking for the promised list of
+    ideas per case found a list of documents per idea.
+    """
+    cases = [case for case, _line in _integrity_entries(record)]
+    named = sum(1 for case in cases if case in _IDEA_NAMED_CASES)
+    return named, len(cases) - named
+
+
 def evidence_integrity_ideas(record: ResearchRecord) -> int:
     """How many ideas the lines below cover, which is not how many lines there are.
 

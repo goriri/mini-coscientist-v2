@@ -5472,6 +5472,49 @@ def test_the_integrity_lead_in_agrees_with_the_number_of_ideas_it_covers(
     assert "The one idea in this run carries a qualification on its grounding" in every
 
 
+def test_the_integrity_lead_in_describes_the_grouping_the_list_actually_uses(
+    rich_session: Session,
+):
+    """Two cases have something idea-specific to say and take a line each; the other
+    two say one thing about several ideas and are stated once. The lead-in described
+    only the second grouping -- "Each line below names the ideas it applies to" -- and
+    a live appendix printed that over five lines each naming one idea and the
+    documents behind it, which is the first grouping exactly."""
+    from coscientist.dossier import _provenance_appendix
+
+    record = load_record(rich_session)
+    support = dict(record.evidence_support)
+
+    by_idea = {
+        key: item
+        for key, item in support.items()
+        if item.unresolved or item.discredited
+    }
+    assert len(by_idea) > 1, "the fixture must qualify more than one idea by name"
+    record.evidence_support = by_idea
+    named = "\n".join(_provenance_appendix(record))
+    assert "Each line below names one idea and the evidence in question." in named
+    assert "names the ideas it applies to" not in named
+
+    by_case = {
+        key: item
+        for key, item in support.items()
+        if item.qualified and not (item.unresolved or item.discredited)
+    }
+    assert len(by_case) > 1, "the fixture must qualify more than one idea by case"
+    record.evidence_support = by_case
+    grouped = "\n".join(_provenance_appendix(record))
+    assert "and names the ideas it applies to" in grouped
+
+    # And a run holding both groupings says so rather than picking one of them.
+    record.evidence_support = support
+    both = "\n".join(_provenance_appendix(record))
+    assert (
+        "Each line below names either one idea and the evidence in question, or one "
+        "of the cases and the ideas it covers." in both
+    )
+
+
 def test_two_integrity_cases_are_separated_from_the_or_inside_one_of_them(
     rich_session: Session,
 ):
@@ -5593,6 +5636,44 @@ def test_the_appendix_records_which_pass_found_which_source():
     # number would put every lead it mentions into the reference list.
     assert record.citations.numbered("https://x/1") is None
     assert len(record.citations) == 1
+
+
+def test_a_pass_that_returned_nothing_gets_a_row_saying_so():
+    """The rows were built from the leads, so a pass that found none was left out
+    instead of shown as empty. A live appendix ran Pass 5 then Pass 7, three lines
+    under a paragraph saying Deep Research ran eight passes -- and the missing pass is
+    the one a reader goes to that list to account for."""
+    from coscientist.dossier import _sources_per_pass
+    from coscientist.models import DeepResearchRun, DiscoveryManifest
+    from coscientist.narrative import ResearchRecord
+
+    leads = [
+        SourceLead(canonical_url="https://x/1", title="One", originating_passes=[1]),
+        SourceLead(canonical_url="https://x/3", title="Three", originating_passes=[3]),
+    ]
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.discovery = DiscoveryManifest(
+        question="Can a coating help?",
+        source_leads=leads,
+        runs=[
+            DeepResearchRun(pass_number=1, status="completed"),
+            DeepResearchRun(pass_number=2, status="completed"),
+            DeepResearchRun(pass_number=3, status="completed"),
+            DeepResearchRun(pass_number=4, status="failed"),
+        ],
+    )
+    record.citations = CitationRegistry(leads)
+
+    said = "\n".join(_sources_per_pass(record))
+
+    assert "- Pass 2 returned no source leads." in said
+    # A pass that came back with nothing because it never came back says which it is.
+    assert "- Pass 4 returned no source leads; it is recorded as failed." in said
+    # And the rows run straight through rather than skipping to the next one that
+    # found something.
+    assert [
+        line.split()[2] for line in said.splitlines() if line.startswith("- Pass")
+    ] == ["1", "2", "3", "4"]
 
 
 def test_a_run_of_one_pass_gets_no_per_pass_breakdown_of_its_own_sources():
