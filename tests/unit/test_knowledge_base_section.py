@@ -200,6 +200,35 @@ def test_the_facet_is_recovered_from_the_statements_when_the_pass_did_not_record
     assert "### Pass 1: Supporting evidence" in section
 
 
+def test_the_pass_that_closed_the_gaps_is_headed_with_what_it_went_looking_for():
+    """A bare "### Pass 8" ended a live Knowledge Base under seven headings that each
+    named their pass's subject, reading as a heading whose subject had gone missing.
+
+    The gap pass has one. It is planned with no facet because it covers whatever the
+    fan-out left open rather than one of the seven, and it goes last for that reason.
+    """
+    section = _knowledge_summary(
+        _record(
+            _narrative(facet="supporting", pass_number=1),
+            _narrative(facet="methods", pass_number=2),
+            _narrative(pass_number=3),
+        )
+    )
+
+    assert "### Pass 3: The gaps the fan-out left open" in section
+
+
+def test_a_pass_before_the_fan_out_recorded_anything_is_not_read_as_the_gap_pass():
+    """Ahead of every facet the run recorded, an unlabelled pass is an old session's
+    -- the field did not exist when it was saved -- and its facet is still inferred."""
+    section = _knowledge_summary(
+        _record(_narrative(pass_number=1), _narrative(facet="methods", pass_number=2))
+    )
+
+    assert "### Pass 1: Supporting evidence" in section
+    assert "the fan-out left open" not in section
+
+
 def test_a_single_pass_is_not_given_a_heading_that_counts_it():
     assert "### Pass 1" not in _knowledge_summary(_record(_narrative()))
 

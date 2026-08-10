@@ -11926,6 +11926,12 @@ def _narrative_facet(narrative: DiscoveryNarrative) -> str:
     return counted.most_common(1)[0][0] if counted else ""
 
 
+# What the eighth pass went looking for, in the register the seven facet phrases are
+# written in. It is planned with no facet because it covers whatever the fan-out left
+# open, and the discovery appendix says the search "ended with them" in those words.
+_GAP_PASS_PHRASE = "the gaps the fan-out left open"
+
+
 # Why a pass wrote no report, in the words of the record it left. "Completed" is
 # the one that needs saying out loud: the search ran, cost what it cost, and came
 # back with nothing, which is not the same as a pass that broke.
@@ -12097,16 +12103,45 @@ def _searched_knowledge_summary(record: ResearchRecord) -> str:
                 + " Their reports stand below as what each pass reported and "
                 "nothing more.*"
             )
+        # Which passes recorded what they were sent to cover. A pass that recorded
+        # nothing and ran after one that did is the gap-closing pass: it is planned
+        # with no facet because it covers whatever the fan-out left open, and it goes
+        # last for the same reason. Anything else unrecorded is a session saved
+        # before the field existed, and there the facet is inferred from the
+        # statements as it always was.
+        recorded = {
+            **{number: run.facet for number, run in empty.items()},
+            **{number: item.facet for number, item in written.items()},
+        }
+        fanned_out = min(
+            (number for number, facet in recorded.items() if facet),
+            default=None,
+        )
         for number in sorted(written | empty):
             narrative = written.get(number)
             # A single pass needs no heading over it: there is nothing to tell it
             # apart from, and "Pass 1" over the only report is a heading that
             # reports the absence of a fan-out.
             if len(written) + len(empty) > 1:
-                phrase = FACET_PHRASES.get(
-                    _narrative_facet(narrative) if narrative else empty[number].facet,
-                    "",
+                closing = (
+                    not recorded[number]
+                    and fanned_out is not None
+                    and number > fanned_out
                 )
+                facet = (
+                    ""
+                    if closing
+                    else (
+                        _narrative_facet(narrative)
+                        if narrative
+                        else empty[number].facet
+                    )
+                )
+                # A bare "### Pass 8" stood at the end of a live Knowledge Base under
+                # seven headings that each named what their pass went looking for,
+                # reading as a heading whose subject had gone missing. The gap pass
+                # has a subject; it is just not one of the seven.
+                phrase = FACET_PHRASES.get(facet, _GAP_PASS_PHRASE if closing else "")
                 parts.append(
                     f"### Pass {number}: {phrase[0].upper() + phrase[1:]}"
                     if phrase
