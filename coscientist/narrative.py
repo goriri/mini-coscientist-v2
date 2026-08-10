@@ -3759,6 +3759,30 @@ def _integrity_entries(record: ResearchRecord) -> list[tuple[str, str]]:
 _STUB_VALUES = frozenset({"n/a", "na", "none", "unknown", "-"})
 
 
+# A specialist with nothing to put in a field says so in words rather than leaving it
+# empty, and the bare words ``_STUB_VALUES`` holds are only the shortest way it does
+# that. "The novelty review answered: None identified." stood under Addressed
+# Objections in five of this run's eight ideas -- a section whose whole claim is that
+# something was answered, on the one review of each idea that had recorded a fatal
+# flaw and answered nothing.
+_NOTHING_RECORDED = re.compile(
+    r"(?:none|nothing|no [a-z]+s?)\s+"
+    r"(?:identified|noted|found|raised|recorded|stated|reported|specified|provided)"
+    r"|not applicable",
+    re.IGNORECASE,
+)
+
+
+def _records_nothing(text: str) -> bool:
+    """Whether a field says, in whatever words, that there is nothing in it."""
+    cleaned = " ".join(str(text or "").split()).strip("*_ ").rstrip(".!")
+    return (
+        not cleaned
+        or cleaned.lower() in _STUB_VALUES
+        or bool(_NOTHING_RECORDED.fullmatch(cleaned))
+    )
+
+
 def _comparable(text: str) -> str:
     """One statement reduced to what makes two of them the same statement.
 
@@ -4418,9 +4442,7 @@ def _kept_for_series(items: Sequence[str]) -> list[str]:
     return [
         _folded_for_series(item)
         for item in items
-        if str(item).strip()
-        and str(item).strip().lower() not in _STUB_VALUES
-        and not _looks_serialised(str(item))
+        if not _records_nothing(item) and not _looks_serialised(str(item))
     ]
 
 
@@ -6094,9 +6116,28 @@ def _idea_reviews(record: ResearchRecord, candidate_id: str) -> list[IdeaReview]
                         review.reviewer, _SECTION_QUESTIONS[section]
                     ),
                     **_review_findings(review.findings),
-                    objections=[_sentence(item) for item in review.objections],
-                    rebuttals=[_sentence(item) for item in review.rebuttals],
-                    fatal_flaws=[_sentence(item) for item in review.fatal_flaws],
+                    # A field that says it is empty is dropped here rather than where
+                    # it prints, so that the counts built off these lists -- "raised
+                    # one objection and recorded one response", the item numbers under
+                    # Deep Verification -- count the same things the reader can see.
+                    # Dropped before ``_sentence``, which reads a bare "None" as a
+                    # missing field and would put "Not stated by the specialist." on
+                    # the page as the answer.
+                    objections=[
+                        _sentence(item)
+                        for item in review.objections
+                        if not _records_nothing(item)
+                    ],
+                    rebuttals=[
+                        _sentence(item)
+                        for item in review.rebuttals
+                        if not _records_nothing(item)
+                    ],
+                    fatal_flaws=[
+                        _sentence(item)
+                        for item in review.fatal_flaws
+                        if not _records_nothing(item)
+                    ],
                     # The reference reports print a matched pair, the verdict beside
                     # the number. Setting both to the score printed "Answer: 3" over
                     # "Score: 3" under every scored review in the report, which tells

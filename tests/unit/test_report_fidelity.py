@@ -506,6 +506,69 @@ def test_a_whitespace_only_rebuttal_is_not_a_response():
     assert _objections_raised(reviews) == [("Novelty", "No safety case.", False)]
 
 
+def test_a_rebuttal_that_says_there_is_nothing_to_answer_is_not_a_response():
+    """A specialist with nothing to record writes it in words, not as an empty field.
+
+    "The novelty review answered: None identified." stood under Addressed Objections
+    in five of a live run's eight ideas -- a section whose whole claim is that
+    something was answered, on the one review of each idea that had recorded a fatal
+    flaw and answered nothing. Dropped here rather than where it prints, so the counts
+    built off the list count what the reader can see.
+    """
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.reviews = [
+        ReviewSet(
+            reviews=[
+                _review(
+                    "cand_a",
+                    criterion="novelty",
+                    objections=["The mechanism is already published."],
+                    rebuttals=["None identified."],
+                    fatal_flaws=["N/A"],
+                )
+            ]
+        )
+    ]
+
+    (review,) = _idea_reviews(record, "cand_a")
+
+    assert review.objections == ["The mechanism is already published."]
+    assert review.rebuttals == []
+    assert review.fatal_flaws == []
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "None",
+        "none.",
+        "N/A",
+        "None identified.",
+        "No objections noted",
+        "Not applicable",
+    ],
+)
+def test_the_words_a_specialist_leaves_an_empty_field_in_are_read_as_empty(written):
+    from coscientist.narrative import _records_nothing
+
+    assert _records_nothing(written)
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "None of the controls was blinded.",
+        "No power calculation is recorded, so the sample size is unjustified.",
+        "Nothing identified in the record rules out a coating that spalls.",
+    ],
+)
+def test_a_finding_that_opens_on_a_negative_is_not_read_as_an_empty_field(written):
+    """The shortest of these is a whole sentence, and the field is not empty."""
+    from coscientist.narrative import _records_nothing
+
+    assert not _records_nothing(written)
+
+
 @pytest.mark.parametrize(
     ("titles", "expected"),
     [
