@@ -5173,7 +5173,15 @@ def _motivation(facts: dict[str, str], cited: _CitedEvidence) -> str:
             ""
             if not contested
             else " The specialist read "
-            + ("that one" if len(contested) == 1 else f"{_number_word(len(contested))}")
+            # Lowered, because the count sits in the middle of a sentence. Every other
+            # spelling in this file lowers it at the call and this one did not, so a
+            # live idea's Motivation read "The specialist read Two the other way",
+            # which puts a capital where the reader looks for a new sentence.
+            + (
+                "that one"
+                if len(contested) == 1
+                else _number_word(len(contested)).lower()
+            )
             + " the other way and filed "
             + ("it" if len(contested) == 1 else "them")
             + " under Evidence against above; a finding can argue for the question "

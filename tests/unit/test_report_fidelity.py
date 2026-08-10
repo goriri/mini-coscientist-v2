@@ -1539,6 +1539,59 @@ def test_a_finding_the_specialist_read_the_other_way_says_so_where_it_is_reused(
     )
 
 
+def test_more_than_one_such_finding_is_counted_in_the_middle_of_the_sentence():
+    """Two of them are spelled out, and the spelling belongs mid-sentence. Every other
+    count in the report is lowered where it is written into running prose; this one was
+    not, and a live idea's Motivation read "The specialist read Two the other way",
+    which puts a capital where a reader looks for the start of a new sentence."""
+    from coscientist.models import (
+        EvidenceClaim,
+        EvidencePacket,
+        SourceLead,
+        SourceRecord,
+    )
+    from coscientist.narrative import CitationRegistry, _cited_evidence, _motivation
+
+    claims = [
+        "ALD Al2O3 on NMC811 scavenges HF and prevents surface corrosion",
+        "Conformal coatings raise first-cycle impedance on NMC811",
+    ]
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="src_1",
+                url="https://example.org/dual-roles",
+                title="Dual roles of Al2O3 coatings",
+                verification_status="verified",
+            )
+        ],
+        claims=[
+            EvidenceClaim(
+                id=f"claim_{index}",
+                source_id="src_1",
+                claim=claim,
+                relation="supports",
+            )
+            for index, claim in enumerate(claims, start=1)
+        ],
+    )
+    record.citations = CitationRegistry(
+        [SourceLead(canonical_url="https://example.org/dual-roles", title="Dual roles")]
+    )
+    candidate = _candidate("cand_a")
+    candidate.evidence_ids = ["claim_1", "claim_2"]
+    candidate.evidence_against = [f"{claim}." for claim in claims]
+
+    motivation = _motivation(
+        {"Core idea": "Coatings hurt."}, _cited_evidence(record, candidate)
+    )
+
+    assert "The specialist read two the other way and filed them under" in motivation
+    assert "read Two" not in motivation
+
+
 def test_a_finding_both_stages_read_the_same_way_carries_no_such_note():
     """The note is for the collision, not for every reused finding: printed over an
     idea whose own reading agrees with the evidence stage's, it would report a
