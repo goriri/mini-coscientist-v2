@@ -5482,6 +5482,61 @@ def test_recommending_two_ideas_from_one_cluster_says_what_that_costs():
     assert "one result on it decides more than one idea on this list at once" in prose
 
 
+def test_what_a_cluster_is_is_said_once_however_many_clusters_overlap():
+    """ "Sit in the X cluster and turn on the single mechanism named for it under
+    Main Research Directions above" was printed once per cluster: three times on a
+    live run, each behind the same leading title, twenty words of tail repeated to
+    change one name."""
+    from coscientist.models import DossierManifest, ResearchCluster, ResearchLandscape
+    from coscientist.narrative import ResearchRecord
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.titles = {
+        "cand_a": "A Thin Alumina Coating",
+        "cand_b": "A Thin Zirconia Coating",
+        "cand_c": "A Solvent-free Dry Coating",
+    }
+    record.landscape = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Physical Barrier Coatings",
+                candidate_ids=["cand_a", "cand_b"],
+                shared_mechanism="A coating suppresses the interfacial reaction.",
+                shared_outcome="Retention holds past five hundred cycles.",
+            ),
+            ResearchCluster(
+                name="Dry Deposition Routes",
+                candidate_ids=["cand_a", "cand_c"],
+                shared_mechanism="A dry route avoids the solvent wash.",
+                shared_outcome="Retention holds past five hundred cycles.",
+            ),
+        ]
+    )
+    record.manifest = DossierManifest(
+        title="Ranked Research Ideas",
+        sections=[],
+        recommendation_candidate_ids=["cand_a", "cand_b", "cand_c"],
+    )
+
+    prose = " ".join(
+        paragraph
+        for section in synthesize_overview(record).sections
+        if section.number == 9
+        for paragraph in section.paragraphs
+    )
+    assert prose.count("turn on the single mechanism") == 1
+    # And each cluster keeps its own line, the way the change logs below it do.
+    assert (
+        "- A Thin Alumina Coating and A Thin Zirconia Coating sit in the "
+        "Physical Barrier Coatings cluster." in prose
+    )
+    assert (
+        "- A Thin Alumina Coating and A Solvent-free Dry Coating sit in the "
+        "Dry Deposition Routes cluster." in prose
+    )
+    assert "Sharing a mechanism is not agreeing about it" in prose
+
+
 def test_ideas_that_finished_level_are_not_printed_as_an_ordering():
     """Three ideas on 1184 were ranked four, five and six by the sort's tie-break."""
     from coscientist.narrative import IdeaBrief

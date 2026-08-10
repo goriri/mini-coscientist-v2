@@ -11036,22 +11036,15 @@ def _section_nine(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
             )
         overlaps = _recommended_overlaps(record, recommended_ids)
         if overlaps:
-            core.append(
-                "Part of what is recommended is one bet rather than several. "
-                + " ".join(
-                    f"{_joined_titles(titles)} sit in the {name} cluster and turn on "
-                    "the single mechanism named for it under Main Research Directions "
-                    "above."
-                    for name, titles in overlaps
-                )
-                # "So they stand or fall together" was printed over a pair whose two
-                # hypotheses were that ultrathin coatings do not improve cycle life
-                # and that a 2.5 nm coating does. They cannot stand together and they
-                # cannot fall together: the shared mechanism is what they disagree
-                # about. What is true of every such pair, and all this can claim
-                # without reading which way each of them cuts, is that one experiment
-                # reaches all of them.
-                + " Sharing a mechanism is not agreeing about it: two ideas in one "
+            # "So they stand or fall together" was printed over a pair whose two
+            # hypotheses were that ultrathin coatings do not improve cycle life and
+            # that a 2.5 nm coating does. They cannot stand together and they cannot
+            # fall together: the shared mechanism is what they disagree about. What
+            # is true of every such pair, and all this can claim without reading
+            # which way each of them cuts, is that one experiment reaches all of
+            # them.
+            reach = (
+                " Sharing a mechanism is not agreeing about it: two ideas in one "
                 "cluster may put opposite cases, in which case a result cannot "
                 "vindicate both. Either way the reach is the same, and carrying them "
                 "together is still defensible, since the protocols differ and the "
@@ -11060,6 +11053,32 @@ def _section_nine(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
                 "first, and one result on it decides more than one idea on this list "
                 "at once."
             )
+            opening = "Part of what is recommended is one bet rather than several."
+            # The clause that says what a cluster is was printed once per cluster.
+            # Three clusters on a live run put "sit in the X cluster and turn on the
+            # single mechanism named for it under Main Research Directions above" on
+            # the page three times, each behind the same leading title -- twenty
+            # words of tail repeated to change one name. It is true of every cluster
+            # here, so where there is more than one it is said once, above them, and
+            # the clusters go one to a line the way the change logs below do.
+            if len(overlaps) == 1:
+                name, titles = overlaps[0]
+                core.append(
+                    f"{opening} {_joined_titles(titles)} sit in the {name} cluster "
+                    "and turn on the single mechanism named for it under Main "
+                    "Research Directions above." + reach
+                )
+            else:
+                core.append(
+                    f"{opening} The ideas listed together below turn on the single "
+                    "mechanism their cluster is named for, stated in full under Main "
+                    "Research Directions above.\n\n"
+                    + "\n".join(
+                        f"- {_joined_titles(titles)} sit in the {name} cluster."
+                        for name, titles in overlaps
+                    )
+                    + f"\n\n{reach.lstrip()}"
+                )
     if unmatched_ids:
         core.append(
             "The meta-review also recommended "
