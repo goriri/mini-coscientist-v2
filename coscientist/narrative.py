@@ -10734,36 +10734,43 @@ def _section_nine(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
             "from this report."
         )
     if revised:
-        core.append(
+        # Every round of the lineage, not the last one. The change log is the only
+        # place a reader is told what the rewrite did, and printing the final round's
+        # changes alone described a two-round rewrite by its smaller half: "revised to
+        # version 3: specified H14-grade HEPA filtration" over an idea whose first
+        # round had changed the coating material and the loading.
+        logs = [
+            f"{title} was revised to version {revision.candidate.version}: "
+            + _spliced(
+                _join(
+                    list(
+                        dict.fromkeys(
+                            change
+                            for item in record.revisions_of(candidate_id)
+                            for change in item.changes
+                        )
+                    ),
+                    fallback="no change was recorded",
+                )
+            )
+            + "."
+            for candidate_id, title, revision in revised
+        ]
+        said = (
             "The recommendation is for the revised form of each of these, not the form "
             "ranked above. Evolution rewrote them after the tournament, and the revised "
             "text is set out under Revised Form Recommended in each idea's own section: "
             "that is what would be carried, and it is not the text ranked in section "
-            "four. "
-            + _rereview_sentence(record, recommended_ids)
-            + " "
-            # Every round of the lineage, not the last one. The change log is the only
-            # place a reader is told what the rewrite did, and printing the final
-            # round's changes alone described a two-round rewrite by its smaller half:
-            # "revised to version 3: specified H14-grade HEPA filtration" over an idea
-            # whose first round had changed the coating material and the loading.
-            + " ".join(
-                f"{title} was revised to version {revision.candidate.version}: "
-                + _spliced(
-                    _join(
-                        list(
-                            dict.fromkeys(
-                                change
-                                for item in record.revisions_of(candidate_id)
-                                for change in item.changes
-                            )
-                        ),
-                        fallback="no change was recorded",
-                    )
-                )
-                + "."
-                for candidate_id, title, revision in revised
-            )
+            "four. " + _rereview_sentence(record, recommended_ids)
+        )
+        # One change log to a line where there is more than one. A reader here is
+        # looking up what happened to a named idea, and four of them run into the
+        # paragraph that introduces them is 1,724 characters with no seam in it but
+        # the titles -- which sit mid-sentence, where the eye does not look for them.
+        core.append(
+            f"{said}\n\n" + "\n".join(f"- {log}" for log in logs)
+            if len(logs) > 1
+            else f"{said} {logs[0]}"
         )
         reordering = _post_evolution_reordering(record, recommended_ids, briefs)
         if reordering:

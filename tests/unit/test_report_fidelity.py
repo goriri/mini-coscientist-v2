@@ -2342,6 +2342,57 @@ def test_a_rewrite_made_over_two_rounds_is_not_attributed_to_one():
     assert critiques.split(". ")[0].endswith("the inhalation risk")
 
 
+def test_the_change_logs_of_several_rewrites_are_set_one_to_a_line():
+    """A reader here is looking up what happened to a named idea. On a live run the
+    four change logs ran into the paragraph that introduces them -- 1,724 characters
+    with no seam in it but the titles, which sit mid-sentence where the eye does not
+    look for them."""
+    from coscientist.models import CandidatePopulation, DossierManifest
+    from coscientist.narrative import _section_nine
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.population = CandidatePopulation(
+        candidates=[_candidate("cand_a"), _candidate("cand_b")]
+    )
+    record.titles = {"cand_a": "A TiO2 coating", "cand_b": "An Al2O3 coating"}
+    record.evolution = EvolutionCycle(
+        records=[_evolved("cand_a_v2", "cand_a", 2), _evolved("cand_b_v2", "cand_b", 2)]
+    )
+    _trace_lineage(record, {"cand_a", "cand_b"})
+    record.manifest = DossierManifest(
+        title="Dossier",
+        sections=[],
+        recommendation_candidate_ids=["cand_a", "cand_b"],
+    )
+    briefs = [
+        _brief(
+            record.titles[item],
+            [],
+            facts=_facts(),
+            candidate_id=item,
+            revised_form=[("Claim", "A coating raises retention.")],
+        )
+        for item in ("cand_a", "cand_b")
+    ]
+
+    written = next(
+        paragraph
+        for paragraph in _section_nine(record, briefs).core
+        if paragraph.startswith("The recommendation is for the revised form")
+    )
+    lead_in, *logs = written.split("\n\n")[0], *written.split("\n\n")[1].splitlines()
+
+    assert lead_in.endswith(
+        "so what changed has to be read before the recommendation is acted on."
+    )
+    assert logs == [
+        "- A TiO2 coating was revised to version 2: tightened the loading for "
+        "cand_a_v2.",
+        "- An Al2O3 coating was revised to version 2: tightened the loading for "
+        "cand_b_v2.",
+    ]
+
+
 def test_a_rewritten_protocol_that_names_its_steps_is_set_one_step_to_a_line():
     """An evolved idea's protocol arrives as one field, and the specialist that wrote
     it named its steps: a live Revised Form printed 1,377 characters of "**Variables &
