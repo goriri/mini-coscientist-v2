@@ -3545,6 +3545,30 @@ def test_a_novelty_score_is_placed_against_the_field_that_was_scored():
     assert _novelty_standing(None, [5, 4]).startswith("No novelty review")
 
 
+def test_the_goal_half_of_the_goal_and_novelty_heading_is_answered(
+    rich_session: Session,
+):
+    """Under "Goal Alignment & Novelty" a live report printed the novelty score and
+    stopped, on every idea in the run. A reader who came for the first thing the
+    heading names got the second, with nothing saying the run never measured it."""
+    from coscientist.narrative import _goal_alignment, build_idea_briefs
+
+    record = load_record(rich_session)
+    said = build_idea_briefs(record)[0].summary["Goal Alignment & Novelty"]
+
+    assert "The novelty review scored this" in said
+    assert "No pass of this run scored the idea against the goal itself." in said
+    assert "the impact review" in said
+    assert "of five and is printed under Impact below" in said
+
+    # A placeholder is not the nearest judgement on the record; it is not a judgement.
+    stood_in = _goal_alignment(
+        SimpleNamespace(section="Impact", score=4, stood_in=True)
+    )
+    assert "placeholder here rather than a judgement anyone wrote" in stood_in
+    assert _goal_alignment(None).endswith("was never recorded for this idea.")
+
+
 def test_a_check_list_is_introduced_by_where_its_items_came_from():
     """The standing checks were appended to every idea, three identical paragraphs
     under the objections that were the reason to read the section. They belong only

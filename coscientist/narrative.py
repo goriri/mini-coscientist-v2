@@ -5209,6 +5209,28 @@ def _novelty_standing(review: IdeaReview | None, field: Sequence[int]) -> str:
     )
 
 
+def _goal_alignment(impact: IdeaReview | None) -> str:
+    """The other half of the heading, which no pass of this run scores on its own.
+
+    Under "Goal Alignment & Novelty" a live report printed the novelty score and
+    stopped, on every idea in the run. A reader who came to the section for the first
+    thing the heading names got the second, with nothing saying the run never measured
+    it. The impact review is the nearest judgement on the record -- what the result
+    would be worth if it held -- and naming it is what the section can honestly do.
+    """
+    if impact is None:
+        near = "was never recorded for this idea"
+    elif impact.stood_in:
+        near = "is a placeholder here rather than a judgement anyone wrote"
+    else:
+        near = f"scored this {impact.score} of five and is printed under Impact below"
+    return (
+        "No pass of this run scored the idea against the goal itself. The nearest "
+        "judgement on the record is the impact review, on what the result would be "
+        f"worth if it held, which {near}."
+    )
+
+
 def _feasibility_inputs(facts: dict[str, str], revised: dict[str, str] | None) -> str:
     """What has to exist before the work starts, on the form that was reviewed.
 
@@ -5267,6 +5289,7 @@ def _summary_sections(
     feasibility = next(
         (review for review in reviews if review.section == "Feasibility"), None
     )
+    impact = next((review for review in reviews if review.section == "Impact"), None)
     verdict = (
         "carried forward onto the shortlist"
         if shortlisted
@@ -5399,7 +5422,16 @@ def _summary_sections(
         ),
         # What a novelty score is a judgement about is the same for all eight ideas
         # and is stated in the preamble, so this is the score and where it sits.
-        "Goal Alignment & Novelty": _novelty_standing(novelty, novelty_field),
+        #
+        # And then the goal, which is the other half of the heading and was missing
+        # from every idea in a live report: the section printed one sentence about
+        # novelty under a heading promising two things, and a reader looking for how
+        # well an idea serves the question found the novelty score instead. No pass of
+        # this run scores that, so what the section can do is say so and name the
+        # judgement that comes nearest.
+        "Goal Alignment & Novelty": _novelty_standing(novelty, novelty_field)
+        + " "
+        + _goal_alignment(impact),
         "Feasibility Assessment (Go/No-Go Decision)": (
             (
                 f"The feasibility review scored this {feasibility.score} of five. "
