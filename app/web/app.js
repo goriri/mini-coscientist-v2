@@ -863,9 +863,9 @@ function renderSessionTitle(workflow = state.workflow) {
   elements.sessionTitle.title = workflow?.question || "";
   elements.renameSession.hidden = !named;
   document.title = state.pendingAttention
-    ? `\u25cf ${title} · Co—Scientist`
+    ? `\u25cf ${title} · Co-Scientist`
     : named
-      ? `${title} · Co—Scientist`
+      ? `${title} · Co-Scientist`
       : DOCUMENT_TITLE;
 }
 
