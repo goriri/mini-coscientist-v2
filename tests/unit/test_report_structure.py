@@ -5862,6 +5862,82 @@ def test_two_records_cited_side_by_side_are_given_their_standing_once():
     )
 
 
+def test_a_writer_that_calls_its_own_citation_verified_is_quoted_not_seconded():
+    """A live correctness review read "The hypothesis is strongly supported by
+    verified evidence (the unverified claims drawn from Identification of the dual
+    roles of Al2O3 coatings ...)". The standing travels with the name so that a
+    sentence asserting the opposite is corrected where it is read; inside one noun
+    phrase the two halves contradict each other in six words, and nothing says which
+    of them the report stands behind."""
+    from coscientist.models import (
+        Candidate,
+        CandidatePopulation,
+        EvidenceClaim,
+        EvidencePacket,
+        SourceRecord,
+    )
+    from coscientist.narrative import ResearchRecord, _name_ids_in_prose
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="source_0",
+                url="https://example.org/0",
+                title="Dual Roles of Al2O3",
+                verification_status="discovered_unverified",
+            ),
+            SourceRecord(
+                id="source_1",
+                url="https://example.org/1",
+                title="Tailoring NMC811",
+                verification_status="verified",
+            ),
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_0",
+                claim="A coating scavenges HF.",
+                source_id="source_0",
+                verification_status="discovered_unverified",
+            ),
+            EvidenceClaim(
+                id="claim_1",
+                claim="A coating holds the layered phase.",
+                source_id="source_1",
+                verification_status="verified",
+            ),
+        ],
+    )
+    record.population = CandidatePopulation(
+        candidates=[
+            Candidate(
+                id="cand_1",
+                title="An Alumina Coating",
+                claim="A coating extends cycle life.",
+                rationale="It is supported by verified evidence (claim_0).",
+                mechanism_model="It rests on verified evidence (claim_1).",
+                validation_protocol="Coin cells against an uncoated control.",
+                falsifier="No difference at ten cells per arm.",
+            )
+        ]
+    )
+
+    _name_ids_in_prose(record)
+
+    candidate = record.population.candidates[0]
+    assert candidate.rationale == (
+        "It is supported by evidence the specialist calls verified (the unverified "
+        "claim drawn from Dual Roles of Al2O3)."
+    )
+    # And where the run agrees with the writer there is nothing to attribute: the
+    # citation carries no standing, so the word is left as the writer set it.
+    assert candidate.mechanism_model == (
+        "It rests on verified evidence (the claim drawn from Tailoring NMC811)."
+    )
+
+
 def test_two_claims_of_one_paper_are_not_printed_as_two_papers():
     """Two claim ids drawn from one source carry one name, and a live sentence backed
     an idea with "(the unverified claim drawn from Identification of the dual roles of

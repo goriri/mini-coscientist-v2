@@ -2586,6 +2586,31 @@ _BARE_EVIDENCE_HEAD = re.compile(
 )
 
 
+# A writer that calls its own citation verified, over records this run could not.
+# The standing travels with the name for exactly this reason, and where the two meet
+# inside one noun phrase the sentence contradicts itself in six words: a live
+# correctness review read "The hypothesis is strongly supported by verified evidence
+# (the unverified claims drawn from Identification of the dual roles of Al2O3
+# coatings ...)". Both halves are on the record and the reader cannot tell which one
+# the report stands behind, which is the one thing the standing exists to settle.
+_CLAIMED_VERIFIED = re.compile(
+    r"\bverified (evidence|sources?|claims?|findings?|literature|data)\b"
+    r"(?=\s*\(?(?:the )?(?:retracted|unretrieved|unverified)\b)",
+    re.IGNORECASE,
+)
+
+
+def _claimed_verified(match: re.Match[str]) -> str:
+    """Give the word back to whoever wrote it, and leave the standing standing.
+
+    Deleting it would be the report editing an assertion a specialist made; keeping it
+    unattributed prints the assertion as the report's own. Attributed, both readings
+    survive and the reader is told which is which.
+    """
+    said = f"{match.group(1)} the specialist calls verified"
+    return said[:1].upper() + said[1:] if match.group(0)[:1].isupper() else said
+
+
 # Records a specialist cited side by side, which it writes as "(claim_2_1, claim_3_4)"
 # at least as often as it writes them into a clause. The name of a claim runs to eight
 # words before it reaches the title, so naming each one separately said the same eight
@@ -2952,6 +2977,9 @@ def _name_ids_in_prose(record: ResearchRecord) -> None:
             text = _RECORD_ID.sub(_named, text)
             text = _DOUBLE_NAMED_SOURCE.sub(_double_named, text)
             text = _BARE_EVIDENCE_HEAD.sub(r"\1The ", text)
+            # Last, because the standing it answers to is only in the sentence once
+            # the ids above have been named.
+            text = _CLAIMED_VERIFIED.sub(_claimed_verified, text)
         # A field holding nothing but the enum is the enum, not prose about it, and
         # the renderer formats those itself -- rewriting them here turned every
         # "Evidence First" category path into "Evidence-First".
