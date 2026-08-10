@@ -1443,11 +1443,47 @@ def _title_case(text: str) -> str:
             cased.append(word)
         elif any(character.isupper() for character in word[1:]):
             cased.append(word)
-        elif index not in (0, len(words) - 1) and word.lower() in _TITLE_MINOR_WORDS:
+        elif (
+            index not in (0, len(words) - 1)
+            and word.lower() in _TITLE_MINOR_WORDS
+            and not _opens_a_latin_phrase(words, index)
+        ):
             cased.append(word.lower())
         else:
             cased.append(word[:1].upper() + word[1:])
     return " ".join(cased)
+
+
+def _opens_a_latin_phrase(words: Sequence[str], index: int) -> bool:
+    """Whether this word is the first half of a Latin phrase the next word finishes.
+
+    Headline case splits such a phrase down the middle: its first word is a
+    preposition the minor-word rule lowercases and its second is an ordinary word
+    the rule capitalises. One live idea carried the result -- "HF Scavenging and in
+    Situ Fluorination via ALD Al2O3" -- through the contents, its own heading, its
+    table caption and the ranking table.
+    """
+    if index + 1 >= len(words):
+        return False
+    partner = words[index + 1].strip("().,;:").lower()
+    return f"{words[index].lower()} {partner}" in _TITLE_LATIN_PHRASES
+
+
+# Phrases whose first word the minor-word rule would otherwise strip a capital from.
+# The others -- "de novo", "post hoc" -- open on a word the rule never touched.
+_TITLE_LATIN_PHRASES = frozenset(
+    {
+        "a posteriori",
+        "a priori",
+        "in operando",
+        "in silico",
+        "in situ",
+        "in utero",
+        "in vacuo",
+        "in vitro",
+        "in vivo",
+    }
+)
 
 
 # Capitalising a unit changes what it means. Headline case turned every "2 nm"

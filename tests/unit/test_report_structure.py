@@ -902,6 +902,22 @@ def test_a_title_is_derived_from_the_claim_rather_than_from_the_id():
     assert not title.lower().startswith("test")
 
 
+def test_headline_case_does_not_split_a_latin_phrase_down_the_middle():
+    """A live idea reached the contents, its own heading, its table caption and the
+    ranking table as "HF Scavenging and in Situ Fluorination via ALD Al2O3": the
+    minor-word rule lowercased the preposition and capitalised the word it belongs
+    to, which leaves neither the phrase nor the headline style intact."""
+    assert (
+        derive_idea_title("HF scavenging and in situ fluorination via ALD Al2O3")
+        == "HF Scavenging and In Situ Fluorination via ALD Al2O3"
+    )
+    assert derive_idea_title("coating stability in vivo").endswith("In Vivo")
+
+
+def test_a_preposition_that_opens_no_such_phrase_still_loses_its_capital():
+    assert derive_idea_title("the coating in the glovebox").endswith("in the Glovebox")
+
+
 def test_a_truncated_title_never_ends_mid_phrase():
     for claim in (
         "Evaluate the adjacent system and test whether the binder chemistry "
