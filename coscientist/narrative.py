@@ -1101,9 +1101,10 @@ DEEP_DIVE_PREAMBLE = (
     "objections and its responses separately, so which answers which is on the record "
     "only where a review recorded one response and left it one thing to answer: one "
     "objection and no fatal flaw. There the response names the numbered item under "
-    "Deep Verification it answers. Everywhere else the pairing is left to the reader, "
-    "and that includes a review that recorded one of each beside a fatal flaw the "
-    "response may have been aimed at instead. Either way a response may "
+    "Deep Verification it answers. Everywhere else the pairing is left to the reader: "
+    "the response says how many of that review's objections it answers and names every "
+    "item it could be, except where the review also recorded a fatal flaw the response "
+    "may have been aimed at instead, and there it names none. Either way a response may "
     "concede an objection rather than dispose of it. Each response is "
     "attributed to the review that recorded it, so that is where a response is "
     "printed rather than a second time under the review itself, and a review that "
@@ -5098,6 +5099,7 @@ def _attributed_responses(reviews: Sequence[IdeaReview]) -> str:
     """
     answering = [review for review in reviews if review.rebuttals]
     numbered = _answered_item_numbers(reviews)
+    raised = _raised_item_numbers(reviews)
     parts = []
     if len(answering) < len(reviews):
         parts.append(
@@ -5112,11 +5114,36 @@ def _attributed_responses(reviews: Sequence[IdeaReview]) -> str:
         # The objection is printed in full under Deep Verification and is not repeated
         # here; what this needs is the number a reader can turn to.
         at = numbered.get(review.section)
-        opening = f"The {review.section.lower()} review answered" + (
-            f" the objection it raised, item {at} under Deep Verification below:"
-            if at
-            else ":"
-        )
+        items = raised.get(review.section, [])
+        if at:
+            pointer = (
+                f" the objection it raised, item {at} under Deep Verification below:"
+            )
+        elif items and not review.fatal_flaws and not review.stood_in:
+            # Which of them each response answers is not on the record, so the count
+            # is stated and every item it could be is named. A bare "answered:" was
+            # the alternative, and it left the one response a reader most wants to
+            # place -- the review that raised three objections and answered two --
+            # as the only one in the section with nothing to turn to.
+            #
+            # Not where the review also recorded a fatal flaw: the response may have
+            # been aimed at that instead, and naming the objections would assert a
+            # pairing the record does not hold.
+            answered = (
+                f"{_bare_count(len(review.rebuttals))} of the "
+                f"{_plural(len(items), 'objection')}"
+                if len(review.rebuttals) < len(items)
+                else f"the {_plural(len(items), 'objection')}"
+            )
+            pointer = (
+                f" {answered} it raised, "
+                + ("item " if len(items) == 1 else "items ")
+                + _names([str(item) for item in items])
+                + " under Deep Verification below:"
+            )
+        else:
+            pointer = ":"
+        opening = f"The {review.section.lower()} review answered{pointer}"
         parts.append(f"{opening} {_join(review.rebuttals, fallback='')}")
     # One response to a line where several reviews answered. Each opens on the review
     # that wrote it and on the number of the item it answers, which is what a reader
@@ -5132,6 +5159,24 @@ def _attributed_responses(reviews: Sequence[IdeaReview]) -> str:
     return f"{parts[0]}\n\n{listed}" if counted else listed
 
 
+def _raised_item_numbers(reviews: Sequence[IdeaReview]) -> dict[str, list[int]]:
+    """Which numbered Deep Verification items each review raised.
+
+    Every response a reader might want to check needs a number to check it against.
+    A live idea printed four of them under "item N under Deep Verification below" and
+    the fifth under a bare "The feasibility review answered:" -- the one review with
+    three objections to its name, which is the response hardest to place and the only
+    one the report gave the reader no way to look up.
+    """
+    flaws = len(_fatal_flaws_raised(reviews))
+    positions: dict[str, list[int]] = {}
+    for index, (section, _, _) in enumerate(
+        _objections_raised(reviews), start=flaws + 1
+    ):
+        positions.setdefault(section, []).append(index)
+    return positions
+
+
 def _answered_item_numbers(reviews: Sequence[IdeaReview]) -> dict[str, int]:
     """Where a response can be pointed at one numbered objection, which number it is.
 
@@ -5140,14 +5185,9 @@ def _answered_item_numbers(reviews: Sequence[IdeaReview]) -> dict[str, int]:
     one objection, recorded one response and recorded no fatal flaw is the case where
     there is nothing to tie: one response, one thing it can be answering. Any review
     that raised or answered more than once, or that also recorded a flaw the response
-    might be aimed at instead, is left with the plain attribution.
+    might be aimed at instead, is pointed at every item it raised instead.
     """
-    flaws = len(_fatal_flaws_raised(reviews))
-    positions: dict[str, list[int]] = {}
-    for index, (section, _, _) in enumerate(
-        _objections_raised(reviews), start=flaws + 1
-    ):
-        positions.setdefault(section, []).append(index)
+    positions = _raised_item_numbers(reviews)
     return {
         review.section: positions[review.section][0]
         for review in reviews
@@ -6093,8 +6133,12 @@ def _coherence(
     asked = Counter(
         review.recommendation for review in reviews if review.recommendation
     )
+    # Counts of reviews, so they are spelled the way every other count of reviews in
+    # the report is. In figures they read as scores, and the sentence carrying them
+    # opens on "The five reviews of this idea" and then tallied "(4 advance, 1
+    # revise)" -- the same five reviews counted twice in one sentence, two ways.
     verdicts = ", ".join(
-        f"{count} {_RECOMMENDATION_SHORT.get(name, name)}"
+        f"{_bare_count(count)} {_RECOMMENDATION_SHORT.get(name, name)}"
         for name, count in asked.most_common()
     )
     notes: list[str] = []

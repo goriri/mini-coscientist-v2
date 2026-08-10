@@ -3506,8 +3506,27 @@ def test_a_response_that_could_answer_more_than_one_thing_is_not_pointed_at_one(
         )
     ]
 
-    assert _attributed_responses(two) == "The correctness review answered: It holds."
+    # Not pointed at one of them, but pointed at both: the count of what it answered
+    # and every item it could have been, which is the whole of what the record holds.
+    assert _attributed_responses(two) == (
+        "The correctness review answered one of the two objections it raised, items 1 "
+        "and 2 under Deep Verification below: It holds."
+    )
+    # Where a fatal flaw stands beside the objection, no item is named at all: the
+    # response may have been aimed at the flaw.
     assert _attributed_responses(flawed) == "The feasibility review answered: It holds."
+    # A review that answered as often as it objected states no shortfall.
+    both = [
+        _answering(
+            "Correctness",
+            objections=["No power calculation.", "No blinding."],
+            rebuttals=["It holds.", "Blinding was added."],
+        )
+    ]
+    assert _attributed_responses(both).startswith(
+        "The correctness review answered the two objections it raised, items 1 and 2 "
+        "under Deep Verification below:"
+    )
 
 
 def test_what_the_go_no_go_tests_are_for_is_said_once_above_the_ideas(body: str):

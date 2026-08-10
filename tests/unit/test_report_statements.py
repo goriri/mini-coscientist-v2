@@ -405,6 +405,28 @@ def test_reviews_that_score_alike_but_ask_for_different_things_still_disagree():
     assert "the recommendations do not" in lines[0]
 
 
+def test_the_recommendation_tally_counts_reviews_the_way_the_report_counts_reviews():
+    """The same five reviews counted twice in one sentence, two ways.
+
+    A live idea's coherence line opened "The five reviews of this idea span 4 to 5 of
+    five" and tallied "(4 advance, 1 revise)" -- counts of reviews set in the figures
+    the sentence beside them uses for scores, which is what a reader reads them as.
+    """
+    lines, _ = _coherence(
+        [
+            _review("Correctness", 4, "advance"),
+            _review("Novelty", 4, "advance"),
+            _review("Feasibility", 4, "advance"),
+            _review("Impact", 4, "advance"),
+            _review("Safety", 4, "revise"),
+        ],
+        {"Falsifier": "No capacity difference at 500 cycles."},
+    )
+
+    assert "(four advance, one revise)" in lines[0]
+    assert "(4 advance, 1 revise)" not in lines[0]
+
+
 def test_agreeing_reviews_with_no_falsifier_are_not_told_they_disagree():
     lines, _ = _coherence(
         [_review("Correctness", 4), _review("Feasibility", 4)],
