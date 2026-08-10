@@ -451,3 +451,25 @@ def test_the_waived_gate_names_the_approval_profile_the_cover_already_printed():
         "those, not the first" in milestone
     )
     assert "the stage approval profile this run used" in _body(ApprovalProfile.STAGE)
+
+
+def test_every_actor_this_system_records_is_named_in_words():
+    """The fallback prints the internal id with its underscores taken out.
+
+    "The waiver is recorded against the actor recorded as web researcher" stood over
+    the one decision in a live report a reader is most likely to want a person for,
+    and "web researcher" is a label that appears nowhere else in the document. The
+    ids below are the ones the run writes for itself; an id a caller supplies is
+    somebody's own name for themselves and keeps the fallback.
+    """
+    from coscientist.narrative import _ACTOR_WORDS, _actor_words
+
+    for actor in (
+        "cli_researcher",
+        "web_researcher",
+        "auto_approval_policy",
+        "milestone_auto_policy",
+    ):
+        assert actor in _ACTOR_WORDS
+        assert "recorded as" not in _actor_words(actor)
+    assert _actor_words("lab_notebook_bot") == "the actor recorded as lab notebook bot"

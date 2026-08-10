@@ -8111,11 +8111,20 @@ def _section_two(record: ResearchRecord) -> _Draft:
 
 # Who each recorded actor is, in words. The ids are internal, and "cli researcher"
 # with the underscore taken out is still an internal id with a space in it.
+#
+# Every id the run itself writes has an entry. The web app files its decisions under
+# "web_researcher" and it had none, so the fallback printed "the waiver is recorded
+# against the actor recorded as web researcher" -- a label that appears nowhere else
+# in the report, over the one decision a reader is most likely to want a person for.
 _ACTOR_WORDS = {
     "cli_researcher": "a researcher working through the command line",
+    "web_researcher": "a researcher working through the web app",
     "researcher": "a researcher",
     "supervisor": "the run supervisor",
     "auto_approval_policy": "the approval profile, with no person involved",
+    "milestone_auto_policy": (
+        "the milestone approval profile, with no person involved"
+    ),
     "operator": "an operator",
 }
 
