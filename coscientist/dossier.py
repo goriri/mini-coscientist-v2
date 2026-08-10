@@ -57,6 +57,7 @@ from .markdown_render import (
 from .models import FACET_PHRASES, MERGE_PRODUCER, Session
 from .narrative import (
     _AGENT_NAMES,
+    _CONTRACT_FIELD_NAMES,
     CRITERION_SECTIONS,
     DEEP_DIVE_PREAMBLE,
     DISCOVERY_STOOD_IN,
@@ -2284,9 +2285,65 @@ def _advisory_appendix(advisories: Sequence[Advisory]) -> list[str]:
 
 _REPAIR_REASON = re.compile(r"^(?P<detail>.*\S) \((?P<reason>[^()]+)\)$")
 
+# How the repair pass names what it repaired: the path to the field in the model it
+# was enforcing. "Candidate.score_novelty 6 -> 3" reached a live Provenance chapter
+# twenty times in one sentence -- a Pydantic attribute path, printed to a reader who
+# has never seen the model, for the one record of what the run changed.
+_REPAIR_PATH = re.compile(r"^(?P<model>[A-Z]\w+)(?:\.(?P<field>\w+))?(?=[ :])")
+
+# A rescaled number, so the field it rescaled can be named once for all of them.
+_REPAIR_RESCALE = re.compile(r"^(?P<field>.*?) (?P<pair>-?[\d.]+ → -?[\d.]+)$")
+
+
+def _spelled_model(name: str) -> str:
+    """A model's class name as words: ``EvidenceItem`` is an evidence item."""
+    return re.sub(r"(?<!^)(?=[A-Z])", " ", name).lower()
+
+
+def _named_field(detail: str, *, qualified: bool) -> str:
+    """One repair detail with its field named as the report names that field.
+
+    The model is dropped unless the same stage repaired fields of more than one of
+    them, because the sentence around this already says which answer was repaired
+    and a lone qualifier only re-states it.
+    """
+    detail = detail.replace(" -> ", " → ")
+    path = _REPAIR_PATH.match(detail)
+    if not path:
+        return detail
+    field = path["field"] or ""
+    spelled = _CONTRACT_FIELD_NAMES.get(field, field.replace("_", " "))
+    lead = f"{_spelled_model(path['model'])} {spelled}" if qualified else spelled
+    return f"{lead.strip()}{detail[path.end() :]}"
+
+
+def _fielded(details: Sequence[str]) -> list[str]:
+    """One field name over all the values rescaled in it, in the recorded order.
+
+    The repair pass writes a line per value, so a stage that rescaled five scores
+    for each of four ideas wrote the same five field names four times over. Printed
+    as recorded that is twenty entries in which "novelty score" appears four times
+    carrying four different numbers, and nothing in the list says the four are four
+    ideas rather than four readings of one.
+    """
+    ordered: list[tuple[str, list[str]]] = []
+    seen: dict[str, list[str]] = {}
+    for detail in details:
+        rescale = _REPAIR_RESCALE.match(detail)
+        if not rescale:
+            ordered.append((detail, []))
+            continue
+        field, pair = rescale["field"], rescale["pair"]
+        if field in seen:
+            seen[field].append(pair)
+            continue
+        seen[field] = [pair]
+        ordered.append((field, seen[field]))
+    return [f"{field} {_names(pairs)}" if pairs else field for field, pairs in ordered]
+
 
 def _grouped_repairs(repairs: Sequence[str]) -> str:
-    """The repair list with a shared trailing reason stated once, not once per field.
+    """The repair list as sentences: the shared reason once, each field named once.
 
     Every rescaled score carries the same parenthetical, and the renderer joined the
     raw strings. A live report printed "(answered on a 1-10 scale)" twenty times in
@@ -2304,13 +2361,36 @@ def _grouped_repairs(repairs: Sequence[str]) -> str:
             # Its own group, keyed on itself so it is never folded into another's
             # reason, and printed back exactly as the repair pass wrote it.
             grouped.setdefault(f"\x00{repair}", []).append(repair)
+    models = {
+        path["model"]
+        for details in grouped.values()
+        for detail in details
+        if (path := _REPAIR_PATH.match(detail))
+    }
+    repeated = False
     stated = []
     for reason, details in grouped.items():
+        named = [_named_field(detail, qualified=len(models) > 1) for detail in details]
+        folded = _fielded(named)
+        repeated = repeated or len(folded) < len(named)
         if reason.startswith("\x00"):
-            stated.extend(details)
+            stated.extend(folded)
         else:
-            stated.append(", ".join(details) + f" ({reason})")
-    return "; ".join(stated)
+            stated.append("; ".join(folded) + f" ({reason})")
+    # Sentence per reason, because a field's own rescalings are already a
+    # semicolon-separated list and a second level of them would read as one list.
+    # The first stays lower case: it follows the colon in the sentence that says
+    # which answer was repaired.
+    sentences = [stated[0], *(part[0].upper() + part[1:] for part in stated[1:])]
+    return (". ".join(sentences) + ".") + (
+        # Which idea's copy of a field a value belongs to is not in the record, so
+        # the folded list cannot say, and a reader counting four novelty scores
+        # against eight ideas should not have to guess whether it can.
+        " The repair pass records the field it repaired and not which idea's copy of "
+        "it, so the values above are in the order it met them."
+        if repeated
+        else ""
+    )
 
 
 def _provenance_appendix(record: ResearchRecord) -> list[str]:
@@ -2496,8 +2576,7 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
             [
                 f"The {_agent_name(note.agent)} answer was repaired before it "
                 "could be accepted: "
-                + _grouped_repairs(note.repairs or ["no repair detail was recorded"])
-                + ".",
+                + _grouped_repairs(note.repairs or ["no repair detail was recorded"]),
                 "",
             ]
         )

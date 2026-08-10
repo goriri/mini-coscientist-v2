@@ -2871,13 +2871,57 @@ def test_one_reason_behind_twenty_repairs_is_written_once(rich_session: Session)
 
     assert appendix.count("(answered on a 1-10 scale)") == 1
     assert (
-        "Candidate.score_novelty 6 -> 3, Candidate.score_feasibility 9 -> 5 "
+        "candidate novelty score 6 → 3; candidate feasibility score 9 → 5 "
         "(answered on a 1-10 scale)" in appendix
     )
     # A different reason is a different finding and keeps its own parenthetical,
-    # and a repair that carries no reason is printed exactly as it was recorded.
-    assert "Candidate.score_impact 80 -> 4 (answered on a 1-100 scale)" in appendix
-    assert "ReviewSet.reviews: wrapped a scalar in a list" in appendix
+    # and a repair that carries no reason keeps its own detail.
+    assert "Candidate impact score 80 → 4 (answered on a 1-100 scale)" in appendix
+    assert "Review set reviews: wrapped a scalar in a list" in appendix
+    # Nothing here is a path out of a Pydantic model.
+    assert "Candidate.score" not in appendix
+    assert "ReviewSet." not in appendix
+
+
+def test_one_field_rescaled_for_every_idea_is_named_once_over_its_values(
+    rich_session: Session,
+):
+    """A live Provenance chapter recorded a stage that rescaled five scores for
+    each of four ideas as twenty entries, in which "Candidate.score_novelty"
+    appeared four times carrying four different numbers with nothing saying the
+    four were four ideas rather than four readings of one."""
+    from coscientist.dossier import _provenance_appendix
+    from coscientist.narrative import ProvenanceNote
+
+    record = load_record(rich_session)
+    record.provenance.append(
+        ProvenanceNote(
+            stage="evolve",
+            agent="evolution",
+            schema_name="CandidateSet",
+            source="repaired",
+            repairs=[
+                f"Candidate.{field} {raw} -> {raw // 2} (answered on a 1-10 scale)"
+                for raw in (8, 6, 9)
+                for field in ("score_novelty", "score_feasibility")
+            ],
+            error="",
+            model="gemini-3.1-pro-preview",
+        )
+    )
+    appendix = "\n".join(_provenance_appendix(record))
+
+    assert appendix.count("novelty score") == 1
+    assert (
+        "novelty score 8 → 4, 6 → 3, and 9 → 4; feasibility score 8 → 4, 6 → 3, "
+        "and 9 → 4 (answered on a 1-10 scale)." in appendix
+    )
+    # And it says why one field carries three readings, rather than leaving a
+    # reader to decide whether the record can be pinned to an idea.
+    assert (
+        "The repair pass records the field it repaired and not which idea's copy "
+        "of it, so the values above are in the order it met them." in appendix
+    )
 
 
 def test_a_title_never_opens_a_bracket_it_does_not_close():
