@@ -339,6 +339,40 @@ def test_a_re_run_criterion_does_not_claim_the_score_printed_below_is_the_new_on
     )
 
 
+def test_a_field_the_rewrite_only_reworded_the_case_of_is_not_printed_as_news():
+    """The block is headed by what the rewrite changed, and the fields it did not
+    change are named as left alone. Compared as strings rather than as statements, a
+    field that comes back differing in a capital is both: printed in full under "this
+    is what changed", with nothing in it that did, and struck off the list where the
+    reader would otherwise have found it."""
+    from coscientist.models import EvolutionRecord
+    from coscientist.narrative import _revised_form
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    rewrite = _candidate("cand_a_v2", version=2, parents=["cand_a"]).model_copy(
+        update={
+            "claim": "A thicker coating raises retention",
+            "falsifier": "retention does not improve",
+        }
+    )
+    record.evolution = EvolutionCycle(
+        records=[
+            EvolutionRecord(
+                parent_ids=["cand_a"],
+                candidate=rewrite,
+                changes=["Thickened the coating."],
+                new_prediction="Retention improves by ten points.",
+            )
+        ]
+    )
+    _trace_lineage(record, {"cand_a"})
+
+    _lead_in, changed, unchanged = _revised_form(record, _candidate("cand_a"))
+
+    assert [label for label, _ in changed] == ["Core idea"]
+    assert "Falsifier" in unchanged
+
+
 def test_the_fields_a_rewrite_left_alone_are_named_as_english_not_as_labels():
     """These are the names of the sections printed under the idea, and read into a
     sentence without an article they stopped being English: a live dossier printed

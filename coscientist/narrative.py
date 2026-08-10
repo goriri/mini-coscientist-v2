@@ -4592,8 +4592,18 @@ def _revised_form(
     revision = revisions[-1]
     before = _idea_facts(candidate)
     after = _idea_facts(revision.candidate)
-    changed = [(label, text) for label, text in after.items() if before[label] != text]
-    unchanged = [label for label in after if before[label] == after[label]]
+    # Compared as statements rather than as strings. A rewrite that reflows a field or
+    # closes it on a full stop it did not have is not a rewrite of that field, and
+    # printed as one it puts a paragraph under the heading "this is what changed" with
+    # nothing in it that did -- while striking the same field off the list of what the
+    # rewrite left alone, which is where the reader would otherwise have found it.
+    changed = [
+        (label, text)
+        for label, text in after.items()
+        if _comparable(before[label]) != _comparable(text)
+    ]
+    altered = {label for label, _ in changed}
+    unchanged = [label for label in after if label not in altered]
     if not changed:
         return "", [], []
     reviews = record.rereviews_of_latest(candidate.id)
