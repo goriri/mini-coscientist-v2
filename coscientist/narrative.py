@@ -4338,6 +4338,26 @@ def _swallows_a_conjunction(text: str) -> bool:
     return "," in stripped or " — " in stripped
 
 
+# A comma with a coordinating conjunction behind it, which is the shape of a series
+# separator wherever one appears.
+_RIVAL_CONJUNCTION = re.compile(r",\s+(?:and|or|nor)\b", re.IGNORECASE)
+
+
+def _rivals_the_series_conjunction(text: str) -> bool:
+    """Whether the last item coordinates something of its own at the series' level.
+
+    A plain comma in the last item is harmless -- the series conjunction is already
+    behind it -- but a comma its own "and" follows is not. A live response to two
+    objections printed "Acoustic emission signal processing can effectively decouple
+    gas evolution from brittle fracture events, and the protocol must define a
+    hierarchical sampling strategy (e.g., 50 particles per cell across 5 cells) to
+    achieve statistical power for FIB-SEM, and calibrate acoustic sensors with pencil
+    lead break tests": two responses, three conjuncts on the page, and nothing saying
+    which "and" ends the first one.
+    """
+    return bool(_RIVAL_CONJUNCTION.search(_DIGIT_COMMA.sub("", _ASIDE.sub("", text))))
+
+
 # A conjunct with no finite verb in it is a noun phrase, and two noun phrases joined
 # by "and" take no comma. The specialists reach for a small closed set of finite verbs
 # -- a modal, an auxiliary, or one of the reporting verbs a prediction is written with
@@ -4401,7 +4421,10 @@ def _series(items: Sequence[str], *, named: Container[str] = frozenset()) -> str
     # two-item series of clean clauses -- which is most of them -- "; and" is simply
     # wrong, and it read as though an item had gone missing between them.
     separator = (
-        "; " if any(_swallows_a_conjunction(item) for item in folded[:-1]) else ", "
+        "; "
+        if any(_swallows_a_conjunction(item) for item in folded[:-1])
+        or _rivals_the_series_conjunction(folded[-1])
+        else ", "
     )
     # Two items and no comma inside either of them is the one shape where the comma
     # before "and" is not a series separator but a clause break, and it belongs there

@@ -3694,6 +3694,38 @@ def test_a_comma_that_cannot_be_read_as_the_separator_does_not_force_semicolons(
     assert "; and" not in counted
 
 
+def test_a_last_item_that_coordinates_its_own_parts_forces_the_separator_up():
+    """A comma its own "and" follows is the one comma a last item cannot carry plain.
+
+    A live response to two objections read "... can effectively decouple gas evolution
+    from brittle fracture events, and the protocol must define a hierarchical sampling
+    strategy ..., and calibrate acoustic sensors with pencil lead break tests": two
+    responses, three conjuncts on the page, and nothing saying which "and" ends the
+    first one.
+    """
+    from coscientist.narrative import _join
+
+    rivalled = _join(
+        [
+            "Signal processing can decouple gas evolution from brittle fracture.",
+            "The protocol must define a sampling strategy, and calibrate the sensors.",
+        ],
+        fallback="",
+    )
+    assert "from brittle fracture; and the protocol must define" in rivalled
+
+    # The conjunction has to be the item's own. "meaning" behind a comma coordinates
+    # nothing, and promoting over it would put "; and" between two clean clauses.
+    plain = _join(
+        [
+            "Randomization can be incorporated into the protocol.",
+            "A 50% effect size is large, meaning N=12 is adequately powered.",
+        ],
+        fallback="",
+    )
+    assert "; and" not in plain
+
+
 def test_an_item_that_opens_a_colon_is_not_folded_into_a_series():
     """A colon reaches to the full stop, so a conjunct behind one joins the wrong list.
 
