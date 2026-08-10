@@ -5841,6 +5841,100 @@ def test_a_findings_list_that_drops_nothing_says_nothing_about_dropping():
     assert "not printed below" not in prose
 
 
+def test_a_findings_list_counts_how_many_of_them_name_a_source():
+    """The lead-in said every finding was "set out below with the source each came
+    from", over a list in which eleven of thirty-three printed no source at all.
+
+    Discovery records a finding without a URL and the finding then prints bare --
+    "Experimental solid layers often deviate massively due to defects", "One primary
+    study testing tungsten oxide coatings on CR2032 cells conducted its evaluations
+    at 20°C and 40°C", nine more. Under a sentence promising all of them were
+    attributed, a missing number reads as a typesetting slip rather than as the one
+    thing worth knowing about that finding: nothing on the record checks it.
+    """
+    from coscientist.models import DiscoveryManifest, DiscoveryNarrative
+    from coscientist.narrative import CitationRegistry, ResearchRecord, _section_three
+
+    lead = SourceLead(canonical_url="https://aalto.fi/x", title="Coatings and cycling")
+    session = Session(question="Does a coating help?")
+    record = ResearchRecord(session=session)
+    record.citations = CitationRegistry([lead])
+    record.discovery = DiscoveryManifest(
+        question="Does a coating help?",
+        source_leads=[lead],
+        narratives=[
+            DiscoveryNarrative(
+                question="Does a coating help?",
+                research_directions=["Coating thickness against retention."],
+                statements=[
+                    DiscoveryStatement(
+                        text="A 2 nm alumina coating held retention past 500 cycles.",
+                        facet="supporting",
+                        originating_pass=1,
+                        source_urls=["https://aalto.fi/x"],
+                    ),
+                    DiscoveryStatement(
+                        text="Experimental solid layers often deviate due to defects.",
+                        facet="supporting",
+                        originating_pass=1,
+                    ),
+                    DiscoveryStatement(
+                        text="One study cycled its CR2032 cells at 20°C and 40°C.",
+                        facet="supporting",
+                        originating_pass=1,
+                    ),
+                ],
+            )
+        ],
+    )
+
+    prose = " ".join(_section_three(record).core)
+
+    assert "three findings from the literature, set out below." in prose
+    assert "One finding carries the source it came from." in prose
+    assert (
+        "Discovery recorded none against the other two findings, which print bare "
+        "below, and there is nothing on the record to check them against." in prose
+    )
+    # The promise the list could not keep.
+    assert "with the source each came from" not in prose
+
+
+def test_a_findings_list_where_every_finding_names_a_source_says_so():
+    """The admission is a report of a defect, not a standing disclaimer: a fully
+    attributed list should not be told two thirds of the sentence about bare ones."""
+    from coscientist.models import DiscoveryManifest, DiscoveryNarrative
+    from coscientist.narrative import CitationRegistry, ResearchRecord, _section_three
+
+    lead = SourceLead(canonical_url="https://aalto.fi/x", title="Coatings and cycling")
+    session = Session(question="Does a coating help?")
+    record = ResearchRecord(session=session)
+    record.citations = CitationRegistry([lead])
+    record.discovery = DiscoveryManifest(
+        question="Does a coating help?",
+        source_leads=[lead],
+        narratives=[
+            DiscoveryNarrative(
+                question="Does a coating help?",
+                research_directions=["Coating thickness against retention."],
+                statements=[
+                    DiscoveryStatement(
+                        text="A 2 nm alumina coating held retention past 500 cycles.",
+                        facet="supporting",
+                        originating_pass=1,
+                        source_urls=["https://aalto.fi/x"],
+                    )
+                ],
+            )
+        ],
+    )
+
+    prose = " ".join(_section_three(record).core)
+
+    assert "Every one of them carries the source it came from." in prose
+    assert "print bare" not in prose
+
+
 def test_a_source_name_is_matched_however_the_reference_list_trims_it():
     """The statement copies the raw title; the reference list cuts the hostname."""
     from coscientist.narrative import _folded_title, _recorded_titles, _states_a_finding

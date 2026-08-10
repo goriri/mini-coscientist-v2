@@ -461,6 +461,15 @@ class CitationRegistry:
             self._numbers[url] = len(self._ordered)
         return self._numbers[url]
 
+    def citable(self, urls: Iterable[str]) -> bool:
+        """Whether these URLs would print a marker, without assigning one a number.
+
+        ``number`` assigns on first sight, so counting how many findings will carry a
+        source by calling it would put every one of their sources into the reference
+        list in the order the count ran, rather than the order the text cites them.
+        """
+        return any(self._canonical.get(url, url) in self._leads for url in urls)
+
     def numbered(self, url: str) -> int | None:
         """The number this URL already carries, without giving it one.
 
@@ -6970,6 +6979,35 @@ def _cited(
     return " ".join(item for item in (text, clause, scope) if item)
 
 
+def _attributed_findings(sourced: int, unsourced: int) -> str:
+    """How many of the findings below name a source, said before any of them is read.
+
+    A finding discovery recorded without a URL prints bare, and the list gives the
+    reader no way to tell that apart from a number that went missing in typesetting.
+    """
+    if not unsourced:
+        return "Every one of them carries the source it came from."
+    unattributed = (
+        ("which prints" if unsourced == 1 else "which print")
+        + " bare below, and there is nothing on the record to check "
+        + ("it" if unsourced == 1 else "them")
+        + " against."
+    )
+    if not sourced:
+        return (
+            "Discovery recorded no source against any of them, so they print bare "
+            "below, and there is nothing on the record to check them against."
+        )
+    return (
+        _opening(sourced, "finding")
+        + (" carries the source it" if sourced == 1 else " carry the source they")
+        + " came from. Discovery recorded none against the other "
+        + _plural(unsourced, "finding")
+        + ", "
+        + unattributed
+    )
+
+
 @dataclass
 class _Draft:
     """A section split into what it must say and what it may say if space allows."""
@@ -7627,12 +7665,27 @@ def _section_three(record: ResearchRecord) -> _Draft:
                 + " a source's own name, or a row of a table, rather than anything "
                 "said about the field."
             )
+            # No silent caps, again. A finding discovery recorded without a URL prints
+            # bare, and eleven of the thirty-three on a live run did -- "Experimental
+            # solid layers often deviate massively due to defects", "One primary study
+            # testing tungsten oxide coatings on CR2032 cells conducted its evaluations
+            # at 20°C and 40°C" and nine more, under a sentence promising all of them
+            # were "set out below with the source each came from". A reader who meets
+            # one of those and finds no number reads it as a typesetting slip in an
+            # otherwise attributed list, rather than as the one thing worth knowing
+            # about it: there is nothing on the record to check it against.
+            sourced = sum(
+                1
+                for statement in statements
+                if record.citations.citable(statement.urls)
+            )
+            unsourced = len(statements) - sourced
             core.append(
                 "What discovery recorded under those directions is "
                 f"{_plural(len(statements), 'finding')} from the literature, set out "
-                "below with the source each came from. Each is something already "
-                "reported rather than anything this run proposes, and together they "
-                "are the material the generator worked from." + dropped
+                "below. Each is something already reported rather than anything this "
+                "run proposes, and together they are the material the generator "
+                "worked from. " + _attributed_findings(sourced, unsourced) + dropped
             )
         shared = _shared_qualifications(record)
         if shared:
