@@ -236,6 +236,43 @@ def test_a_locator_carrying_an_identifier_rather_than_a_name_still_says_untitled
     assert _reference_title(site_name) == "Untitled source on forgenano.com"
 
 
+def test_a_journal_where_the_papers_name_should_be_gives_way_to_the_address():
+    """Entry 5 of that list read "Nano Energy - Western Engineering (2017)" -- a
+    journal and the site it was found on -- over a locator whose path spelled the
+    paper out. Neither chrome cut catches it: "Western Engineering" is not the
+    hostname, eng.uwo.ca does not prove it the site's name either, and what a cut
+    would leave is two words. Asserting a journal's name as a paper's is worse than
+    saying nothing."""
+    lead = _lead(
+        "https://www.eng.uwo.ca/nanoenergy/publications/2017/PDFs/New-Insight-into-"
+        "Stable-Protective-Layer-for-Long-life-and-Safe-High-Voltage-Cathodes.pdf",
+        title="Nano Energy - Western Engineering",
+        year="2017",
+    )
+
+    assert _reference_title(lead) == (
+        "New Insight into Stable Protective Layer for Long life and Safe High Voltage "
+        "Cathodes (2017)"
+    )
+
+
+def test_a_short_title_the_address_agrees_with_is_a_short_title_and_is_kept():
+    """The rule turns on the two being different names, not on the title being short.
+    A locator that repeats the name it was given has confirmed it, not displaced it,
+    and a title of four words the address knows nothing about is the only case."""
+    agreeing = _lead(
+        "https://www.nature.com/articles/silicon-anodes-in-the-last-decade",
+        title="Silicon anodes",
+    )
+    long_enough = _lead(
+        "https://example.org/papers/a-survey-of-machine-learning-in-energy-storage",
+        title="Deep learning for battery health",
+    )
+
+    assert _reference_title(agreeing) == "Silicon anodes"
+    assert _reference_title(long_enough) == "Deep learning for battery health"
+
+
 def test_an_entry_named_from_its_address_says_that_is_where_the_name_came_from():
     """A slug cannot mark which of its hyphens joined a compound -- "solid-state"
     comes back as two words -- and the path may have been shortened by the server. The

@@ -833,6 +833,33 @@ def _name_from_locator(url: str) -> str:
     return ""
 
 
+def _too_short_to_be_the_name(title: str, url: str) -> bool:
+    """Whether a title is too small to be a paper's, over a locator that has one.
+
+    Entry 5 of a live reference list read "Nano Energy - Western Engineering (2017)",
+    which is a journal and the site it was found on, over
+    ".../PDFs/New-Insight-into-Stable-Protective-Layer-for-Long-life-and-Safe-High-Voltage-Cathodes.pdf".
+    Neither cut catches it: "Western Engineering" is not the hostname and eng.uwo.ca
+    does not prove it the site's name either, and what would be left is two words.
+    Asserting a journal's name as a paper's is worse than saying nothing, and here
+    the address says what the paper is called.
+
+    Narrow on purpose. Four words is short enough that no real name has had furniture
+    stripped off it and been left plausible, and sharing no substantial word with the
+    address's own name is what rules out the two being one name written twice -- a
+    short title the locator repeats is a short title, not furniture.
+    """
+    # The separator the aggregator joined the two halves with is not a word of either.
+    words = re.findall(r"[A-Za-z0-9]+", title)
+    if len(words) > 4:
+        return False
+    located = _name_from_locator(url)
+    if not located:
+        return False
+    carried = {word.lower() for word in re.findall(r"[A-Za-z]{4,}", located)}
+    return not any(word.lower() in carried for word in words)
+
+
 def _reference_title(lead: SourceLead) -> str:
     """Prefer the annotation title: the canonical URL is a grounding redirect."""
     return _reference_naming(lead)[0]
@@ -869,6 +896,9 @@ def _reference_naming(lead: SourceLead) -> tuple[str, bool]:
         located = _name_from_locator(lead.canonical_url)
         named_by_address = bool(located)
         title = located or _untitled_on(title.removeprefix("www."))
+    elif _too_short_to_be_the_name(title, lead.canonical_url):
+        title = _name_from_locator(lead.canonical_url)
+        named_by_address = True
     if lead.year:
         title = f"{title} ({lead.year})"
     return title, named_by_address
