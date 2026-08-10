@@ -185,6 +185,56 @@ def test_a_title_that_is_nothing_but_a_hostname_still_says_it_is_untitled():
     )
 
 
+def test_a_title_the_publisher_set_in_html_is_printed_as_text_and_not_as_tags():
+    """ACS sets its titles in HTML and the search stored the markup whole.
+
+    Two entries of a live reference list drew their tags on the page: "16. Degradation
+    Effects in Li<sub>4</sub>Ti<sub>5</sub>O<sub>12</sub>-Based Cells-Learning from
+    Electrode Potential Profiles (2024)" and "18. One-Step Integrated Comodification to
+    Improve the Electrochemical Performances of High-Voltage LiCoO<sub>2</sub> for
+    Lithium-Ion Batteries (2020)". Flat digits, because Al2O3 and NMC811 are how the
+    rest of the report writes a formula.
+    """
+    titanate = _lead(
+        "https://pubs.acs.org/doi/10.1021/acsami.4c12988",
+        title=(
+            "Degradation Effects in Li<sub>4</sub>Ti<sub>5</sub>O<sub>12</sub>-Based "
+            "Cells-Learning from Electrode Potential Profiles"
+        ),
+    )
+    cobaltate = _lead(
+        "https://pubs.acs.org/doi/10.1021/acssuschemeng.0c02308",
+        title=(
+            "One-Step Integrated Comodification to Improve the Electrochemical "
+            "Performances of High-Voltage LiCoO<sub>2</sub> for Lithium-Ion Batteries"
+        ),
+    )
+    # Short enough that the chrome cut hands its fallback back: the tags still go.
+    terse = _lead("https://pubs.acs.org/doi/10.1021/x", title="Li<sub>2</sub>O anodes")
+
+    assert _reference_title(titanate) == (
+        "Degradation Effects in Li4Ti5O12-Based Cells-Learning from Electrode "
+        "Potential Profiles"
+    )
+    assert _reference_title(cobaltate) == (
+        "One-Step Integrated Comodification to Improve the Electrochemical "
+        "Performances of High-Voltage LiCoO2 for Lithium-Ion Batteries"
+    )
+    assert _reference_title(terse) == "Li2O anodes"
+
+
+def test_a_less_than_sign_in_a_title_is_not_mistaken_for_a_tag():
+    """A bracket followed by a space and a number opens nothing."""
+    lead = _lead(
+        "https://example.org/a",
+        title="Dendrite suppression at T < 100 K in solid electrolytes",
+    )
+
+    assert _reference_title(lead) == (
+        "Dendrite suppression at T < 100 K in solid electrolytes"
+    )
+
+
 def test_a_locator_that_spells_the_paper_out_names_the_entry_the_search_did_not():
     """Eight of the twenty-four entries of a live reference list read "Untitled source
     on <host>". Six of those eight locators carried the document's name in their own

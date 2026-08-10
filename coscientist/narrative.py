@@ -678,6 +678,30 @@ def _without_site_name(title: str, url: str) -> str:
     return title
 
 
+# An element, as opposed to the less-than sign a title about temperature has in it.
+# A tag name follows the bracket immediately and is one word; "T < 100 K" is not a
+# tag and is left alone.
+_HTML_TAG = re.compile(r"</?[A-Za-z][A-Za-z0-9]{0,9}(?:\s[^<>]*)?/?>")
+
+
+def _without_markup(title: str) -> str:
+    """The title as text, where the search stored the publisher's HTML instead.
+
+    Two entries of a live reference list printed their tags: "16. Degradation Effects
+    in Li<sub>4</sub>Ti<sub>5</sub>O<sub>12</sub>-Based Cells-Learning from Electrode
+    Potential Profiles" and "18. ... High-Voltage LiCoO<sub>2</sub> for Lithium-Ion
+    Batteries". ACS sets its titles in HTML and the search handed the markup over
+    whole; nothing between there and the page turned it back into a name.
+
+    The digits are kept on the line rather than lowered into real subscripts because
+    the rest of the report writes formulae flat -- Al2O3, NMC811, LiNi0.8Mn0.1Co0.1O2
+    -- and a reference list that alone wrote Li4Ti5O12 with lowered figures would be
+    the only place in the document that did.
+    """
+    stripped = _HTML_TAG.sub("", title)
+    return " ".join(stripped.split()) if stripped != title else title
+
+
 def _chrome_trims(title: str, url: str = "") -> list[str]:
     """The title at each stage of the cut, longest first.
 
@@ -686,7 +710,11 @@ def _chrome_trims(title: str, url: str = "") -> list[str]:
     a discovery statement copies whatever discovery stored.
     """
     forms = [title]
-    trimmed = title
+    trimmed = _without_markup(title)
+    # Both forms, and the tagged one first: what the reference list prints is text,
+    # and what a discovery statement echoes is whatever discovery stored.
+    if trimmed != title:
+        forms.append(trimmed)
     for _ in range(8):
         cut = _TRAILING_LINK_LABEL.sub("", _TRAILING_HOST.sub("", trimmed)).strip(
             " .,;|-\u2013\u2014"
@@ -706,7 +734,9 @@ def _without_search_chrome(title: str, url: str = "") -> str:
     trimmed = _chrome_trims(title, url)[-1]
     # Only where something recognisable as a title is left. On a result whose whole
     # title is the hostname there is nothing to keep, and the caller says so instead.
-    return trimmed if len(trimmed.split()) >= 3 else title
+    # The fallback is the untrimmed title less its markup, not the untrimmed title:
+    # a short name is still a name and its tags are still not part of it.
+    return trimmed if len(trimmed.split()) >= 3 else _without_markup(title)
 
 
 # Who wrote it, recorded where what it is called should be. A live reference list
