@@ -1680,6 +1680,38 @@ def test_the_discovery_sentence_counts_its_passes_in_one_notation(
     assert line.startswith("Deep Research ran two passes, of which one completed, ")
 
 
+def test_the_discovery_appendix_of_a_fork_says_the_search_was_not_its_own(
+    rich_session: Session,
+):
+    """The Knowledge Summary opens by saying a forked run did not search, but that
+    sentence guards one heading and this appendix is thirty pages below it. Standing
+    alone, "Deep Research ran seven passes, at an estimated cost of $21.00" read as a
+    plain fact about a run that ran none of them and spent nothing -- printed in the
+    one section a reader goes to for exactly that number."""
+    rich_session.seeded_evidence_from = "session_earlier"
+
+    assert _discovery_line(rich_session).startswith(
+        "The search below is not this run's."
+    )
+    assert "session_earlier" in _discovery_line(rich_session)
+    # And the run's own provenance block says it too, because that is where a
+    # reader checks what a run did -- and two lines around it are about work this
+    # one did not do: the stage count includes the evidence stage it started past,
+    # and the models named include the Deep Research model it never called.
+    block = compile_dossier(rich_session).split("\n## Run\n", 1)[1]
+    forked = next(
+        line for line in block.splitlines() if line.startswith("- Evidence forked from")
+    )
+    assert "session_earlier" in forked
+    assert "did not search the literature" in forked
+
+
+def test_a_run_that_did_its_own_searching_carries_no_fork_note(rich_session: Session):
+    report = compile_dossier(rich_session)
+    assert "The search below is not this run's" not in report
+    assert "Evidence forked from" not in report
+
+
 def test_a_source_the_search_never_returned_is_accounted_for_where_it_is_counted(
     rich_session: Session,
 ):

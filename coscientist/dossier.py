@@ -1657,6 +1657,17 @@ def _run_facts(record: ResearchRecord) -> list[str]:
         f"Stages completed: {session.current_stage} of 8",
         _approval_fact(session),
     ]
+    # Provenance is the section a reader goes to for what this run did, and on a
+    # fork two of the lines around this one are about work it did not do: the
+    # stage count includes an evidence stage it started past, and the models it
+    # names include the Deep Research model it never called.
+    if session.seeded_evidence_from:
+        facts.append(
+            f"Evidence forked from: {session.seeded_evidence_from} — this run did "
+            "not search the literature. Its scope and evidence base were carried "
+            "over from an earlier run of the same question, and the stage count "
+            "above includes an evidence stage it started past."
+        )
     # "Models: gemini-3.1-pro-preview, google_search_grounding" named a tool as a
     # model, in a field a reader uses to reproduce the run.
     #
@@ -1881,6 +1892,23 @@ def _discovery_provenance(record: ResearchRecord) -> list[str]:
     attempted = len(discovery.runs)
     leads = len(discovery.source_leads)
     lines = ["## Literature discovery", ""]
+    # The Knowledge Summary opens by saying a forked run did not search, but that
+    # sentence guards one heading and this appendix is thirty pages further down.
+    # Standing alone it read "Deep Research ran seven passes, at an estimated cost
+    # of $21.00" as a plain fact about a run that spent nothing and ran none of
+    # them -- the section of the report a reader goes to for exactly that number.
+    if record.session.seeded_evidence_from:
+        lines.extend(
+            [
+                "The search below is not this run's. Its scope and evidence base "
+                "were carried over from "
+                f"{record.session.seeded_evidence_from}, an earlier run of the same "
+                "question, and the passes, the leads and the cost recorded here are "
+                "what that run spent to build the corpus this one reasoned over. "
+                "This run ran no pass of its own.",
+                "",
+            ]
+        )
     if reason in DISCOVERY_STOOD_IN:
         failed = next((run for run in discovery.runs if run.error), None)
         lines.append(
