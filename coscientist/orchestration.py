@@ -89,7 +89,12 @@ from .normalization import (
     validate_candidate_comprehensiveness,
     validate_candidate_distinctness,
 )
-from .parity import detect_input_requirements, unresolved_blockers
+from .parity import (
+    COMPARISON_CRITERIA,
+    DIVERSITY_DIMENSIONS,
+    detect_input_requirements,
+    unresolved_blockers,
+)
 
 WORKFLOW_STAGES_V1 = tuple(
     stage for stage in STAGES if stage not in {"evidence", "report"}
@@ -601,7 +606,20 @@ class CoScientistWorkflow:
             if rank < len(group)
         ][:ceiling]
 
-        population = CandidatePopulation(candidates=merged, target_size=len(merged))
+        # The axes come with the merge, not out of a generator. The four strategy
+        # populations were folded down to their candidates and nothing else, so the
+        # field the run ranks reached the tournament with no criteria on it: the
+        # judge had none to read, the cover printed none, and a live report and gate
+        # card both said "No cross-candidate criterion was recorded" of a run whose
+        # criteria are fixed. Fixed is the point -- the report says on its cover that
+        # they were settled before the ideas were written, which they cannot have
+        # been if the specialists proposing the ideas wrote them.
+        population = CandidatePopulation(
+            candidates=merged,
+            target_size=len(merged),
+            comparison_criteria=list(COMPARISON_CRITERIA),
+            diversity_dimensions=list(DIVERSITY_DIMENSIONS),
+        )
         validate_candidate_distinctness(population)
         if self.session.workflow_version >= 2:
             validate_candidate_comprehensiveness(population)

@@ -456,3 +456,43 @@ def test_a_claim_two_strategies_both_reached_is_carried_once():
     population = CandidatePopulation.model_validate(merged.payload)
     assert len(population.candidates) == 2
     assert "from 1 generation strategy" in merged.content
+
+
+def test_the_field_the_run_ranks_carries_the_axes_it_is_ranked_on():
+    """The merge folded four strategy populations down to their candidates alone.
+
+    So the field reached the tournament with no criteria on it: the judge had none
+    to read, the cover printed none, and a live report and a live gate card both
+    said "No cross-candidate criterion was recorded" of a run whose criteria are
+    fixed.
+    """
+    from coscientist.parity import COMPARISON_CRITERIA, DIVERSITY_DIMENSIONS
+
+    population = CandidatePopulation.model_validate(_merged(_flow(), 2).payload)
+
+    assert population.comparison_criteria == list(COMPARISON_CRITERIA)
+    assert population.diversity_dimensions == list(DIVERSITY_DIMENSIONS)
+
+
+def test_the_axes_are_the_runs_own_and_not_the_proposing_specialists():
+    """The cover says the set was settled before the ideas were written, which it
+    cannot have been if a specialist proposing an idea chose what it is judged on."""
+    from coscientist.models import Artifact
+    from coscientist.parity import COMPARISON_CRITERIA
+
+    written = _population_artifact("s0", 2)
+    payload = CandidatePopulation.model_validate(written.payload)
+    payload.comparison_criteria = ["whether the idea is mine"]
+    self_serving = Artifact(
+        stage="generate",
+        agent=written.agent,
+        content="",
+        schema_name="CandidatePopulation",
+        payload=payload.model_dump(mode="json"),
+    )
+
+    merged = CandidatePopulation.model_validate(
+        _flow()._merged_generation_population([_Result(self_serving)]).payload
+    )
+
+    assert merged.comparison_criteria == list(COMPARISON_CRITERIA)

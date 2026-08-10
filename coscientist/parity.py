@@ -189,6 +189,31 @@ REVIEW_CRITERIA: dict[str, tuple[str, str]] = {
     "ethics_safety_governance": ("safety_governance", "Safety and governance"),
 }
 
+# What every idea is ranked against, and the axes the field is meant to spread over.
+# They belong to the run rather than to any one specialist: the report says on its
+# cover that the set was settled before the ideas were written, and a proposer that
+# set the axes it would then be judged on would make that untrue.
+#
+# The four strategy generators each answer a CandidatePopulation, and the merge that
+# folds them into the field the run ranks kept the candidates and nothing else. So
+# these reached no judge and no reader: the tournament fell back to arithmetic on the
+# review scores, the cover printed no comparison criteria at all, and both the report
+# and the gate card told a live reader "No cross-candidate criterion was recorded".
+COMPARISON_CRITERIA: tuple[str, ...] = (
+    "claim-level evidence strength and contradiction status",
+    "falsifiability and discriminating information gain",
+    "mode-appropriate feasibility and reproducibility",
+    "expected impact, cost, time, and external validity",
+    "safety, ethics, privacy, and unresolved fatal flaws",
+)
+DIVERSITY_DIMENSIONS: tuple[str, ...] = (
+    "mechanism",
+    "boundary condition",
+    "competing explanation",
+    "intervention",
+    "measurement",
+)
+
 
 # The four strategy-specific generators each return the same contract as the
 # combined one, and are dispatched the same way. Leaving them out made
@@ -616,20 +641,8 @@ def candidate_population(session: Session, content: str) -> CandidatePopulation:
     return CandidatePopulation(
         candidates=candidates,
         target_size=8,
-        diversity_dimensions=[
-            "mechanism",
-            "boundary condition",
-            "competing explanation",
-            "intervention",
-            "measurement",
-        ],
-        comparison_criteria=[
-            "claim-level evidence strength and contradiction status",
-            "falsifiability and discriminating information gain",
-            "mode-appropriate feasibility and reproducibility",
-            "expected impact, cost, time, and external validity",
-            "safety, ethics, privacy, and unresolved fatal flaws",
-        ],
+        diversity_dimensions=list(DIVERSITY_DIMENSIONS),
+        comparison_criteria=list(COMPARISON_CRITERIA),
     )
 
 
