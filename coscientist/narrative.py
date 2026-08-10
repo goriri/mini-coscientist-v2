@@ -12022,6 +12022,20 @@ _PROVIDER_BULLET = re.compile(r"^(\s*)[*+][ \t]+(?=\S)")
 # marker and a space like any bullet does.
 _SPACED_RULE = re.compile(r"^\s*(?:\*[ \t]*){3,}$")
 
+# A code fence, in either of the two characters Markdown accepts for one. A fence a
+# quoted report opens and never closes does not stop at the end of that report: one
+# live pass came back as a "```yaml" block with no close, and everything printed after
+# it -- eight hypotheses, the tournament, the meta-review, the references -- was set as
+# preformatted code in the PDF and the Word file, headings and all.
+_FENCE = re.compile(r"^\s*(?:```|~~~)")
+
+# The pass's own payload, handed back where its report was asked for. The keys are the
+# fields of a discovery statement, and a value on the same line is a single token or
+# the block-scalar marker: a sentence of prose after a colon is a sentence, not a key.
+_PAYLOAD_SCAFFOLD = re.compile(
+    r"^\s*(?:- )?(?:facet|statement|summary):[ \t]*[|>\w-]*$"
+)
+
 
 def _deep_research_prose(text: str) -> str:
     """One pass's report, as Markdown that sits under this report's own headings.
@@ -12036,7 +12050,23 @@ def _deep_research_prose(text: str) -> str:
     stripped = _without_pipeline_markup(text)
     lines = []
     opened = False
-    for line in stripped.splitlines():
+    # A pass that returns its payload instead of a report is still a report to print:
+    # what it says is prose, and what makes it unreadable is the scaffolding around
+    # the prose. The keys go, and with them the indent their block scalars put on
+    # every line -- four spaces, which is a code block to Markdown, so the pass read
+    # as a listing of itself.
+    source = stripped.splitlines()
+    payload = sum(bool(_PAYLOAD_SCAFFOLD.match(line)) for line in source) > 1
+    fences = 0
+    for line in source:
+        if _FENCE.match(line):
+            if payload:
+                continue
+            fences += 1
+        if payload:
+            if _PAYLOAD_SCAFFOLD.match(line):
+                continue
+            line = re.sub(r"^ {1,4}", "", line)
         heading = _MARKDOWN_HEADING_RE.match(line.strip())
         if line.strip() and not heading and not opened:
             opened = True
@@ -12060,6 +12090,11 @@ def _deep_research_prose(text: str) -> str:
             if _SPACED_RULE.match(stated)
             else _PROVIDER_BULLET.sub(r"\1- ", stated)
         )
+    if fences % 2:
+        # The pass wrote a listing and left it open. Its own fence is kept, because a
+        # provider that set something as code meant it to be read as code; what is not
+        # the pass's to decide is how the rest of this document is set.
+        lines.append("```")
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 

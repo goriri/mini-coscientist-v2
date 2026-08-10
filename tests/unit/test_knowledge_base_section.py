@@ -135,6 +135,62 @@ def test_a_tag_the_pass_wrote_as_inline_code_is_still_the_pipelines_markup():
     assert "There are zero instances of it." in prose
 
 
+PAYLOAD = """```yaml
+- facet: supporting
+  statement: |
+#### Experimental Evaluation of Protective Coatings
+
+    A comprehensive search of the experimental literature was conducted.
+
+    **The literature meeting every constraint does not exist.**
+
+- facet: supporting
+  statement: |
+##### 1. The Mechanics of Degradation
+
+    Uncoated electrodes fail by transition metal dissolution.
+
+    - **ALD:** a vapour-phase technique.
+"""
+
+
+def test_a_pass_that_hands_back_its_payload_is_still_printed_as_a_report():
+    """One live pass answered with its own contract serialised as YAML. The keys and
+    the four-space indent of their block scalars went to the page, so the pass read as
+    a listing of itself -- and Markdown sets four spaces as code, so its paragraphs
+    were set in Courier under a heading that was printed as ``#### Experimental``."""
+    prose = _deep_research_prose(PAYLOAD)
+
+    assert "facet: supporting" not in prose
+    assert "statement: |" not in prose
+    assert "```" not in prose
+    assert not any(line.startswith("    ") for line in prose.splitlines()), (
+        "the block scalar's indent is a code block to Markdown"
+    )
+    assert "#### Experimental Evaluation of Protective Coatings" in prose
+    assert "A comprehensive search of the experimental literature was conducted." in (
+        prose
+    )
+    assert "- **ALD:** a vapour-phase technique." in prose
+
+
+def test_a_fence_a_pass_leaves_open_is_closed_before_the_next_one_starts():
+    """The rest of the document is not the pass's to set. A live report's Pass 1 came
+    back as an unclosed `````yaml`` block, and the eight hypotheses, the
+    tournament and the references printed after it were all set as code."""
+    prose = _deep_research_prose("Here is the table:\n\n```\nrow\n")
+
+    assert prose.count("```") == 2
+    assert prose.endswith("```")
+
+
+def test_a_fence_a_pass_closes_itself_is_left_exactly_as_it_arrived():
+    prose = _deep_research_prose("Here is the table:\n\n```\nrow\n```\n\nDone.\n")
+
+    assert prose.count("```") == 2
+    assert prose.endswith("Done.")
+
+
 def test_each_pass_is_labelled_with_the_evidence_it_was_sent_to_find():
     section = _knowledge_summary(
         _record(
