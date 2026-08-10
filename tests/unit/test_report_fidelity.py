@@ -1368,6 +1368,50 @@ def test_a_statement_is_badged_by_the_weakest_record_it_names():
     assert _grounding_badge("s", set(), set(), [checked, pulled]) == DISCREDITED_BADGE
 
 
+def test_a_record_with_no_text_is_not_printed_as_a_finding_of_its_own():
+    """A live idea's Evidence Assessment opened on "- **[Verified Source]** Not stated
+    by the specialist [5].", and Motivation named the same non-finding among what the
+    idea cites as arguing for the research question. Two empties met: the specialist
+    filed one under Evidence for, and the claim it cited held no text -- which is how
+    the placeholder came to carry a reference number, having compared equal to the
+    record whose own text was as empty as it was."""
+    from coscientist.models import EvidenceClaim, EvidencePacket, SourceRecord
+    from coscientist.narrative import _cited_evidence, _evidence_notes
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="src_1",
+                url="https://example.org/coatings",
+                title="Coatings and cycling",
+                verification_status="verified",
+            )
+        ],
+        claims=[
+            EvidenceClaim(id="stmt_1", claim="", source_id="src_1"),
+            EvidenceClaim(
+                id="stmt_2",
+                claim="Thin coatings extend cycle life",
+                source_id="src_1",
+                relation="supports",
+            ),
+        ],
+    )
+    candidate = _candidate("cand_a")
+    candidate.evidence_for = ["", "stmt_2"]
+    candidate.evidence_ids = ["stmt_1", "stmt_2"]
+
+    stated = [text for _, _, text, _marker in _evidence_notes(record, candidate)]
+    cited = _cited_evidence(record, candidate)
+
+    assert stated == ["Thin coatings extend cycle life."]
+    assert not any("Not stated by the specialist" in item for item in cited.supports)
+    assert cited.supports == ["Thin coatings extend cycle life."]
+    assert not cited.undirected
+
+
 def test_an_evidence_bullet_that_is_only_an_id_says_so():
     """ "- **[Unsourced claim]** stmt5." was the whole of an evidence bullet on the
     live run, eight times across four ideas. The resolver reads a token as a record

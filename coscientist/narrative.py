@@ -6945,13 +6945,22 @@ def _cited_evidence(record: ResearchRecord, candidate: Candidate) -> _CitedEvide
         entry = index.get(reference)
         if entry is None:
             continue
+        # A record with no text of its own is not a finding, and this section prints
+        # what an idea cites as the finding it cites: an idea citing a claim whose
+        # text was empty had "Not stated by the specialist [5]" printed among the
+        # findings recorded as arguing for the research question. Dropped before the
+        # marker is taken, so the reference list is not numbered for a bullet that
+        # nothing prints.
+        said = _sentence(entry.text, fallback="")
+        if not said:
+            continue
         # Unannotated: a qualifier here would be counted against the ceiling that
         # keeps the tags rare, and the standing of this idea's evidence as a whole is
         # stated by the support verdict in the listing above.
         marker = (
             record.citations.marker([entry.url], annotate=False) if entry.url else ""
         )
-        stated = _sentence(f"{_sentence(entry.text).rstrip('.')} {marker}".strip())
+        stated = _sentence(f"{said.rstrip('.')} {marker}".strip())
         if not stated or stated in seen:
             continue
         seen.add(stated)
@@ -6964,7 +6973,7 @@ def _cited_evidence(record: ResearchRecord, candidate: Candidate) -> _CitedEvide
             grouped.titled.add(stated)
         # Only where there is a number to carry it by. A record the reference list
         # cannot number has nothing standing in for its text, so its text is printed.
-        comparable = _comparable(_sentence(entry.text))
+        comparable = _comparable(said)
         if marker and comparable in above:
             grouped.restated[stated] = marker
         if bucket is grouped.supports and filed.get(comparable) == "Evidence against":
@@ -7267,14 +7276,21 @@ def _evidence_notes(
     # and leave the reference list padded and reordered.
     located: dict[str, str] = {}
     for entry in index.values():
-        if entry.url:
-            located.setdefault(_comparable(_sentence(entry.text)), entry.url)
+        said = _sentence(entry.text, fallback="")
+        if entry.url and said:
+            located.setdefault(_comparable(said), entry.url)
     notes: list[tuple[str, str, str, str]] = []
     for heading, statements in zip(
         ("Evidence for", "Evidence against", "Evidence gaps"), recorded, strict=True
     ):
         for statement in statements:
-            text = _sentence(statement)
+            # Empty rather than the placeholder, which is what the guard below was
+            # written for: a specialist that filed an empty string under Evidence for
+            # had it printed as a bullet reading "Not stated by the specialist [5]",
+            # under a verified-source badge and carrying a reference number -- picked
+            # up off a record whose own text was empty and which therefore compared
+            # equal to it.
+            text = _sentence(statement, fallback="")
             if not text:
                 continue
             cited = _cited_records(text, index)
