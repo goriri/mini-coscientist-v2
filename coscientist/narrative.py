@@ -11407,8 +11407,19 @@ def _lead_over_rival(leader: IdeaBrief, briefs: Sequence[IdeaBrief]) -> str:
         (abs(match.swing) for brief in briefs for match in brief.matches),
         default=0,
     )
-    parts = [f"Its nearest rival, {briefs[1].title}, ended {gap} points behind."]
-    if largest:
+    # Nought points behind is not behind. A live run's top two tied on 1261 and the
+    # paragraph opened "ended 0 points behind", then spent two sentences sizing a gap
+    # against the K factor to conclude the two are level -- arithmetic about a distance
+    # that is not there, over a standings table giving both of them position 1.
+    if not gap:
+        parts = [
+            f"Its nearest rival, {briefs[1].title}, finished level with it on the "
+            "same rating, so the two share the position and the order between them "
+            "is the sort's rather than a result."
+        ]
+    else:
+        parts = [f"Its nearest rival, {briefs[1].title}, ended {gap} points behind."]
+    if gap and largest:
         parts.append(
             f"No single match in this tournament moved a rating by more than "
             f"{_plural(largest, 'point')} — the K factor of {round(ELO_K)} is the "
@@ -11433,10 +11444,14 @@ def _lead_over_rival(leader: IdeaBrief, briefs: Sequence[IdeaBrief]) -> str:
             # finished.
             "The leading idea was never paired against "
             + _joined_titles(unmet)
-            + f", so {_plural(len(unmet), 'idea')} of the "
-            f"{_number_word(len(briefs) - 1).lower()} it is "
-            "ranked above never met it: those positions rest on shared opponents "
-            "rather than on a result between them."
+            + f", so {_number_word(len(unmet)).lower()} of the "
+            # Not "the seven it is ranked above". The leader shares position one with
+            # whoever tied it, and on the live run the sentence two above this one
+            # said so: the paragraph called the runner-up level and then counted it
+            # among the ideas the leader is ranked above.
+            f"{_number_word(len(briefs) - 1).lower()} others in the standings never "
+            "met it: those positions rest on shared opponents rather than on a "
+            "result between them."
         )
     return " ".join(parts)
 

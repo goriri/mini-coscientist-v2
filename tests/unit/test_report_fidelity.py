@@ -700,6 +700,36 @@ def test_rivals_the_leader_never_played_are_named_as_never_played():
     assert "shared opponents" in line
 
 
+def test_a_leader_tied_with_its_rival_is_not_given_a_gap_to_measure():
+    """ "Ended 0 points behind", then two sentences sizing that gap against the K
+    factor to conclude the two are level -- over a standings table giving both of them
+    position 1. The live run's top two tied on 1261."""
+    leader = _brief(
+        "Leader", [], elo=1261.0, matches=[_played("Rival", 1245.0, 1261.0)]
+    )
+    rival = _brief("Rival", [], elo=1261.0, matches=[_played("Leader", 1277.0, 1261.0)])
+
+    line = _lead_over_rival(leader, [leader, rival])
+    assert "finished level with it on the same rating" in line
+    assert "points behind" not in line
+    assert "K factor" not in line, "there is no gap to size against it"
+    assert "the order between them is the sort's rather than a result" in line
+
+
+def test_a_rival_level_with_the_leader_is_not_counted_among_those_below_it():
+    """The paragraph called the runner-up level and then, two sentences on, counted it
+    among "the seven it is ranked above"."""
+    leader = _brief(
+        "Leader", [], elo=1261.0, matches=[_played("Rival", 1245.0, 1261.0)]
+    )
+    rival = _brief("Rival", [], elo=1261.0, matches=[_played("Leader", 1277.0, 1261.0)])
+    unmet = _brief("Stranger", [], elo=1190.0)
+
+    line = _lead_over_rival(leader, [leader, rival, unmet])
+    assert "ranked above" not in line
+    assert "one of the two others in the standings never met it" in line
+
+
 def test_a_field_of_one_claims_no_lead_at_all():
     leader = _brief("Leader", [])
 
