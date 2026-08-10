@@ -6085,6 +6085,42 @@ def _idea_matches(
     return chained, wins, losses, ties
 
 
+# A gerund of doing heads a thing to try instead, not a claim about what is going on:
+# "using ALD LiNbO3 as an alternative high-k dielectric and lithium-ion conductor" is a
+# rival material, and two of eight live ideas answered the alternative-explanations
+# field with one of those. Called a competing reading of the same situation, it says
+# the specialist offered a reading where it offered a substitution.
+_APPROACH_HEADS = frozenset(
+    """adding adopting applying combining depositing employing omitting replacing
+    substituting switching trying using""".split()
+)
+# The same gerund can be the subject of a claim -- "using a thicker coating raises the
+# resistance" -- and that is a reading. Only the auxiliaries are looked for, so a
+# reading whose verb is lexical is still called a reading: the wording that gets it
+# wrong is the wording this run already prints.
+_CLAIM_VERBS = frozenset(
+    """are can cannot could did do does had has have is may might must was were will
+    would""".split()
+)
+
+
+def _names_an_approach(text: str) -> bool:
+    """Whether a recorded alternative names a thing to do instead of a rival reading."""
+    words = [word.strip(",;:.()").lower() for word in text.split()]
+    return bool(words) and words[0] in _APPROACH_HEADS and not _CLAIM_VERBS & set(words)
+
+
+def _alternative_groups(alternatives: Sequence[str]) -> list[tuple[bool, list[str]]]:
+    """The recorded alternatives, readings first, then the ones naming an approach."""
+    readings = [item for item in alternatives if not _names_an_approach(item)]
+    approaches = [item for item in alternatives if _names_an_approach(item)]
+    return [
+        (is_approach, items)
+        for is_approach, items in ((False, readings), (True, approaches))
+        if items
+    ]
+
+
 def _idea_description(facts: dict[str, str], alternatives: Sequence[str]) -> list[str]:
     """The idea stated at length, before any reviewer has been allowed an opinion.
 
@@ -6105,12 +6141,25 @@ def _idea_description(facts: dict[str, str], alternatives: Sequence[str]) -> lis
     # same situation." stood above however many readings the specialist recorded, and
     # on a live run that was two under every one of the eight ideas. The count is on
     # the record, so the sentence states it and runs into the readings themselves.
-    count = len(alternatives)
+    #
+    # And two of eight recorded a thing to do instead of a reading of the situation,
+    # which cannot be displaced by a result and is not what this sentence says of it.
     competing = (
-        f"{_opening(count, 'competing reading', 'competing readings')} of the same "
-        "situation " + ("has" if count == 1 else "have") + " to be displaced: "
-        f"{_spliced(facts['Alternative explanations'])}."
-        if count and _stated(facts, "Alternative explanations")
+        " ".join(
+            (
+                _opening(len(items), "alternative approach", "alternative approaches")
+                + (" was" if len(items) == 1 else " were")
+                + " recorded here rather than a reading of the same situation: "
+                if is_approach
+                else _opening(len(items), "competing reading", "competing readings")
+                + " of the same situation "
+                + ("has" if len(items) == 1 else "have")
+                + " to be displaced: "
+            )
+            + f"{_spliced(_join(items, fallback=''))}."
+            for is_approach, items in _alternative_groups(alternatives)
+        )
+        if alternatives and _stated(facts, "Alternative explanations")
         else ""
     )
     return [
@@ -8307,7 +8356,9 @@ def _section_four(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
             # a thing to do instead: "The reading it has to displace is that using ALD
             # LiNbO3 as an alternative high-k dielectric and lithium-ion conductor."
             # reached a live report as a sentence with no verb in it. After a colon the
-            # reading stands however the specialist wrote it.
+            # reading stands however the specialist wrote it -- and where what it wrote
+            # is a substitution rather than a reading, the sentence says that instead
+            # of calling a rival material something a result could displace.
             competing = brief.alternatives
             if not competing:
                 displace = (
@@ -8315,9 +8366,16 @@ def _section_four(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
                     "says what a positive result would have to rule out."
                 )
             else:
-                displace = (
-                    f"It has {_plural(len(competing), 'competing reading')} to "
-                    f"displace: {_spliced(brief.facts['Alternative explanations'])}."
+                displace = " ".join(
+                    (
+                        f"It records {_plural(len(items), 'alternative approach')} "
+                        "rather than a reading to displace: "
+                        if is_approach
+                        else f"It has {_plural(len(items), 'competing reading')} to "
+                        "displace: "
+                    )
+                    + f"{_spliced(_join(items, fallback=''))}."
+                    for is_approach, items in _alternative_groups(competing)
                 )
             # The grid states the first prediction, so the prose states the rest. A
             # list that opened on the grid's own sentence read as though the report

@@ -2148,21 +2148,20 @@ def test_a_rank_the_tournament_did_not_decide_is_not_reported_as_a_result():
 
 
 def test_a_lone_competing_reading_is_stated_however_the_specialist_wrote_it():
-    """ "The reading it has to displace is that using ALD LiNbO3 as an alternative
-    high-k dielectric and lithium-ion conductor." -- a live sentence with no verb in
-    it. Half the specialists write a competing reading as a thing to do rather than
-    as a claim, and "is that" cannot take one of those. After a colon either shape
-    stands, which is how the paragraph already states two of them."""
+    """ "The reading it has to displace is that the coating merely blocks solvent." --
+    a live sentence in which "is that" put one reading in the subject and two in the
+    predicate. After a colon the reading stands however the specialist wrote it, which
+    is how the paragraph already states two of them."""
     import dataclasses
 
     from coscientist.narrative import _section_four
 
     record = ResearchRecord(session=Session(question="Can a coating help?"))
-    reading = (
-        "Using ALD LiNbO3 as an alternative high-k dielectric and lithium-ion conductor"
-    )
+    reading = "The capacity gain is solely the physical blocking of solvent molecules"
     facts = _facts() | {"Alternative explanations": f"{reading}."}
-    brief = dataclasses.replace(_brief("A coating", [], facts=facts), alternatives=[""])
+    brief = dataclasses.replace(
+        _brief("A coating", [], facts=facts), alternatives=[reading]
+    )
 
     four = " ".join(
         paragraph
@@ -2170,7 +2169,64 @@ def test_a_lone_competing_reading_is_stated_however_the_specialist_wrote_it():
         for paragraph in section.paragraphs
     )
     assert f"It has one competing reading to displace: {reading[0].lower()}" in four
-    assert "is that using" not in four
+    assert "is that the capacity" not in four
+
+
+def test_a_rival_material_is_not_called_a_reading_a_result_could_displace():
+    """Two of eight live ideas answered the field with a thing to do instead.
+
+    "One competing reading of the same situation has to be displaced: using ALD LiNbO3
+    as an alternative high-k dielectric and lithium-ion conductor" -- which is a rival
+    material, not a rival account of what is happening, and no result displaces it.
+    """
+    import dataclasses
+
+    from coscientist.narrative import _idea_description, _section_four
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    approach = (
+        "Using ALD LiNbO3 as an alternative high-k dielectric and lithium-ion conductor"
+    )
+    facts = _facts() | {"Alternative explanations": f"{approach}."}
+    brief = dataclasses.replace(
+        _brief("A coating", [], facts=facts),
+        alternatives=[approach],
+        description=_idea_description(facts, [approach]),
+    )
+
+    four = " ".join(
+        paragraph
+        for section in _section_four(record, [brief]).subsections
+        for paragraph in section.paragraphs
+    )
+
+    assert "competing reading" not in four
+    assert (
+        "It records one alternative approach rather than a reading to displace: "
+        "using ALD LiNbO3" in four
+    )
+    # And the same of the Description block, which states the field at length.
+    assert (
+        "One alternative approach was recorded here rather than a reading of the same "
+        "situation: using ALD LiNbO3" in " ".join(brief.description)
+    )
+
+
+def test_a_reading_and_a_rival_material_recorded_together_are_told_apart():
+    from coscientist.narrative import _idea_description
+
+    reading = "The capacity gain is solely the physical blocking of solvent molecules"
+    approach = "Using ALD LiNbO3 as an alternative conductor"
+    facts = _facts() | {"Alternative explanations": f"{reading}. {approach}."}
+
+    stated = " ".join(_idea_description(facts, [approach, reading]))
+
+    assert (
+        "One competing reading of the same situation has to be displaced: the capacity "
+        "gain is solely the physical blocking of solvent molecules. One alternative "
+        "approach was recorded here rather than a reading of the same situation: "
+        "using ALD LiNbO3 as an alternative conductor." in stated
+    )
 
 
 def test_the_prose_above_a_grid_points_forward_to_it_and_not_back():
