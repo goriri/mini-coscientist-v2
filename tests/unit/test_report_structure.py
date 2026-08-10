@@ -766,6 +766,61 @@ def test_the_head_of_the_reference_list_counts_the_list_below_it():
     )
 
 
+def test_a_list_holding_a_checked_entry_does_not_say_none_of_them_was_checked():
+    """The blanket sentence is read off claim support and speaks about retrieval.
+
+    On a live run the two records disagreed: twenty-four entries of which 1, 12 and
+    20 had been retrieved and checked -- which is why those three alone printed no
+    standing under them -- stood beneath "None of the sources below was checked
+    against the document it names." A source no claim was annotated against reads as
+    unsupported, and verification had read it.
+    """
+    from coscientist.dossier import _uniform_reference_standing
+    from coscientist.narrative import ResearchRecord, _cited_reference_standing
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.citations = CitationRegistry(
+        [
+            SourceLead(
+                canonical_url=f"https://x/{n}",
+                title=f"Lead {n}",
+                verification_status="verified" if n == 0 else "discovered_unverified",
+            )
+            for n in range(3)
+        ]
+    )
+    for n in range(3):
+        record.citations.number(f"https://x/{n}")
+
+    # The qualifier still holds of the claims; it is the sentence that does not hold.
+    assert record.citations.universal_qualifier == "unsupported"
+    assert _uniform_reference_standing(record) == ""
+    # What stands in its place counts, and its count matches the entries' own marks.
+    assert _cited_reference_standing(record).startswith(
+        "Of three entries below, one was retrieved and checked against the document "
+        "it names, and two record where a statement came from and no more."
+    )
+
+
+def test_a_list_where_nothing_was_checked_keeps_the_blanket_sentence():
+    from coscientist.dossier import _uniform_reference_standing
+    from coscientist.narrative import ResearchRecord
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.citations = CitationRegistry(
+        [
+            SourceLead(canonical_url=f"https://x/{n}", title=f"Lead {n}")
+            for n in range(3)
+        ]
+    )
+    for n in range(3):
+        record.citations.number(f"https://x/{n}")
+
+    assert _uniform_reference_standing(record).startswith(
+        "None of the sources below was checked against the document it names."
+    )
+
+
 def test_a_reference_list_whose_entries_were_all_checked_says_so():
     from coscientist.narrative import ResearchRecord, _cited_reference_standing
 

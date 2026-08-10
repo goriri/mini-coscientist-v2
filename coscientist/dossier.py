@@ -734,6 +734,35 @@ _REFERENCE_QUALIFIERS = {
 }
 
 
+def _uniform_reference_standing(record: ResearchRecord) -> str:
+    """The blanket sentence, where the run's own retrieval record bears it out.
+
+    The qualifier is read off what support the *claims* carry, and every sentence
+    above says something about whether the *documents* were retrieved and read --
+    two records that can disagree. On a live run they did: twenty-four entries of
+    which three had been retrieved and checked (1, 12 and 20, which print no
+    standing of their own for exactly that reason) stood under "None of the sources
+    below was checked against the document it names." A source with no claim
+    annotation against it reads as unsupported, and verification had checked it.
+
+    Where they disagree the count wins, because ``_cited_reference_standing`` is
+    written from the retrieval record and says how many fall into each case rather
+    than asserting one case of them all.
+    """
+    qualifier = record.citations.universal_qualifier
+    sentence = _REFERENCE_QUALIFIERS.get(qualifier, "")
+    if not sentence:
+        return ""
+    checked, total = record.citations.cited_standing
+    # "None was checked" wants nothing checked; the other three open "Every source
+    # below was checked" and want nothing unchecked.
+    return (
+        sentence
+        if (checked == 0 if qualifier == "unsupported" else checked == total)
+        else ""
+    )
+
+
 def _knowledge_base(record: ResearchRecord, overview: ResearchOverview) -> list[str]:
     references = record.citations.references()
     lines = [
@@ -766,9 +795,9 @@ def _knowledge_base(record: ResearchRecord, overview: ResearchOverview) -> list[
         # empty -- so the reference list of a run that had checked some of its
         # sources and not others said nothing at all about which were which, while
         # the findings section two chapters above stated a figure.
-        lead_in = _REFERENCE_QUALIFIERS.get(
-            record.citations.universal_qualifier
-        ) or _cited_reference_standing(record)
+        lead_in = _uniform_reference_standing(record) or _cited_reference_standing(
+            record
+        )
         if lead_in:
             lines.extend([lead_in, ""])
         if any(_redirect_only(citation) for citation in references):
