@@ -2618,6 +2618,42 @@ def test_two_claims_whose_sources_went_unnamed_are_still_told_apart(
     assert "cited claim" not in body
 
 
+def test_a_claim_named_by_its_opening_words_stops_where_a_reader_can(
+    rich_session: Session,
+):
+    """A live review named a claim "(the unverified claim that excessive ALD Al2O3
+    coating thickness acts as an electrical …)" -- an article and an adjective over the
+    noun the cut took away, and an ellipsis held off the word it cut by a space where
+    the nineteen other abbreviations in the same report sat theirs against it."""
+    evidence = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "EvidencePacket"
+    )
+    for index, text in (
+        (
+            1,
+            "Excessive ALD Al2O3 coating thickness acts as an electrical insulator, "
+            "severely restricting the flow of lithium ions through the cathode.",
+        ),
+        (
+            2,
+            "Sacrificial hydrogen fluoride scavengers in the electrolyte suppress "
+            "transition metal dissolution at the cathode over five hundred cycles.",
+        ),
+    ):
+        evidence.payload["claims"][index]["source_id"] = ""
+        evidence.payload["claims"][index]["verification_status"] = (
+            "discovered_unverified"
+        )
+        evidence.payload["claims"][index]["claim"] = text
+    body = _findings(rich_session, "The idea synthesizes claim_1 and claim_2")
+
+    assert " …" not in body
+    assert "acts as an electrical insulator…" in body
+    assert "in the electrolyte suppress…" in body
+
+
 def test_a_claim_and_its_own_source_cited_together_name_the_paper_once(
     rich_session: Session,
 ):
@@ -2727,7 +2763,7 @@ def test_a_finding_too_long_to_splice_is_named_rather_than_read_out(
     body = _findings(rich_session, f"This is answered by {statement.id}")
 
     _assert_no_record_ids(body)
-    named = "the finding that atomic layer deposition of alumina on silicon anodes …"
+    named = "the finding that atomic layer deposition of alumina on silicon anodes…"
     # The ellipsis closes the sentence. This asserted a full stop after it, which is
     # how "conventional carbonate …." reached a live report.
     assert f"This is answered by {named}" in body

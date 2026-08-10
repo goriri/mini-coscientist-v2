@@ -2898,6 +2898,21 @@ def _named_by_text(opener: str, text: str, fallback: str) -> str:
 _DISTINGUISHING = 60
 """How much of a record's own words stands in for a name the run cannot make unique."""
 
+# Words that cannot be the last word of an abbreviated statement: each one governs
+# something the cut has taken away, so a statement ending on one reads as one that was
+# cut off rather than one that was shortened. The summary table's cells abbreviate for
+# the same reason and cut against the same list.
+_GOVERNING_WORDS = frozenset(
+    """a an the and or nor but so if while when where which who whose that than then
+    at by for from in into of on onto over to under with within without via versus
+    about after before during per across between among against toward towards upon
+    leading resulting causing compared relative due such is are was were be been
+    its their his her our this these those""".split()
+)
+
+_DETERMINERS = frozenset("a an the its their his her our this these those".split())
+"""A determiner opens a noun phrase, and the phrase is unfinished without its noun."""
+
 
 def _named_series(parts: Sequence[re.Match[str]]) -> str:
     """One name for a run of cited ids, or "" where the run has to be named id by id.
@@ -2949,11 +2964,40 @@ def _distinguished(names: dict[str, str], spoken: dict[str, tuple[str, str]]) ->
         if taken[names.get(record_id, "")] < 2:
             continue
         said = " ".join(text.split()).rstrip(".")
-        head = said[:_DISTINGUISHING].rsplit(" ", 1)[0].rstrip(" ,;:")
+        head = _shortened(said[:_DISTINGUISHING].rsplit(" ", 1)[0].rstrip(" ,;:"), said)
         if len(head.split()) > 3:
+            # Not " …". The nineteen other abbreviations in a live report sat the
+            # ellipsis against the word it cut; the six this pass wrote held it off
+            # with a space, which reads as a word of its own rather than as the end
+            # of the one before it.
             names[record_id] = f"{opener} {head[:1].lower()}{head[1:]}" + (
-                " …" if len(head) < len(said) else ""
+                "…" if len(head) < len(said) else ""
             )
+
+
+def _shortened(head: str, said: str) -> str:
+    """``head``, a word-boundary prefix of ``said``, ended where a reader can stop.
+
+    Two ways the boundary lands mid-phrase. The last word can be the one governing
+    what the cut took away, and it is dropped. Or the phrase can be a determiner's,
+    still short of the noun the determiner promised: a live review named a claim "the
+    unverified claim that excessive ALD Al2O3 coating thickness acts as an electrical
+    …", an article and an adjective over a missing noun. One more word finishes it,
+    and one more word is the whole of the overrun.
+    """
+    words = head.split()
+    while len(words) > 1 and words[-1].strip("(),;:—-").lower() in _GOVERNING_WORDS:
+        words.pop()
+    rest = said[len(" ".join(words)) :]
+    # A space and not a comma: where the writer's own punctuation follows the cut,
+    # the phrase has already ended and the next word starts something else.
+    if (
+        rest[:1] == " "
+        and len(words) > 1
+        and words[-2].strip("(").lower() in _DETERMINERS
+    ):
+        words.extend(rest.split()[:1])
+    return " ".join(words).rstrip(" ,;.:—-([")
 
 
 # A sentence about the identifiers themselves. A live review read "cites invalid
