@@ -436,6 +436,36 @@ def test_what_a_bottom_evidence_review_means_is_left_to_the_standing_note():
     assert "the disagreement is about the grounding" in COHERENCE_EVIDENCE_NOTE
 
 
+def test_a_bottom_the_evidence_review_shares_is_not_called_the_lowest_of_them():
+    """The position was read off ``min``, which answers with one review whether or not
+    one review holds it. Three reviews of a live idea scored two -- the same chapter's
+    conclusion said as much -- and this sentence named whichever of the three came
+    first as "the lowest of them"."""
+    from coscientist.narrative import COHERENCE_EVIDENCE_NOTE
+
+    lines, notes = _coherence(
+        [
+            _review("Correctness", 2),
+            _review("Novelty", 2),
+            _review("Feasibility", 2),
+            _review("Impact", 5),
+        ],
+        {},
+    )
+
+    assert lines[-1] == (
+        "Nothing scored below the evidence and correctness review, at 2 of five, and "
+        "the Novelty and Feasibility reviews are level with it."
+    )
+    assert COHERENCE_EVIDENCE_NOTE in notes
+
+    # One review level with it takes the singular, and the note still fires.
+    pair, _ = _coherence(
+        [_review("Correctness", 2), _review("Impact", 2), _review("Novelty", 5)], {}
+    )
+    assert "the Impact review is level with it" in pair[-1]
+
+
 # --- a review nobody wrote is not a judgement of the idea it sits under -------
 
 

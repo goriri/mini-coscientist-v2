@@ -3839,7 +3839,7 @@ def test_the_deep_verification_caveat_is_stated_once_in_the_whole_report(body: s
     needs is the one for a list nobody raised anything into."""
     dives = body.count("#### Deep Verification")
     assert dives > 1
-    assert body.count("which objection each one reaches is left to the reader") == 1
+    assert body.count("everywhere else the pairing is left to the reader") == 1
     assert body.count("so each is a live claim against the idea") == 1
     standing = body.count("so what follows is the standing check")
     assert standing < dives, "the fixture must give some idea a raised objection"

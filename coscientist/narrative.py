@@ -1098,8 +1098,11 @@ DEEP_DIVE_PREAMBLE = (
     "them, so the list is neither validated nor complete, and a risk missing from it "
     "has not been ruled out.",
     "Addressed objections are the responses the reviews recorded. A review lists its "
-    "objections and its responses separately without saying which answers which, so "
-    "a response may concede an objection rather than dispose of it. Each response is "
+    "objections and its responses separately, so which answers which is on the record "
+    "only where a review raised one objection and recorded one response: there the "
+    "response names the numbered item under Deep Verification it answers, and "
+    "everywhere else the pairing is left to the reader. Either way a response may "
+    "concede an objection rather than dispose of it. Each response is "
     "attributed to the review that recorded it, so that is where a response is "
     "printed rather than a second time under the review itself, and a review that "
     "recorded none is not listed there rather than listed as silent. The objections "
@@ -1152,9 +1155,9 @@ DEEP_DIVE_PREAMBLE = (
     "settled one. A fatal flaw is the stronger "
     "finding: the reviewer that recorded one was saying the idea does not survive it, "
     "and the scoring scale caps such a review at two of five however confident it was. "
-    "For the same reason no item there claims to have been answered: where a review "
-    "responded at all, the responses are printed under Reviews, and which objection "
-    "each one reaches is left to the reader to judge.",
+    "For the same reason no item here is marked as settled: the responses are printed "
+    "under Reviews, and an item is named from that side only where the review that "
+    "raised it recorded exactly one of each.",
     # A debated match has two participants and each of them has a section, so a reader
     # meets the same match twice and has to be told what is repeated and what is not.
     #
@@ -2130,6 +2133,24 @@ class ResearchRecord:
             if ranked in members:
                 return list(dict.fromkeys(members))
         return [ranked]
+
+    def clusters_of(self, candidate_id: str) -> list[list[str]]:
+        """Every region this idea sits in, itself included in each of them.
+
+        ``cluster_of`` answers with the first, which is the whole answer only where
+        the clustering places each idea once. It does not have to: a live run put one
+        idea in three of its regions, and the minority note read off the first of them
+        told the reader the idea shared its region "only with" a single neighbour --
+        three lines under the bullets that named the other two.
+        """
+        ranked = self.ranked_id(candidate_id)
+        regions = [
+            list(dict.fromkeys(members))
+            for cluster in (self.landscape.clusters if self.landscape else [])
+            if ranked
+            in (members := [self.ranked_id(item) for item in cluster.candidate_ids])
+        ]
+        return regions or [[ranked]]
 
     @property
     def fallback_stages(self) -> list[ProvenanceNote]:
@@ -5892,21 +5913,36 @@ def _coherence(
     # false: no falsifier settles a dispute about whether a cited source says what
     # the idea says it says. Which review sits at the bottom is on the record, so
     # the sentence is decided from that rather than asserted over it.
-    lowest = min(reviews, key=lambda review: review.score)
+    floor = min(review.score for review in reviews)
+    bottom = [review for review in reviews if review.score == floor]
     # Whether there is a disagreement for a falsifier to settle. The sentence below
     # asserted one unconditionally, so on an idea whose reviews had just been
     # reported as agreeing it named "the disagreement between the reviews above"
     # two lines under "They agree". Where they agree, what a falsifier is for is
     # testing the reading they share.
     disputed = spread > 1 or len(asked) > 1
-    if spread > 1 and lowest.section == "Correctness":
+    if spread > 1 and any(review.section == "Correctness" for review in bottom):
         # The clause that used to close this sentence -- "what it faults is the
         # grounding, not the experiment" -- is the first clause of the standing note
         # hoisted above the ideas, restated under six of the eight. What is this
         # idea's own is which review sits at the bottom and how far down it is.
+        #
+        # "The lowest" only where nothing is level with it. The bottom was read off
+        # ``min``, which returns one review whether or not one review holds the
+        # position: three reviews of a live idea scored two, the same chapter's
+        # conclusion said so, and this sentence picked whichever of the three came
+        # first and called it the lowest.
+        level = [review.section for review in bottom if review.section != "Correctness"]
         lines.append(
-            "The lowest of them is the evidence and correctness review, at "
-            f"{lowest.score} of five."
+            f"The lowest of them is the evidence and correctness review, at {floor} "
+            "of five."
+            if not level
+            else (
+                "Nothing scored below the evidence and correctness review, at "
+                f"{floor} of five, and the {_joined_titles(level)} "
+                + ("review is" if len(level) == 1 else "reviews are")
+                + " level with it."
+            )
         )
         notes.append(COHERENCE_EVIDENCE_NOTE)
     elif _stated(facts, "Falsifier"):
@@ -11301,22 +11337,40 @@ def _minority_note(record: ResearchRecord, candidate_id: str) -> str:
     # live report called an idea the only one exploring its region two lines after
     # naming the other idea in that same region, which is the report contradicting
     # itself inside one section.
-    neighbours = [item for item in record.cluster_of(ranked_id) if item != ranked_id]
+    # Across every region it sits in, not the first of them. The clustering may place
+    # one idea several times, and where it did, the note read off one region called
+    # the idea's neighbours there its only neighbours anywhere -- with the bullets
+    # naming the others three lines above it in the same list.
+    regions = record.clusters_of(ranked_id)
+    neighbours = list(
+        dict.fromkeys(
+            item for region in regions for item in region if item != ranked_id
+        )
+    )
+    named = _joined_titles(
+        [record.title_for(item) for item in neighbours], fallback="no other idea"
+    )
     if not neighbours:
         note = (
             f"{title} was protected as a minority hypothesis. {placing}is the only "
             "idea exploring its region of the problem, so discarding it would close "
             "off that region entirely."
         )
+    elif len(regions) > 1:
+        # Protection is thinness, and an idea in several regions is thin in each of
+        # them rather than the sole occupant of one. What holds of all of them is
+        # that every one loses a member.
+        note = (
+            f"{title} was protected as a minority hypothesis. {placing}sits in "
+            f"{_number_word(len(regions)).lower()} regions of the problem rather than "
+            f"one, sharing them with {named}, and the ideas in a region tend to fail "
+            "together, so dropping this one would thin every region it sits in."
+        )
     else:
         note = (
             f"{title} was protected as a minority hypothesis. {placing}shares its "
-            "region of the problem only with "
-            + _joined_titles(
-                [record.title_for(item) for item in neighbours],
-                fallback="no other idea",
-            )
-            + ", and the ideas in a region tend to fail together, so dropping this one "
+            f"region of the problem only with {named}"
+            ", and the ideas in a region tend to fail together, so dropping this one "
             # "The rest of a thin set" describes several survivors, and a region with
             # two ideas in it has one. The reader was left to work out that "the rest"
             # was the idea named in the same sentence.

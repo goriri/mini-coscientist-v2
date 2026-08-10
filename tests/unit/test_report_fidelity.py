@@ -1962,6 +1962,37 @@ def test_the_guide_describes_the_debate_rendering_the_report_actually_produces()
     assert "the same in both places" not in guide
 
 
+def test_the_guide_describes_the_pairing_of_response_to_objection_that_is_printed():
+    """Addressed Objections points a response at the numbered item it answers wherever
+    a review raised one objection and recorded one response. The guide was written
+    before that pointer existed and still told the reader it does not: "without saying
+    which answers which" stood a hundred lines above "The correctness review answered
+    the objection it raised, item 1 under Deep Verification below"."""
+    from coscientist.narrative import DEEP_DIVE_PREAMBLE, _attributed_responses
+
+    guide = " ".join(DEEP_DIVE_PREAMBLE)
+
+    assert "without saying which answers which" not in guide
+    assert "no item there claims to have been answered" not in guide
+    assert "the response names the numbered item under Deep Verification" in guide
+    # The other half of the guide's claim: that everywhere else the reader is on
+    # their own, and that a response can concede rather than dispose either way.
+    assert "everywhere else the pairing is left to the reader" in guide
+    assert "concede an objection rather than dispose of it" in guide
+
+    # And the pointer the guide now promises is the one the section prints.
+    responses = _attributed_responses(
+        [
+            _idea_review(
+                section="Correctness",
+                objections=["The scavenging is transient."],
+                rebuttals=["The protocol tracks it over 200 cycles."],
+            )
+        ]
+    )
+    assert "item 1 under Deep Verification below" in responses
+
+
 def test_what_an_untested_objection_is_worth_is_said_once_over_all_of_them():
     """The reading guide states it above the ideas, over every list it is true of.
     Critical Flaws restated it verbatim under six of eight ideas -- forty words each,
@@ -2953,6 +2984,68 @@ def test_a_recommended_idea_carrying_an_unacted_flaw_is_not_put_outside_them_all
     assert "recommended carrying it even so" in note
     # An idea nobody recommended and nobody faulted gets neither sentence.
     assert "recommended carrying it even so" not in _minority_note(record, "cand_b")
+
+
+def test_an_idea_the_clustering_placed_in_several_regions_is_not_said_to_have_one():
+    """The note was read off the first region the idea appears in. A live run's
+    clustering put one idea in three of them, so the note said it "shares its region of
+    the problem only with" the single neighbour of the first -- three bullets under the
+    two lines that named the other two neighbours in the same list."""
+    from coscientist.models import (
+        CandidatePopulation,
+        ResearchCluster,
+        ResearchLandscape,
+    )
+    from coscientist.narrative import _minority_note
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.population = CandidatePopulation(
+        candidates=[_candidate(f"cand_{letter}") for letter in "abcd"]
+    )
+    record.titles = {
+        "cand_a": "An alucone coating",
+        "cand_b": "A dual-layer coating",
+        "cand_c": "A nanolaminate coating",
+        "cand_d": "A titanate buffer",
+    }
+    record.landscape = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Ion-conductive interphases",
+                candidate_ids=["cand_a", "cand_b"],
+                shared_mechanism="The layer conducts lithium.",
+                shared_outcome="Impedance stays flat.",
+            ),
+            ResearchCluster(
+                name="Bulk diffusion mitigation",
+                candidate_ids=["cand_a", "cand_c"],
+                shared_mechanism="The layer blocks aluminium.",
+                shared_outcome="The bulk is unchanged.",
+            ),
+            ResearchCluster(
+                name="Strain accommodation",
+                candidate_ids=["cand_a", "cand_d"],
+                shared_mechanism="The layer absorbs strain.",
+                shared_outcome="No cracking at rate.",
+            ),
+        ]
+    )
+
+    note = _minority_note(record, "cand_a")
+    assert "only with" not in note
+    assert "sits in three regions of the problem rather than one" in note
+    for title in (
+        "A dual-layer coating",
+        "A nanolaminate coating",
+        "A titanate buffer",
+    ):
+        assert title in note
+    assert "would thin every region it sits in" in note
+
+    # An idea the clustering placed once still gets the sentence about that one region.
+    single = _minority_note(record, "cand_b")
+    assert "shares its region of the problem only with An alucone coating" in single
+    assert "resting on that idea alone" in single
 
 
 def _section_one_core(record: ResearchRecord) -> str:
