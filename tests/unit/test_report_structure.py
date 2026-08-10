@@ -2654,6 +2654,55 @@ def test_a_claim_named_by_its_opening_words_stops_where_a_reader_can(
     assert "in the electrolyte suppress…" in body
 
 
+def test_a_claim_called_after_what_it_says_is_not_called_after_its_label(
+    rich_session: Session,
+):
+    """A record cited by what it says has sixty characters to say it in, and a run
+    whose pass wrote its findings as their own records spent all of them on the
+    label: a live review named one "(the finding that * **Statement:** Atomic Layer
+    Deposition (ALD)…)", which says which pass wrote it and nothing else."""
+    evidence = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "EvidencePacket"
+    )
+    claim = evidence.payload["claims"][1]
+    claim["source_id"] = ""
+    claim["verification_status"] = "discovered_unverified"
+    claim["claim"] = (
+        "* **Statement:** Atomic Layer Deposition lays down a conformal film one "
+        "atomic layer at a time. * **Facet:** methods * **Category:** Finding"
+    )
+    body = _findings(rich_session, "The idea rests on claim_1.")
+
+    assert "**Statement:**" not in body
+    assert "the unverified claim that Atomic Layer Deposition lays down a" in body
+
+
+def test_a_record_named_after_a_technique_keeps_the_technique_capitalised():
+    """A sentence spliced into another one no longer opens it, so its capital goes --
+    but the capital of an abbreviation or of a technique's name is not the sentence's,
+    and this run's findings open on ALD, HRTEM and Atomic Layer Deposition."""
+    from coscientist.narrative import _named_by_text
+
+    named = [
+        _named_by_text("the finding that", text, "a finding")
+        for text in (
+            "ALD provides conformal coverage at angstrom control.",
+            "LiPF6 hydrolyses above fifteen parts per million of water.",
+            "Atomic Layer Deposition lays down one atomic layer per cycle.",
+            "Thicker coatings raise the charge transfer resistance.",
+        )
+    ]
+
+    assert named == [
+        "the finding that ALD provides conformal coverage at angstrom control",
+        "the finding that LiPF6 hydrolyses above fifteen parts per million of water",
+        "the finding that Atomic Layer Deposition lays down one atomic layer per cycle",
+        "the finding that thicker coatings raise the charge transfer resistance",
+    ]
+
+
 def test_a_claim_and_its_own_source_cited_together_name_the_paper_once(
     rich_session: Session,
 ):

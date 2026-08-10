@@ -2843,6 +2843,11 @@ def _record_names(record: ResearchRecord) -> dict[str, str]:
         for claim in record.evidence.claims:
             title = titles.get(claim.source_id or "", "")
             standing = _standing(claim.verification_status)
+            # What it says, and not the record kept about it: a run whose pass wrote
+            # its findings as their own records had a review name one of them "the
+            # finding that * **Statement:** Atomic Layer Deposition (ALD)…", which
+            # spends the whole of the splice on the label and says nothing.
+            said = _without_record_labels(claim.claim)
             names[claim.id] = (
                 f"the {standing}claim drawn from {title}"
                 if title
@@ -2854,12 +2859,12 @@ def _record_names(record: ResearchRecord) -> dict[str, str]:
                 # meant nor what either of them held.
                 else _named_by_text(
                     f"the {standing}claim that",
-                    claim.claim,
+                    said,
                     f"the {standing}cited claim",
                 )
             )
             if not title:
-                spoken[claim.id] = (f"the {standing}claim that", claim.claim)
+                spoken[claim.id] = (f"the {standing}claim that", said)
     for lead in record.discovery.source_leads if record.discovery else []:
         title = _without_search_chrome(" ".join(lead.title.split()), lead.canonical_url)
         standing = _standing(lead.verification_status)
@@ -2869,15 +2874,16 @@ def _record_names(record: ResearchRecord) -> dict[str, str]:
         )
     for narrative in record.discovery.narratives if record.discovery else []:
         for statement in narrative.statements:
+            said = _without_record_labels(statement.text)
             names.setdefault(
                 statement.id,
                 _named_by_text(
                     "the finding that",
-                    statement.text,
+                    said,
                     "an unverified finding from the literature search",
                 ),
             )
-            spoken.setdefault(statement.id, ("the finding that", statement.text))
+            spoken.setdefault(statement.id, ("the finding that", said))
     _distinguished(names, spoken)
     return names
 
@@ -2892,7 +2898,26 @@ def _named_by_text(opener: str, text: str, fallback: str) -> str:
     spoken = " ".join(text.split()).rstrip(".")
     if not 0 < len(spoken) <= 120:
         return fallback
-    return f"{opener} {spoken[:1].lower()}{spoken[1:]}"
+    return f"{opener} {_mid_sentence(spoken)}"
+
+
+def _mid_sentence(said: str) -> str:
+    """``said`` as it reads inside a sentence of the report's own.
+
+    A sentence spliced into another one no longer opens it, so its capital goes --
+    unless the capital is not the sentence's. A finding opening on an abbreviation
+    or on the name of a technique carries the case of the thing it names, and
+    lowering the first letter alone makes it a different word: this run's findings
+    open on ALD, HRTEM, LiPF6 and Atomic Layer Deposition, which lower to "aLD",
+    "hRTEM", "liPF6" and "atomic Layer Deposition".
+    """
+    words = said.split()
+    if not words:
+        return said
+    lead = words[0].strip("(\"'")
+    if lead[1:].lower() != lead[1:] or (words[1:2] and words[1][:1].isupper()):
+        return said
+    return f"{said[:1].lower()}{said[1:]}"
 
 
 _DISTINGUISHING = 60
@@ -2970,7 +2995,7 @@ def _distinguished(names: dict[str, str], spoken: dict[str, tuple[str, str]]) ->
             # ellipsis against the word it cut; the six this pass wrote held it off
             # with a space, which reads as a word of its own rather than as the end
             # of the one before it.
-            names[record_id] = f"{opener} {head[:1].lower()}{head[1:]}" + (
+            names[record_id] = f"{opener} {_mid_sentence(head)}" + (
                 "…" if len(head) < len(said) else ""
             )
 
@@ -7019,7 +7044,13 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
     for narrative in record.discovery.narratives if record.discovery else []:
         for statement in narrative.statements:
             index[statement.id] = _EvidenceRecord(
-                statement.id, statement.text, "discovered_unverified"
+                statement.id,
+                # What the record says, not the record: an id resolved here is
+                # printed as the finding, and a pass that wrote its findings as
+                # their own records had "* **Statement:** ... * **Facet:** methods
+                # * **Category:** Finding" spliced into a reviewer's sentence.
+                _without_record_labels(statement.text),
+                "discovered_unverified",
             )
     # Claims last: where a claim and a source carry the same id, what the claim
     # says is closer to what the statement was citing it for.
@@ -7037,7 +7068,7 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
         standing = source_standing.get(claim.source_id or "", "")
         index[claim.id] = _EvidenceRecord(
             claim.id,
-            claim.claim,
+            _without_record_labels(claim.claim),
             standing if standing in DISCREDITED_STATUSES else claim.verification_status,
             url=source_urls.get(claim.source_id or "", ""),
             relation=claim.relation,
