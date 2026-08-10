@@ -2925,7 +2925,84 @@ def _candidate_summary_table(briefs: Sequence, briefing: str = "") -> list[str]:
         # the matches decided it on, or which of these gaps is too narrow to read
         # anything into. The judge that played the tournament says both here.
         lines.extend(["**What the tournament found.** " + briefing.strip(), ""])
+        corrected = _places_the_run_never_produced(briefing, briefs)
+        if corrected:
+            lines.extend([corrected, ""])
     return lines
+
+
+# Place words a judge writes, and the position each one claims. Only as far as the
+# report ever ranks; past that a judge writes the numeral.
+_PLACE_WORDS = {
+    "first": 1,
+    "second": 2,
+    "third": 3,
+    "fourth": 4,
+    "fifth": 5,
+    "sixth": 6,
+    "seventh": 7,
+    "eighth": 8,
+    "ninth": 9,
+    "tenth": 10,
+}
+_PLACE_WORD = re.compile(rf"\b(?:{'|'.join(_PLACE_WORDS)})\b", re.IGNORECASE)
+# A judge writes the places as a series and puts the noun after the last of them --
+# "the fourth, fifth, and sixth place hypotheses" -- so a word is a place only where
+# the series it sits in ends in one. "the first move" and "a second coating" are not
+# positions, and reading them as positions would answer a sentence nobody wrote.
+_PLACE_SERIES = re.compile(
+    rf"{_PLACE_WORD.pattern}(?:(?:,\s*|\s+and\s+|,\s*and\s+){_PLACE_WORD.pattern})*"
+    r"[\s-]+(?:place|placed|ranked|position)\b",
+    re.IGNORECASE,
+)
+
+
+def _places_the_run_never_produced(briefing: str, briefs: Sequence) -> str:
+    """Where the judge counted places through a tie the standings do not count through.
+
+    The briefing is the judge's prose over a table of computed positions, and on a
+    live run the two disagreed about how many places the run had: three ideas finished
+    on an Elo of 1184 and the table gave all three position 4, while the paragraph
+    above it asked readers "not to draw distinctions between the fourth, fifth, and
+    sixth place hypotheses". No idea in that run finished fifth or sixth. Rewriting
+    the judge's sentence would be the report putting words in the judge's mouth, so
+    the standings answer it instead, and only where a place it names is one nothing
+    in the run holds.
+    """
+    ranks = Counter(brief.rank for brief in briefs)
+    spoken = {
+        word.lower()
+        for series in _PLACE_SERIES.finditer(briefing)
+        for word in _PLACE_WORD.findall(series.group(0))
+    }
+    named = sorted(
+        _PLACE_WORDS[word] for word in spoken if _PLACE_WORDS[word] not in ranks
+    )
+    ties = [
+        (rank, [brief for brief in briefs if brief.rank == rank])
+        for rank in sorted(ranks)
+        if ranks[rank] > 1
+    ]
+    if not named or not ties:
+        return ""
+    counted = _listed([_ORDINALS[place] for place in named])
+    stated = _listed(
+        [
+            f"{_number_word(len(group)).lower()} ideas finished level on an Elo of "
+            f"{group[0].elo} and share position {rank}"
+            for rank, group in ties
+        ]
+    )
+    return (
+        f"The paragraph above is the judge's, and it counts places this run did not "
+        f"produce: nothing here finished {counted}. What the standings hold is a tie "
+        f"— {stated} — and the positions in the table are the ones the tournament "
+        "returned."
+    )
+
+
+# The place words again, by position, for saying back what the judge named.
+_ORDINALS = {place: word for word, place in _PLACE_WORDS.items()}
 
 
 # A specialist writing chemistry and units reaches for TeX, and nothing downstream

@@ -6758,6 +6758,42 @@ def test_the_judges_reading_of_the_tournament_sits_under_the_ranked_table(
     assert JUDGE_BRIEFING in summary
 
 
+def test_a_judge_counting_places_through_a_tie_is_answered_by_the_standings():
+    """The briefing is the judge's prose over a table of computed positions, and on a
+    live run the two disagreed about how many places the run had: three ideas finished
+    on an Elo of 1184 and the table gave all three position 4, while the paragraph
+    directly above it asked readers "not to draw distinctions between the fourth,
+    fifth, and sixth place hypotheses". Nothing in that run finished fifth or sixth."""
+    from coscientist.dossier import _places_the_run_never_produced
+
+    briefs = [
+        SimpleNamespace(rank=rank, elo=elo)
+        for rank, elo in ((1, 1290), (2, 1234), (3, 1200), (4, 1184), (4, 1184))
+    ]
+
+    said = _places_the_run_never_produced(
+        "Readers should not draw distinctions between the fourth and fifth place "
+        "hypotheses, which are separated by noise.",
+        briefs,
+    )
+
+    assert "nothing here finished fifth" in said
+    assert "two ideas finished level on an Elo of 1184 and share position 4" in said
+
+    # A place word is a place only where the series it sits in ends in one: answering
+    # "the first move is the go/no-go work" would be the report correcting a sentence
+    # about positions that nobody wrote.
+    assert not _places_the_run_never_produced(
+        "The first move is the go/no-go work, and a second coating would not help.",
+        briefs,
+    )
+    # And a run whose standings hold no tie has nothing to answer with.
+    assert not _places_the_run_never_produced(
+        "The fifth place hypothesis is close behind.",
+        [SimpleNamespace(rank=rank, elo=1200 - rank) for rank in (1, 2, 3)],
+    )
+
+
 def test_the_computed_fallback_does_not_restate_the_table_it_sits_under(
     rich_session: Session,
 ):
