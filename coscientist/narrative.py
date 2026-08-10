@@ -571,16 +571,130 @@ _TRAILING_LINK_LABEL = re.compile(
 )
 
 
-def _without_search_chrome(title: str) -> str:
-    """A search result's title without the link furniture appended to it."""
+# The site's name written out, which is the same furniture as its hostname and
+# outlived the cut of it: "... - The Royal Society of Chemistry rsc.org" loses
+# "rsc.org" and keeps the society. Six of the seventeen entries of a live reference
+# list ended in one -- "Transition metal dissolution from Li-ion battery cathodes -
+# Atomic Layer Deposition", "... in aqueous zinc battery research - The Royal Society
+# of Chemistry", "... Hybrid Films for Electrochemical Applications | ACS Applied
+# Energy Materials - ACS Publications", "Unexpected high power performance of atomic
+# layer deposition coated Li[Ni1/3Mn1/3Co1/3]O2 cathodes - University of Colorado
+# Boulder" -- each of them reading as the last words of the paper's name, and the same
+# paper found on two aggregators then carrying two different names.
+#
+# One segment per pass, so a title that carries the journal and then the publisher
+# loses them one at a time. The separator has to stand between spaces: "Ni-rich" and
+# "Cells\u2500Learning from Electrode Potential Profiles" are one word and one title.
+_TITLE_TAIL = re.compile(r"\s+[-\u2013\u2014|]\s+(?P<tail>[^-\u2013\u2014|]+?)\s*\Z")
+
+# A page's banner, where the paper's name should be. No journal sets a title whose
+# last segment welcomes the reader to a department.
+_SITE_BANNER = re.compile(r"\A(?:welcome to|home)\b", re.IGNORECASE)
+
+# Parts of a hostname that name no publisher: the section of the site and the suffix.
+# Matched against a title's last words they would convict the innocent -- "org" opens
+# "organic" and "cell" opens "cellular".
+_GENERIC_HOST_PARTS = frozenset(
+    {
+        "www",
+        "com",
+        "org",
+        "net",
+        "edu",
+        "gov",
+        "int",
+        "info",
+        "co",
+        "ac",
+        "uk",
+        "eu",
+        "us",
+        "pubs",
+        "journals",
+        "link",
+        "doi",
+        "dx",
+        "onlinelibrary",
+        "sites",
+        "web",
+        "portal",
+    }
+)
+
+# Words that carry no initial into an abbreviation: "The Royal Society of Chemistry"
+# is RSC and rsc.org, not TRSOC.
+_UNINITIALLED = frozenset({"the", "of", "and", "for", "a", "an", "in", "on", "at"})
+
+
+def _names_the_site(tail: str, url: str) -> bool:
+    """Whether a title's last segment is the name of the site it was found on.
+
+    Proved against the locator rather than guessed from a list of publishers: the
+    tail is furniture exactly where the document's own address already says so.
+    Spelled out ("Atomic Layer Deposition" on atomiclayerdeposition.com), as one word
+    of it ("University of Colorado Boulder" on colorado.edu), or as the initials the
+    site is registered under ("The Royal Society of Chemistry" on rsc.org).
+    """
+    parts = [part for part in _publisher_of(url).split(".") if part]
+    words = re.findall(r"[A-Za-z0-9]+", tail)
+    # A whole clause is a subtitle, not a site name, whatever words it happens to
+    # share with the address.
+    if not parts or not words or len(words) > 8:
+        return False
+    if "".join(word.lower() for word in words) in "".join(parts):
+        return True
+    initials = "".join(
+        word[0].lower() for word in words if word.lower() not in _UNINITIALLED
+    )
+    for part in parts:
+        if len(part) < 3 or part in _GENERIC_HOST_PARTS:
+            continue
+        if len(initials) >= 2 and part == initials:
+            return True
+        for word in words:
+            spelled = word.lower()
+            if spelled == part or (len(part) >= 4 and spelled.startswith(part)):
+                return True
+    return False
+
+
+def _without_site_name(title: str, url: str) -> str:
+    """The title less a last segment that names the site rather than the paper."""
+    tail = _TITLE_TAIL.search(title)
+    if tail is None:
+        return title
+    said = tail.group("tail").strip()
+    if _SITE_BANNER.match(said) or _names_the_site(said, url):
+        return title[: tail.start()]
+    return title
+
+
+def _chrome_trims(title: str, url: str = "") -> list[str]:
+    """The title at each stage of the cut, longest first.
+
+    One cut per step rather than all of them at once, because prose that echoes a
+    title may echo it at any stage: the reference list prints the shortest form and
+    a discovery statement copies whatever discovery stored.
+    """
+    forms = [title]
     trimmed = title
-    for _ in range(4):
+    for _ in range(8):
         cut = _TRAILING_LINK_LABEL.sub("", _TRAILING_HOST.sub("", trimmed)).strip(
             " .,;|-\u2013\u2014"
         )
         if cut == trimmed:
+            # Only once the hostname is off: the site's name sits in front of it.
+            cut = _without_site_name(trimmed, url).strip(" .,;|-\u2013\u2014")
+        if cut == trimmed:
             break
         trimmed = cut
+        forms.append(cut)
+    return forms
+
+
+def _without_search_chrome(title: str, url: str = "") -> str:
+    """A search result's title without the link furniture appended to it."""
+    trimmed = _chrome_trims(title, url)[-1]
     # Only where something recognisable as a title is left. On a result whose whole
     # title is the hostname there is nothing to keep, and the caller says so instead.
     return trimmed if len(trimmed.split()) >= 3 else title
@@ -654,7 +768,7 @@ def _states_a_claim(title: str) -> bool:
 
 def _reference_title(lead: SourceLead) -> str:
     """Prefer the annotation title: the canonical URL is a grounding redirect."""
-    title = _without_search_chrome(" ".join(lead.title.split()))
+    title = _without_search_chrome(" ".join(lead.title.split()), lead.canonical_url)
     if _states_a_claim(title):
         # The claim is printed where the run recorded it as a finding. Here it would
         # be the paper's name, which it is not, so the entry says what it has.
@@ -2436,7 +2550,9 @@ def _record_names(record: ResearchRecord) -> dict[str, str]:
         # Battery Cycling Study mergerotgames.com" both reached a live report,
         # reading as though the furniture were the last words of the paper's name.
         titles = {
-            source.id: _without_search_chrome(" ".join(source.title.split()))
+            source.id: _without_search_chrome(
+                " ".join(source.title.split()), source.url
+            )
             for source in record.evidence.sources
         }
         for source in record.evidence.sources:
@@ -2466,7 +2582,7 @@ def _record_names(record: ResearchRecord) -> dict[str, str]:
             if not title:
                 spoken[claim.id] = (f"the {standing}claim that", claim.claim)
     for lead in record.discovery.source_leads if record.discovery else []:
-        title = _without_search_chrome(" ".join(lead.title.split()))
+        title = _without_search_chrome(" ".join(lead.title.split()), lead.canonical_url)
         standing = _standing(lead.verification_status)
         names.setdefault(
             lead.id,
@@ -2502,6 +2618,40 @@ def _named_by_text(opener: str, text: str, fallback: str) -> str:
 
 _DISTINGUISHING = 60
 """How much of a record's own words stands in for a name the run cannot make unique."""
+
+
+def _named_series(parts: Sequence[re.Match[str]]) -> str:
+    """One name for a run of cited ids, or "" where the run has to be named id by id.
+
+    Two things a series of ids does that naming them one at a time cannot handle. A
+    run of one kind and one standing says what they are once and then lists them: it
+    is the same fact about each, and repeated it buries the titles. And two ids of one
+    paper carry one name, which printed twice reads as two papers -- a live sentence
+    backed an idea with "(the unverified claim drawn from Identification of the dual
+    roles of Al2O3 coatings on NMC811-cathodes via theory and experiment, the
+    unverified claim drawn from Identification of the dual roles of Al2O3 coatings on
+    NMC811-cathodes via theory and experiment, the claim drawn from Unexpected high
+    power performance ...)", eighteen words twice over, naming one document.
+
+    Where the standings differ and no name repeats there is nothing to gain, and the
+    ids keep the separators the specialist wrote them with: a plural drawn over a
+    mixture would say of every record what is true of one of them.
+    """
+    seen: dict[str, re.Match[str]] = {}
+    for part in parts:
+        seen.setdefault(part.group(0), part)
+    distinct = list(seen.values())
+    if len({(part[1], part[2]) for part in distinct}) == 1:
+        if len(distinct) == 1:
+            return distinct[0].group(0)
+        standing, kind = distinct[0][1], distinct[0][2]
+        plural = "sources" if kind == "source" else "claims drawn from"
+        return f"the {standing}{plural} {_joined_titles([p[3] for p in distinct])}"
+    if len(distinct) < len(parts):
+        # ``_names`` and not ``_series``: these are noun phrases, and a comma before
+        # the conjunction of a pair reads as a third name dropped between them.
+        return _names([part.group(0) for part in distinct])
+    return ""
 
 
 def _distinguished(names: dict[str, str], spoken: dict[str, tuple[str, str]]) -> None:
@@ -2584,17 +2734,15 @@ def _name_ids_in_prose(record: ResearchRecord) -> None:
         """A list of ids of one kind, named once and listed by title."""
         ids = _RECORD_ID.findall(match.group(0))
         parts = [_NAMED_RECORD.match(folded.get(item.lower(), "")) for item in ids]
-        # Anything the run cannot place, or a run whose records are not all of one
-        # kind and one standing, is left for the id-by-id pass below: a plural drawn
-        # over a mixture would say of every record what is true of one of them.
-        if not all(parts) or len({(part[1], part[2]) for part in parts}) != 1:
+        # Anything the run cannot place is left for the id-by-id pass below, which
+        # sets an unplaceable id as the identifier it is.
+        if not all(parts):
             return match.group(0)
         if _ABOUT_THE_ID.search(_sentence_around(match.string, match.start())):
             return match.group(0)
-        standing, kind = parts[0][1], parts[0][2]
-        titles = _joined_titles([part[3] for part in parts])
-        plural = "sources" if kind == "source" else "claims drawn from"
-        named = f"the {standing}{plural} {titles}"
+        named = _named_series(parts)
+        if not named:
+            return match.group(0)
         opens = match.start() == 0 or match.string[: match.start()].rstrip().endswith(
             (".", "!", "?", ":")
         )
@@ -5965,14 +6113,16 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
             # Whatever a statement resolves an id into is printed as the finding,
             # so the search's own furniture is cut here for the same reason it is
             # cut from the reference list.
-            _without_search_chrome(" ".join(source.title.split())) or source.url,
+            _without_search_chrome(" ".join(source.title.split()), source.url)
+            or source.url,
             source.verification_status,
             url=source.url,
         )
     for lead in record.discovery.source_leads if record.discovery else []:
         index[lead.id] = _EvidenceRecord(
             lead.id,
-            _without_search_chrome(" ".join(lead.title.split())) or lead.canonical_url,
+            _without_search_chrome(" ".join(lead.title.split()), lead.canonical_url)
+            or lead.canonical_url,
             lead.verification_status,
             url=lead.canonical_url,
         )
@@ -6202,14 +6352,12 @@ def _stated_evidence(
         """
         ids = _BARE_REFERENCE.findall(match.group(0))
         parts = [_NAMED_RECORD.match(names.get(item, "")) for item in ids]
-        # Anything the run cannot place, or a run whose records are not all of one
-        # kind and one standing, is left to the id-by-id pass below.
-        if not all(parts) or len({(part[1], part[2]) for part in parts}) != 1:
+        # Anything the run cannot place is left to the id-by-id pass below.
+        if not all(parts):
             return match.group(0)
-        standing, kind = parts[0][1], parts[0][2]
-        titles = _joined_titles([part[3] for part in parts])
-        plural = "sources" if kind == "source" else "claims drawn from"
-        named = f"the {standing}{plural} {titles}"
+        named = _named_series(parts)
+        if not named:
+            return match.group(0)
         return named[:1].upper() + named[1:] if match.start() == 0 else named
 
     # The run pass first: a series is only visible while the ids are still ids.
@@ -6332,14 +6480,18 @@ def _states_a_finding(text: str, titles: Container[str]) -> bool:
 def _recorded_titles(record: ResearchRecord) -> set[str]:
     """Every name the run has for a document, folded for comparison."""
     leads = list(record.discovery.source_leads) if record.discovery else []
-    titles = {lead.title for lead in leads if lead.title}
-    titles |= {
-        source.title
+    # The locator with the title, because what the chrome cut takes off the end
+    # depends on the site the result came from.
+    located = {(lead.title, lead.canonical_url) for lead in leads if lead.title}
+    located |= {
+        (source.title, source.url)
         for source in (record.evidence.sources if record.evidence else [])
         if source.title
     }
-    return {_folded_title(title) for title in titles} | {
-        _folded_title(_without_search_chrome(title)) for title in titles
+    return {
+        _folded_title(form)
+        for title, url in located
+        for form in _chrome_trims(title, url)
     }
 
 

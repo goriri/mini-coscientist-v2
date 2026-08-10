@@ -5418,6 +5418,89 @@ def test_two_records_cited_side_by_side_are_given_their_standing_once():
     )
 
 
+def test_two_claims_of_one_paper_are_not_printed_as_two_papers():
+    """Two claim ids drawn from one source carry one name, and a live sentence backed
+    an idea with "(the unverified claim drawn from Identification of the dual roles of
+    Al2O3 coatings on NMC811-cathodes via theory and experiment, the unverified claim
+    drawn from Identification of the dual roles of Al2O3 coatings on NMC811-cathodes
+    via theory and experiment, the claim drawn from Unexpected high power performance
+    ...)" -- eighteen words twice over, reading as two papers where the run holds one,
+    in a clause whose whole point was how much evidence stands behind the idea."""
+    from coscientist.models import (
+        Candidate,
+        CandidatePopulation,
+        EvidenceClaim,
+        EvidencePacket,
+        SourceRecord,
+    )
+    from coscientist.narrative import ResearchRecord, _name_ids_in_prose
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="source_0",
+                url="https://example.org/0",
+                title="Dual Roles of Al2O3",
+                verification_status="discovered_unverified",
+            ),
+            SourceRecord(
+                id="source_1",
+                url="https://example.org/1",
+                title="Unexpected High Power Performance",
+                verification_status="verified",
+            ),
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_0",
+                claim="It scavenges HF.",
+                source_id="source_0",
+                verification_status="discovered_unverified",
+            ),
+            EvidenceClaim(
+                id="claim_1",
+                claim="It stabilises the surface.",
+                source_id="source_0",
+                verification_status="discovered_unverified",
+            ),
+            EvidenceClaim(
+                id="claim_2",
+                claim="It holds at rate.",
+                source_id="source_1",
+                verification_status="verified",
+            ),
+        ],
+    )
+    record.population = CandidatePopulation(
+        candidates=[
+            Candidate(
+                id="cand_1",
+                title="An Alumina Coating",
+                claim="A coating extends cycle life.",
+                rationale="It rests on the same base (claim_0, claim_1, claim_2).",
+                # One name after the duplicate goes, which is the singular it always
+                # was: a plural over one title reads as a list of one.
+                mechanism_model="The barrier holds, per claim_0 and claim_1.",
+                validation_protocol="Coin cells against an uncoated control.",
+                falsifier="No difference at ten cells per arm.",
+            )
+        ]
+    )
+
+    _name_ids_in_prose(record)
+
+    candidate = record.population.candidates[0]
+    assert candidate.rationale == (
+        "It rests on the same base (the unverified claim drawn from Dual Roles of "
+        "Al2O3 and the claim drawn from Unexpected High Power Performance)."
+    )
+    assert candidate.mechanism_model == (
+        "The barrier holds, per the unverified claim drawn from Dual Roles of Al2O3."
+    )
+
+
 def test_a_sentence_opening_on_a_bare_evidence_noun_is_not_read_as_an_instruction():
     """ "Evidence source_2 and source_5 demonstrate that ..." is an ellipsis while the
     ids are ids and an imperative once they are named. A live motivation ran "Evidence
