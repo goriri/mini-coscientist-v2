@@ -3918,34 +3918,26 @@ _SENTENCE_BREAK = re.compile(r"(\S*)([.!?][\"')\]]*)\s+(?=[A-Z])")
 # Heads that cannot carry a conjunction in front of them. A subordinator opens a
 # clause that needs a main clause after it, so "; and while known, quantifying the
 # crossover point could help" hangs a subordinate clause off a conjunction with
-# nothing for it to modify. A bare modal or auxiliary opens a predicate with the
-# subject elided, so folding it into a series silently gives it the series' subject:
-# "source verification will confirm the voltage; and could be useful for verifying
-# thickness, but fundamentally lacks novelty" says source verification lacks novelty.
+# nothing for it to modify. A bare modal, auxiliary or third-person verb opens a
+# predicate with the subject elided, so folding it into a series silently gives it the
+# series' subject: "source verification will confirm the voltage; and could be useful
+# for verifying thickness, but fundamentally lacks novelty" says source verification
+# lacks novelty, and a list of what a rewrite was written against read "standard
+# aluminum DSC pans will rupture, fails to explicitly address the temperature
+# constraints in its experimental design, and lack of statistical power rationale" --
+# which says the pans failed to address the constraints, and that they lack the
+# rationale. The verb heads are the ones a reviewer's elliptical note opens on, less
+# any that is also a plural noun in this domain -- uses, states, risks, claims, needs
+# -- since setting a naming phrase on its own gains nothing. A verb head this list
+# misses folds as before: it is worth extending, and it will never be complete.
 _UNFOLDABLE_HEADS = frozenset(
-    {
-        "after",
-        "although",
-        "as",
-        "because",
-        "before",
-        "can",
-        "could",
-        "given",
-        "if",
-        "may",
-        "might",
-        "must",
-        "should",
-        "since",
-        "though",
-        "unless",
-        "when",
-        "whereas",
-        "while",
-        "will",
-        "would",
-    }
+    """after although as because before given if since though unless when whereas
+    while
+    are can cannot could did do does had has have is may might must shall should
+    was were will would
+    appears assumes conflates contradicts depends fails ignores includes introduces
+    lacks misattributes misses neglects omits overstates proposes provides relies
+    remains requires treats understates violates""".split()
 )
 
 

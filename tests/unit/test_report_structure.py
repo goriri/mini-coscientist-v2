@@ -3313,6 +3313,54 @@ def test_an_abbreviation_is_not_mistaken_for_the_end_of_a_sentence():
     )
 
 
+def test_a_note_with_its_subject_left_out_does_not_take_the_one_beside_it():
+    """A verb-initial note folded into a series is read against the series' subject.
+
+    The list of critiques a rewrite was written against reached a live report as
+    "standard aluminum DSC pans will rupture, fails to explicitly address the
+    temperature constraints in its experimental design, and lack of statistical power
+    rationale" -- three notes by three reviewers about three different things, joined
+    into one statement that says the pans failed to address the constraints, and that
+    the pans lack the power rationale.
+    """
+    from coscientist.narrative import _join
+
+    joined = _join(
+        [
+            "Standard aluminum DSC pans will rupture",
+            "Fails to explicitly address the temperature constraints in its "
+            "experimental design",
+            "Lack of statistical power rationale",
+        ],
+        fallback="",
+    )
+
+    assert "rupture, and fails" not in joined
+    assert "design, and lack" not in joined
+    assert joined == (
+        "Standard aluminum DSC pans will rupture. Fails to explicitly address the "
+        "temperature constraints in its experimental design. Lack of statistical "
+        "power rationale."
+    )
+
+
+def test_a_plural_noun_that_reads_as_a_verb_still_keeps_its_series():
+    """The verb heads exclude the ones this field also uses as plural nouns.
+
+    "Uses", "states", "risks", "claims" and "needs" head a naming phrase at least as
+    often as they head a note, and setting a naming phrase on its own gains nothing:
+    it is the elided subject that does the damage, and a noun phrase has none to lose.
+    """
+    from coscientist.narrative import _join
+
+    joined = _join(
+        ["Uses of the coated cells beyond automotive", "Cost at scale"],
+        fallback="",
+    )
+
+    assert joined == "Uses of the coated cells beyond automotive, and cost at scale."
+
+
 def test_an_item_carrying_its_own_semicolon_does_not_extend_the_series():
     from coscientist.narrative import _join
 
