@@ -5055,11 +5055,12 @@ def _attributed_responses(reviews: Sequence[IdeaReview]) -> str:
     # idea's Addressed Objections 1,116 characters with those numbers buried inside
     # it. Two short ones stay in the paragraph, where a list would cost more than it
     # pays.
-    answers = parts[1:] if len(parts) > len(answering) else parts
+    counted = len(parts) - len(answering)
+    answers = parts[counted:]
     if len(answers) < 2 or sum(map(len, answers)) <= _SERIES_IN_A_SENTENCE:
         return " ".join(parts)
     listed = "\n".join(f"- {answer}" for answer in answers)
-    return f"{parts[0]}\n\n{listed}" if answers is not parts else listed
+    return f"{parts[0]}\n\n{listed}" if counted else listed
 
 
 def _answered_item_numbers(reviews: Sequence[IdeaReview]) -> dict[str, int]:
