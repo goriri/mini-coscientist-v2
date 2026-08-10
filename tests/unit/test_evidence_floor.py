@@ -170,6 +170,66 @@ def test_a_retraction_overrides_a_document_that_was_read_in_full():
     assert any("must not be cited as support" in line for line in updated.limitations)
 
 
+def test_a_claim_under_an_unreachable_document_says_the_run_went_back_and_failed():
+    """ "inaccessible" and "discovered_unverified" both rank 0, so the ceiling test
+    never fired between them and the claim kept the weaker word. They are different
+    findings: one says nobody tried, the other says someone did and could not open
+    it. A live report badged such a statement **[Literature Lead]** -- there is
+    something here to follow -- while the reference entry for the same document read
+    "Could not be retrieved when this run went back to it."
+    """
+    packet = _packet(
+        _source(1, status="discovered_unverified"),
+        claims=[
+            EvidenceClaim(
+                id="claim_1",
+                claim="Alucone restricts salt degradation.",
+                source_id="src_1",
+                relation="supports",
+                verification_status="discovered_unverified",
+            )
+        ],
+    )
+
+    updated = apply_retrieval_outcomes(
+        packet,
+        {
+            "https://doi.org/10.1000/1": _outcome(
+                "https://doi.org/10.1000/1", "inaccessible"
+            )
+        },
+    )
+
+    assert updated.sources[0].verification_status == "inaccessible"
+    assert updated.claims[0].verification_status == "inaccessible"
+
+
+def test_a_retracted_claim_is_not_softened_by_an_unreachable_source():
+    """Retracted outranks unreachable: the run knows more about it, not less."""
+    packet = _packet(
+        _source(1, status="discovered_unverified"),
+        claims=[
+            EvidenceClaim(
+                id="claim_1",
+                claim="Alucone restricts salt degradation.",
+                source_id="src_1",
+                verification_status="retracted",
+            )
+        ],
+    )
+
+    updated = apply_retrieval_outcomes(
+        packet,
+        {
+            "https://doi.org/10.1000/1": _outcome(
+                "https://doi.org/10.1000/1", "inaccessible"
+            )
+        },
+    )
+
+    assert updated.claims[0].verification_status == "retracted"
+
+
 def test_a_locator_naming_only_a_website_is_marked_without_a_fetch():
     packet = _packet(
         SourceRecord(

@@ -651,11 +651,10 @@ def downgrade_unlocatable_sources(packet: EvidencePacket) -> EvidencePacket:
     for claim in downgraded.claims:
         # A claim is only as verified as the document it rests on. Leaving one
         # verified under a source that is not would put the strongest wording in
-        # the report on the weakest footing in the corpus.
-        if claim.source_id in unlocatable and claim.verification_status in {
-            "verified",
-            "corrected",
-        }:
+        # the report on the weakest footing in the corpus. Nor is an unverified
+        # claim exempt: "nobody checked" and "the locator reaches no document" are
+        # different findings, and the report says different things about them.
+        if claim.source_id in unlocatable and claim.verification_status != "retracted":
             claim.verification_status = "inaccessible"
     downgraded.limitations.append(
         f"{len(unlocatable)} source"
@@ -756,6 +755,15 @@ def apply_retrieval_outcomes(
             # The specialist never reached a conclusion about this one, and the
             # registry did. Recording what is known beats recording nothing.
             source.verification_status = "metadata_verified"
+        elif (
+            source.verification_status == "discovered_unverified"
+            and outcome.tier == "inaccessible"
+        ):
+            # Same tie, the other way round: both words rank 0, so the ceiling test
+            # above leaves the source saying nobody looked when the run did look and
+            # the locator did not open. The reference entry prints one of those two
+            # sentences off this field.
+            source.verification_status = "inaccessible"
     ceilings = {source.id: source.verification_status for source in updated.sources}
     for claim in updated.claims:
         status = ceilings.get(claim.source_id or "")
@@ -763,6 +771,17 @@ def apply_retrieval_outcomes(
             continue
         if status == "retracted":
             claim.verification_status = "retracted"
+        elif status == "inaccessible" and claim.verification_status != "retracted":
+            # "inaccessible" and "discovered_unverified" both rank 0, so the ceiling
+            # test below never fired between them and a claim resting on a document
+            # this run went back to and could not open kept the weaker of the two
+            # words. They are not the same finding: one says nobody tried, the other
+            # says someone did and failed. A live report badged such a statement
+            # [Literature Lead] -- there is something here to follow -- eighty lines
+            # above the reference entry for that same document reading "Could not be
+            # retrieved when this run went back to it. Nothing here is grounded by
+            # it." Propagated like "retracted" for the same reason it is.
+            claim.verification_status = "inaccessible"
         elif _TIER_RANK.get(claim.verification_status, 0) > _TIER_RANK.get(status, 0):
             # A claim is only as verified as the document it rests on.
             claim.verification_status = status
