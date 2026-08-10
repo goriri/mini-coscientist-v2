@@ -2654,6 +2654,26 @@ def shared_support_notices(
         _carried_by(counts[item], len(supports), first=not index)
         for index, item in enumerate(recurring)
     ]
+    # The alarming verdicts are never hoisted, so on a live run "three of the eight
+    # are marked unverified" was the whole summary over a shortlist where four more
+    # cited evidence that had been retracted -- and a reader who takes the sentence
+    # for the tally reads those four as the unremarkable rest. The explanation still
+    # belongs under the idea; the count of what this sentence does not cover does
+    # not, because leaving it out is what made the sentence misread.
+    rest = len(supports) - sum(counts[item] for item in recurring)
+    if rest <= 0:
+        remainder = ""
+    elif rest == 1:
+        remainder = (
+            " The remaining idea is not therefore clear: it carries a verdict of its "
+            "own, stated in full under it rather than summarised here."
+        )
+    else:
+        remainder = (
+            f" The remaining {_number_word(rest).lower()} are not therefore clear: "
+            "each carries a verdict of its own, stated in full under its own idea "
+            "rather than summarised here."
+        )
     if not detail:
         return (
             "Each idea below carries a grounding verdict under its title: "
@@ -2664,7 +2684,7 @@ def shared_support_notices(
                 ]
             )
             + ". What those verdicts mean is set out under Candidate Ideas above, "
-            "where the ideas are first listed.",
+            "where the ideas are first listed." + remainder,
             set(recurring),
         )
     parts = [
@@ -2674,7 +2694,7 @@ def shared_support_notices(
     return (
         "Each idea below carries a grounding verdict. What the recurring ones mean is "
         "the same wherever they appear, so it is set out here rather than under every "
-        "idea that has one. " + " ".join(parts),
+        "idea that has one. " + " ".join(parts) + remainder,
         set(recurring),
     )
 

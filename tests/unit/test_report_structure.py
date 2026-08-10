@@ -2024,6 +2024,30 @@ def test_a_grounding_verdict_several_ideas_share_is_explained_once():
     assert (alarming, still_none) == ("", set())
 
 
+def test_the_ideas_a_hoisted_verdict_leaves_out_are_not_read_as_the_clear_ones():
+    """An alarming verdict is never hoisted, so on a live shortlist of eight the whole
+    summary read "three of the eight are marked unverified" -- while four of the other
+    five cited evidence that had been retracted. A reader who takes that sentence for
+    the tally reads the four worst ideas in the report as the unremarkable rest. What
+    the verdict means still belongs under the idea; that there is one does not."""
+    from coscientist.narrative import shared_support_notices
+
+    live = ["discredited"] * 4 + ["unverified"] * 3 + ["partially_grounded"]
+    brief, _hoisted = shared_support_notices(live, detail=False)
+
+    assert "three of the eight are marked unverified" in brief
+    assert "The remaining five are not therefore clear" in brief
+    # Still not hoisted: the warning itself is met under the idea it belongs to.
+    assert "retracted" not in brief and "discredited" not in brief
+
+    # Nothing to disclaim when every idea is accounted for by the counts above.
+    covered, _ = shared_support_notices(["unverified"] * 3 + ["grounded"] * 2)
+    assert "not therefore clear" not in covered
+
+    one, _ = shared_support_notices(["unverified", "unverified", "discredited"])
+    assert "The remaining idea is not therefore clear: it carries" in one
+
+
 def test_what_a_shared_grounding_verdict_means_is_explained_in_one_place_only():
     """The verdicts are reported twice -- beside each idea in the ranked listing, and
     again above the deep dives. Explaining them in both put the same three lines in two
