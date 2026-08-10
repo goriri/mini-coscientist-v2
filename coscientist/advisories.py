@@ -158,22 +158,69 @@ def _governance_advisory(record: ResearchRecord) -> list[Advisory]:
 
 
 def _broken_grounding_advisory(briefs: tuple[IdeaBrief, ...]) -> list[Advisory]:
-    broken = [brief for brief in briefs if brief.support_is_alarming]
-    if not broken:
+    # The two verdicts collected here break in different ways, and this paragraph
+    # used to assert the unsupported reason -- "resolve to no record" -- over both.
+    # A discredited idea's citations do resolve; the record they resolve to was
+    # retracted or could not be retrieved. On a live report that meant four ideas
+    # were told here that nothing they cite exists, and told under their own
+    # headings that the source is Small changes, big gains and its claim is
+    # discredited. Both cannot be true, and the reader had no way to pick.
+    absent = [brief for brief in briefs if brief.support == "unsupported"]
+    retracted = [brief for brief in briefs if brief.support == "discredited"]
+    if not absent and not retracted:
         return []
+    findings = []
+    where = " in this report"
+    if absent:
+        one = len(absent) == 1
+        findings.append(
+            f"{_capitalised(_plural(len(absent), 'idea'))}{where} "
+            f"{'cites' if one else 'cite'} evidence that does not exist "
+            "in this session, namely "
+            + _joined_titles([brief.title for brief in absent], fallback="none")
+            + ". "
+            + (
+                "That citation was written by the generator and resolves to no "
+                "record, so the idea carrying it is unsupported rather than "
+                "evidence-backed, whatever its rank says."
+                if one
+                else "Those citations were written by the generator and resolve to "
+                "no record, so the ideas carrying them are unsupported rather than "
+                "evidence-backed, whatever their rank says."
+            )
+        )
+        where = ""
+    if retracted:
+        one = len(retracted) == 1
+        findings.append(
+            f"{_capitalised(_plural(len(retracted), 'idea'))}{where} "
+            f"{'cites' if one else 'cite'} evidence that was retracted "
+            "or that this run could not retrieve, namely "
+            + _joined_titles([brief.title for brief in retracted], fallback="none")
+            + ". "
+            + (
+                "That citation does resolve to a record, and the record no longer "
+                "stands, so the idea carrying it is discredited rather than "
+                "evidence-backed, whatever its rank says."
+                if one
+                else "Those citations do resolve to records, and the records no "
+                "longer stand, so the ideas carrying them are discredited rather "
+                "than evidence-backed, whatever their rank says."
+            )
+        )
+    if not retracted:
+        title = "Ideas citing evidence that does not exist"
+    elif not absent:
+        title = "Ideas citing evidence that has been retracted"
+    else:
+        title = "Ideas citing evidence that is absent or retracted"
     return [
         Advisory(
-            title="Ideas citing evidence that is absent or retracted",
+            title=title,
             blocking=True,
             body=(
-                f"{_capitalised(_plural(len(broken), 'idea'))} in this report "
-                f"{'cites' if len(broken) == 1 else 'cite'} evidence that does not "
-                "exist in this session or that has been retracted, namely "
-                + _joined_titles([brief.title for brief in broken], fallback="none")
-                + ". Those citations were written by the generator and resolve to no "
-                "record, so the ideas carrying them are unsupported rather than "
-                "evidence-backed, whatever their rank says. Nothing in this group "
-                "should be acted on until its grounding is rebuilt."
+                " ".join(findings) + " Nothing in this group should be acted on "
+                "until its grounding is rebuilt."
             ),
         )
     ]

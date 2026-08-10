@@ -11,6 +11,8 @@ swept into the appendix with it.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from coscientist.advisories import advisory_pointer, run_advisories
@@ -99,7 +101,13 @@ def test_the_body_pointer_names_the_blocking_warnings_rather_than_counting_them(
         (lambda session: None, "a fixed template, not the specialist's own reasoning"),
         (
             lambda session: None,
-            "cite evidence that does not exist in this session",
+            "cites evidence that does not exist in this session",
+        ),
+        # The other half of the same roll-up. Kept as its own case because the two
+        # verdicts it covers fail for different reasons and are worded separately.
+        (
+            lambda session: None,
+            "cites evidence that was retracted or that this run could not retrieve",
         ),
     ],
 )
@@ -131,6 +139,80 @@ def test_a_caveat_about_one_idea_stays_under_that_idea(rich_session: Session):
     # The run-level roll-up names them too, which is the point of a roll-up; what it
     # must not do is be the only place they are named.
     assert "unsupported rather than evidence-backed" in appendix
+
+
+def _grounding_advisory(rich_session: Session, verdicts: list[str]) -> str:
+    """The broken-grounding paragraph, with the run's leading ideas given `verdicts`."""
+    record = load_record(rich_session)
+    original = tuple(build_idea_briefs(load_record(rich_session)))
+    assert len(original) >= len(verdicts), "the fixture no longer has ideas to mark"
+    marked = list(verdicts) + ["grounded"] * (len(original) - len(verdicts))
+    briefs = tuple(
+        replace(
+            brief,
+            support=verdict,
+            unresolved_evidence_ids=["claim_001"] if verdict == "unsupported" else [],
+        )
+        for brief, verdict in zip(original, marked, strict=True)
+    )
+    bodies = [
+        item.body
+        for item in run_advisories(record, briefs=briefs)
+        if item.title.startswith("Ideas citing evidence")
+    ]
+    assert len(bodies) == 1, "the broken-grounding advisory did not fire once"
+    return bodies[0]
+
+
+def test_a_retracted_citation_is_not_reported_as_one_that_resolves_to_nothing(
+    rich_session: Session,
+):
+    """Both verdicts were rolled up under the reason that only holds for one.
+
+    A live report told four ideas here that the evidence they cite "does not exist in
+    this session" and told each of them under its own heading that the source is a
+    named paper whose claim is discredited. A discredited citation does resolve; the
+    record it resolves to was retracted or could not be retrieved. Both statements
+    were in the same report about the same four ideas, and nothing distinguished them.
+    """
+    briefs = tuple(build_idea_briefs(load_record(rich_session)))
+    absent_titles = [briefs[0].title, briefs[2].title]
+    retracted_titles = [briefs[1].title, briefs[3].title]
+    body = _grounding_advisory(
+        rich_session, ["unsupported", "discredited", "unsupported", "discredited"]
+    )
+
+    missing, _, retracted = body.partition("cite evidence that was retracted")
+    assert retracted, "the retracted group was never given its own reason"
+    for title in absent_titles:
+        assert title in missing and title not in retracted
+    for title in retracted_titles:
+        assert title in retracted and title not in missing
+    assert "resolve to no record" in missing
+    assert "do resolve to records, and the records no longer stand" in retracted
+
+
+def test_a_run_whose_only_broken_grounding_was_retracted_is_not_told_it_cited_nothing(
+    rich_session: Session,
+):
+    body = _grounding_advisory(rich_session, ["discredited"])
+
+    assert "does not exist in this session" not in body
+    assert "resolve to no record" not in body
+    assert "discredited rather than evidence-backed" in body
+
+
+def test_a_single_broken_idea_is_written_about_in_the_singular(rich_session: Session):
+    """ "That citation was written by the generator and resolve to no record" -- the
+    count switched the noun and left the verb and the possessive behind it."""
+    for verdict in ("unsupported", "discredited"):
+        body = _grounding_advisory(rich_session, [verdict])
+
+        assert "whatever their rank says" not in body
+        assert "whatever its rank says" in body
+        assert "citation was written by the generator and resolves" in body or (
+            "citation does resolve to a record, and the record no longer stands" in body
+        )
 
 
 def test_an_unanswered_governance_block_leads_the_chapter(rich_session: Session):
