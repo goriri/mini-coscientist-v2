@@ -931,6 +931,50 @@ def test_the_heading_belongs_to_the_table_and_not_to_the_field_it_was_appended_t
     )
 
 
+def test_the_number_a_specialist_counted_its_own_sections_by_is_not_read_out():
+    """It counts sections of the field it was writing, and this report prints none.
+
+    Two of eight live ideas headed the table "### 3. Evaluation of Idea Table", so the
+    sentence naming it read "appended a table of its own -- headed 3. Evaluation of
+    Idea Table --" while the six that numbered nothing read as the sentence was
+    written.
+    """
+    from dataclasses import replace
+
+    from coscientist.dossier import _self_rating
+    from coscientist.narrative import _authors_own_table
+
+    numbered = MECHANISM_WITH_A_SCORECARD.replace(
+        "## Evaluation of Idea", "## 3. Evaluation of Idea"
+    )
+
+    _, title, rating = _authors_own_table(numbered)
+    said = "\n".join(
+        _self_rating(
+            replace(
+                _brief_without_a_rating(),
+                self_rating_title=title,
+                self_rating=rating,
+            )
+        )
+    )
+
+    assert title == "Evaluation of Idea"
+    assert "headed 3." not in said
+    assert "a table of its own — headed Evaluation of Idea — to the mechanism." in said
+
+
+def test_a_heading_that_opens_on_a_figure_is_not_mistaken_for_a_section_number():
+    """ "2.5 nm LiNbO3 Coating" opens on a number and is not counted by one."""
+    from coscientist.narrative import _authors_own_table
+
+    measured = MECHANISM_WITH_A_SCORECARD.replace(
+        "## Evaluation of Idea", "## 2.5 nm Coating Scorecard"
+    )
+
+    assert _authors_own_table(measured)[1] == "2.5 nm Coating Scorecard"
+
+
 def test_a_rating_the_specialist_left_unheaded_still_names_the_field_it_sits_under():
     from dataclasses import replace
 

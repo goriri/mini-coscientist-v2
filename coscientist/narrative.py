@@ -3663,6 +3663,12 @@ def _table_cells(line: str) -> list[str]:
 
 
 _RULE_CELL = re.compile(r":?-{2,}:?")
+# The number a specialist puts in front of its own heading, which counts sections of
+# the field it was writing and counts nothing this report prints. Two of eight live
+# ideas headed the table "### 3. Evaluation of Idea Table", so the sentence naming it
+# read "appended a table of its own -- headed 3. Evaluation of Idea Table --" while
+# the six that wrote no number read as the sentence was written.
+_HEADING_NUMBER = re.compile(r"^\d{1,2}[.)][ \t]+(?=\S)")
 
 
 def _row_as_prose(header: Sequence[str], row: Sequence[str]) -> str:
@@ -3723,7 +3729,7 @@ def _authors_own_table(text: str) -> tuple[str, str, list[list[str]]]:
         # introduce whatever paragraph the table used to sit in front of.
         previous = lines[start - 1].strip() if start else ""
         if heading := _MARKDOWN_HEADING_RE.match(previous):
-            title = heading.group(2).strip().rstrip(".:")
+            title = _HEADING_NUMBER.sub("", heading.group(2).strip()).rstrip(".:")
             start -= 1
         elif (own := _OWN_APPENDIX.match(previous)) and own.end() == len(previous):
             # A bold label on a line of its own is a heading in everything but the
