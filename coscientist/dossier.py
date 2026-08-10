@@ -1500,25 +1500,30 @@ def _authors_own_sections(brief: IdeaBrief, *, hoisted: bool = False) -> list[st
 
 
 def _self_rating(brief: IdeaBrief) -> list[str]:
-    """The table the proposing specialist appended to its own mechanism.
+    """The table the proposing specialist appended to one of its own prose fields.
 
     It arrived inside a prose field, so it was read out as clauses of the mechanism
     and printed into the Mechanism cell of the comparison grid, where a judgement
     the specialist awarded itself stood among the fields the run filled in. Kept,
     because the specialist wrote it; moved, and said to be its own.
+
+    Which field it was appended to is the specialist's choice, so the sentence names
+    it rather than assuming the mechanism: two of eight live ideas appended it to the
+    protocol, where it ran on after the last bench step.
     """
     if not brief.self_rating:
         return []
     header, *rows = brief.self_rating
     width = len(header)
+    appended = brief.self_rating_source or "mechanism"
     return [
         "### The Specialist's Own Rating",
         "",
         "The specialist that proposed this idea appended a table of its own to the "
         + (
-            f"mechanism, headed {brief.self_rating_title}. "
+            f"{appended}, headed {brief.self_rating_title}. "
             if brief.self_rating_title
-            else "mechanism. "
+            else f"{appended}. "
         )
         + "The ratings in it are its own assessment of what it had just written, "
         "not a result of the reviews or the tournament below.",

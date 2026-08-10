@@ -603,6 +603,116 @@ def test_a_judgment_written_in_front_of_the_protocol_is_not_the_protocol():
     ]
 
 
+def test_a_rating_appended_after_the_bench_steps_is_lifted_out_of_the_protocol():
+    """Two of eight live ideas answered the whole generation prompt in
+    ``validation_protocol``, so their Validation Protocol ran on from "Quantify the
+    depth and frequency of pitting corrosion" into a rating the specialist awarded
+    itself, read out as clauses -- "Ligation Strategy (Description: ALD coating
+    adhesion under mechanical stress; Judgment: Brittle Al2O3 fractures)" -- and then
+    a Critical Scientific Judgment. The other six had those same two artefacts
+    printed as a captioned table and a labelled section of their own."""
+    from coscientist.dossier import _self_rating
+    from coscientist.models import Candidate
+    from coscientist.narrative import IdeaBrief, _authored_extras, _protocol_steps
+
+    candidate = Candidate(
+        title="Defect-Induced Current Focusing",
+        claim="Pinholes funnel current into hotspots.",
+        mechanism_model="A resistive coating leaves the pinholes as the only path.",
+        rationale="Corrosion science reports pitting at pinholes.",
+        validation_protocol=(
+            "**Experimental Protocol:**\n"
+            "Prepare NMC811 electrodes with ALD Al2O3 coatings (1-5 nm). Quantify "
+            "the depth and frequency of pitting corrosion.\n\n"
+            "**Evaluation of Idea Table:**\n"
+            "| Category | Description | Judgment |\n"
+            "| :--- | :--- | :--- |\n"
+            "| Ligation Strategy | ALD coating adhesion under mechanical stress | "
+            "Brittle Al2O3 fractures |\n\n"
+            "**Critical Scientific Judgment:**\n"
+            "The strength of the idea lies in its appraisal of operational defects."
+        ),
+        falsifier="Defect-coated cells retain more capacity than bare ones.",
+    )
+
+    title, table, sections, source = _authored_extras(candidate)
+
+    assert _protocol_steps(candidate.validation_protocol) == [
+        "Prepare NMC811 electrodes with ALD Al2O3 coatings (1-5 nm). Quantify the "
+        "depth and frequency of pitting corrosion."
+    ]
+    assert title == "Evaluation of Idea Table"
+    assert source == "validation protocol"
+    assert table == [
+        ["Category", "Description", "Judgment"],
+        [
+            "Ligation Strategy",
+            "ALD coating adhesion under mechanical stress",
+            "Brittle Al2O3 fractures",
+        ],
+    ]
+    assert sections == [
+        (
+            "Critical Scientific Judgment",
+            "The strength of the idea lies in its appraisal of operational defects.",
+        )
+    ]
+
+    said = "\n".join(
+        _self_rating(
+            IdeaBrief(
+                title=candidate.title,
+                candidate_id="candidate_0004",
+                rank=4,
+                elo=1184,
+                category="",
+                proposal="",
+                description=[],
+                facts={},
+                summary={},
+                table_rows=[],
+                reviews=[],
+                coherence=[],
+                deep_verification=[],
+                matches=[],
+                wins=0,
+                losses=0,
+                ties=0,
+                shortlisted=False,
+                self_rating_title=title,
+                self_rating=table,
+                self_rating_source=source,
+            )
+        )
+    )
+    # Where the specialist appended it, not where six of eight happened to.
+    assert "to the validation protocol, headed Evaluation of Idea Table." in said
+
+
+def test_a_table_of_bench_conditions_stays_inside_the_protocol():
+    """The lift is keyed to the heading the generation prompts ask for by name. A
+    protocol that tabulates its own arms is protocol, and moving it under The
+    Specialist's Own Rating would file the run's conditions as a self-assessment."""
+    from coscientist.models import Candidate
+    from coscientist.narrative import _authored_extras
+
+    candidate = Candidate(
+        title="A 2 nm Al2O3 Coating",
+        claim="A 2 nm coating raises retention.",
+        mechanism_model="Alumina scavenges HF.",
+        rationale="Scavenging slows transition metal dissolution.",
+        validation_protocol=(
+            "Cycle each arm at 1C to 500 cycles.\n\n"
+            "| Arm | Coating | Cells |\n"
+            "| --- | --- | --- |\n"
+            "| A | none | 5 |\n"
+        ),
+        falsifier="No difference at 500 cycles.",
+    )
+
+    assert _authored_extras(candidate)[1] == []
+
+
 def test_a_protocol_whose_preamble_is_nobodys_section_is_left_whole():
     """The split above moves the preamble out of the protocol, so it only runs where
     every word of that preamble is a section the specialist headed. Anything else in

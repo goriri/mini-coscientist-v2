@@ -1257,6 +1257,12 @@ class IdeaBrief:
     mechanism and a rating the specialist awarded itself stood among the fields the
     run filled in.
     """
+    self_rating_source: str = ""
+    """Which prose field the specialist appended that table to, in the reader's words.
+
+    The section that prints it says where it came from, and two of eight live ideas
+    appended it to the validation protocol rather than to the mechanism.
+    """
     strategy: str = ""
     """Which of the four generation strategies proposed this idea."""
     validation_protocol: list[str] = field(default_factory=list)
@@ -3590,8 +3596,15 @@ def _authors_own_table(text: str) -> tuple[str, str, list[list[str]]]:
         title = ""
         # The heading above a table names that table. Left where it was, it would
         # introduce whatever paragraph the table used to sit in front of.
-        if start and (heading := _MARKDOWN_HEADING_RE.match(lines[start - 1].strip())):
+        previous = lines[start - 1].strip() if start else ""
+        if heading := _MARKDOWN_HEADING_RE.match(previous):
             title = heading.group(2).strip().rstrip(".:")
+            start -= 1
+        elif (own := _OWN_APPENDIX.match(previous)) and own.end() == len(previous):
+            # A bold label on a line of its own is a heading in everything but the
+            # hash, and two of eight live specialists wrote the prompt's own
+            # "Evaluation of Idea Table" that way rather than as "### ".
+            title = own.group(1)
             start -= 1
         return "\n".join(lines[:start] + lines[end:]), title, [header, *rows]
     return str(text or ""), "", []
@@ -4235,6 +4248,17 @@ _AUTHORS_OWN_PART = re.compile(
     r"[ \t]*\**[ \t]*:?[ \t]*\**[ \t]*",
     re.IGNORECASE | re.MULTILINE,
 )
+# The evaluation table every generation prompt asks for, under the name it asks for
+# it by. Six of eight live specialists headed it "### Evaluation of Idea Table" over
+# the mechanism and two wrote "**Evaluation of Idea Table:**" at the end of the
+# protocol; the heading is what tells it from a table of bench conditions, which
+# belongs to the protocol and stays there.
+_OWN_APPENDIX = re.compile(
+    r"^[ \t]{0,3}(?:#{1,6}[ \t]*)?\**[ \t]*(?:\d+[.)][ \t]*)?"
+    r"(Evaluation(?:[ \t]+of[ \t]+\w+)?[ \t]+Table)"
+    r"[ \t]*\**[ \t]*:?[ \t]*\**[ \t]*",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _authors_own_parts(text: str) -> tuple[str, list[tuple[str, str]]]:
@@ -4299,32 +4323,38 @@ def _mechanism(candidate: Candidate) -> str:
 
 def _authored_extras(
     candidate: Candidate,
-) -> tuple[str, list[list[str]], list[tuple[str, str]]]:
-    """The table and the headed sections the specialist wrote, out of both prose fields.
+) -> tuple[str, list[list[str]], list[tuple[str, str]], str]:
+    """The table and the headed sections the specialist wrote, out of all three fields.
 
-    Returned as (the table's own heading, the table, the sections). Read from one
-    field this found three of the eight live tables and dropped five: the specialists
-    put the evaluation table in ``mechanism_model`` five times and in ``rationale``
-    three, and which field a given idea used is the specialist's choice rather than
-    anything the run controls. Sections are deduplicated on what they say, because a
-    specialist that fills both fields tends to repeat the shorter one.
+    Returned as (the table's own heading, the table, the sections, the field the
+    table came out of). Read from one field this found three of the eight live tables
+    and dropped five: the specialists put the evaluation table in ``mechanism_model``
+    five times and in ``rationale`` three, and which field a given idea used is the
+    specialist's choice rather than anything the run controls. Sections are
+    deduplicated on what they say, because a specialist that fills both fields tends
+    to repeat the shorter one.
+
+    Which field it came out of is carried because the section that prints it says
+    where the specialist appended it, and on a live run two of the eight appended it
+    to the protocol.
     """
     title = ""
     table: list[list[str]] = []
+    source = ""
     sections: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     # The protocol field too, because a specialist that heads a section writes it
     # wherever it is writing: one live idea put its Critical Scientific Judgment in
     # front of the protocol, so the same label the report prints under The
     # Specialist's Own Sections for one idea opened Validation Protocol for another.
-    for text in (
-        _mechanism_source(candidate),
-        candidate.rationale,
-        _protocol_parts(candidate.validation_protocol)[1],
+    for field_name, text in (
+        ("mechanism", _mechanism_source(candidate)),
+        ("mechanism", candidate.rationale),
+        ("validation protocol", _protocol_parts(candidate.validation_protocol)[1]),
     ):
         remainder, found_title, found = _authors_own_table(text)
         if found and not table:
-            title, table = found_title, found
+            title, table, source = found_title, found, field_name
         for label, body in _authors_own_parts(remainder)[1]:
             if (key := (label, " ".join(body.split()))) not in seen:
                 seen.add(key)
@@ -4334,7 +4364,7 @@ def _authored_extras(
     # it, and reading them the other way round put the verdict before the case.
     order = {name: index for index, name in enumerate(AUTHORS_OWN_PARTS)}
     sections.sort(key=lambda section: order.get(section[0], len(order)))
-    return title, table, sections
+    return title, table, sections, source
 
 
 # A protocol arrives as one prose field holding the steps the specialist numbered:
@@ -4355,27 +4385,51 @@ _PROTOCOL_LABEL = re.compile(
 
 
 def _protocol_parts(text: str) -> tuple[str, str]:
-    """The protocol itself, and what the specialist headed and wrote in front of it.
+    """The protocol itself, and the specialist's own material written around it.
 
-    Returned as (the protocol, the preamble). A live Validation Protocol section
+    Returned as (the protocol, that material). A live Validation Protocol section
     opened "Critical Scientific Judgment: While HfON offers superior dielectric
     shielding, the primary risk is ..." and reached the protocol 300 words later
     behind a bold "Experimental Protocol:" -- a heading inside a section, under a
     heading that says the same thing, with the bench steps buried behind it.
 
-    Only where the preamble is entirely sections the specialist headed: anything
-    else in front of the label is protocol prose the specialist wrote, and moving
-    it out of the protocol would lose it.
+    In front of the label, only where the preamble is entirely sections the
+    specialist headed: anything else there is protocol prose the specialist wrote,
+    and moving it out of the protocol would lose it.
+
+    Behind the bench steps the same three artefacts turn up, because a specialist
+    that answers the whole prompt in one field appends them where it stopped
+    writing. Two of eight ideas on a live run did, and their Validation Protocol ran
+    on from "Quantify the depth and frequency of pitting corrosion" into a
+    self-awarded rating read out as clauses -- "Ligation Strategy (Description: ALD
+    coating adhesion under mechanical stress; Judgment: Brittle Al2O3 fractures)" --
+    and then a Critical Scientific Judgment, while the other six had the same two
+    artefacts printed as a captioned table and a labelled section of their own.
     """
     source = str(text or "")
-    label = _PROTOCOL_LABEL.search(source)
-    if not label:
-        return source, ""
-    preamble, protocol = source[: label.start()], source[label.end() :]
-    leading, parts = _authors_own_parts(preamble)
-    if not protocol.strip() or leading.strip() or not parts:
-        return source, ""
-    return protocol, preamble
+    body, preamble = source, ""
+    if label := _PROTOCOL_LABEL.search(source):
+        front, behind = source[: label.start()], source[label.end() :]
+        leading, parts = _authors_own_parts(front)
+        # Nothing in front of the label but sections the specialist headed, or
+        # nothing at all: a live Validation Protocol section opened "**Experimental
+        # Protocol:** Prepare NMC811 electrodes", a heading inside a section under a
+        # heading that says the same thing.
+        if behind.strip() and not leading.strip() and (parts or not front.strip()):
+            body, preamble = behind, front
+    # The two labels the generation prompts ask for by name, so a table of bench
+    # conditions the specialist wrote into the protocol stays in the protocol.
+    appended = min(
+        (
+            mark.start()
+            for mark in (_OWN_APPENDIX.search(body), _AUTHORS_OWN_PART.search(body))
+            if mark
+        ),
+        default=None,
+    )
+    if appended is None:
+        return body, preamble
+    return body[:appended], f"{preamble}\n\n{body[appended:]}".strip()
 
 
 def _protocol_steps(text: str) -> list[str]:
@@ -6080,7 +6134,7 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
         )
         revision = record.revision_of(candidate.id)
         revised_facts = _idea_facts(revision.candidate) if revision else None
-        rating_title, rating, authors_own = _authored_extras(candidate)
+        rating_title, rating, authors_own, rating_source = _authored_extras(candidate)
         briefs.append(
             IdeaBrief(
                 title=record.title_for(candidate.id),
@@ -6133,6 +6187,7 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
                 authors_own_sections=authors_own,
                 self_rating_title=rating_title,
                 self_rating=rating,
+                self_rating_source=rating_source,
                 strategy=candidate.generation_strategy.replace("_", " "),
                 validation_protocol=_protocol_steps(candidate.validation_protocol),
                 mermaid=candidate.workflow_diagram_mermaid.strip(),
