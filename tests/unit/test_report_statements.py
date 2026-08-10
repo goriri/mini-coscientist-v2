@@ -565,6 +565,57 @@ def test_the_mechanism_comes_from_the_field_the_specialist_wrote_it_in():
     ]
 
 
+def test_a_judgment_written_in_front_of_the_protocol_is_not_the_protocol():
+    """One live Validation Protocol section opened "Critical Scientific Judgment:
+    While HfON offers superior dielectric shielding, the primary risk is ..." and
+    reached the bench steps 300 words later behind a bold "Experimental Protocol:".
+    The same label is printed under The Specialist's Own Sections for the ideas whose
+    specialist wrote it in the mechanism field, so one report filed one label two
+    ways."""
+    from coscientist.models import Candidate
+    from coscientist.narrative import _authored_extras, _protocol_steps
+
+    candidate = Candidate(
+        title="A 2 nm HfON Coating",
+        claim="A 2 nm HfON coating raises retention.",
+        mechanism_model="HfON screens the interfacial field.",
+        rationale="High-k dielectrics block electron leakage.",
+        validation_protocol=(
+            "Critical Scientific Judgment: While HfON offers superior dielectric "
+            "shielding, the primary risk is a higher charge-transfer resistance. "
+            "**Experimental Protocol:** 1. Synthesize 2 nm HfON-coated NMC811 via "
+            "MLD. 2. Assemble CR2032 coin cells (n=5 per group). 3. Cycle at 1C."
+        ),
+        falsifier="No difference at 500 cycles.",
+    )
+
+    assert _protocol_steps(candidate.validation_protocol) == [
+        "Synthesize 2 nm HfON-coated NMC811 via MLD.",
+        "Assemble CR2032 coin cells (n=5 per group).",
+        "Cycle at 1C.",
+    ]
+    assert _authored_extras(candidate)[2] == [
+        (
+            "Critical Scientific Judgment",
+            "While HfON offers superior dielectric shielding, the primary risk is a "
+            "higher charge-transfer resistance.",
+        )
+    ]
+
+
+def test_a_protocol_whose_preamble_is_nobodys_section_is_left_whole():
+    """The split above moves the preamble out of the protocol, so it only runs where
+    every word of that preamble is a section the specialist headed. Anything else in
+    front of the label is protocol prose, and moving it out would lose it."""
+    from coscientist.narrative import _protocol_steps
+
+    written = (
+        "Cells are built in an argon glovebox. Experimental Protocol: Cycle at 1C."
+    )
+
+    assert _protocol_steps(written) == [written]
+
+
 def test_the_protocol_is_printed_as_the_steps_the_specialist_numbered():
     """``validation_protocol`` is required by the contract, asked for by every
     generation prompt and checked by normalisation, and no exporter read it: the

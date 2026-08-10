@@ -3893,7 +3893,15 @@ def _authored_extras(
     table: list[list[str]] = []
     sections: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for text in (_mechanism_source(candidate), candidate.rationale):
+    # The protocol field too, because a specialist that heads a section writes it
+    # wherever it is writing: one live idea put its Critical Scientific Judgment in
+    # front of the protocol, so the same label the report prints under The
+    # Specialist's Own Sections for one idea opened Validation Protocol for another.
+    for text in (
+        _mechanism_source(candidate),
+        candidate.rationale,
+        _protocol_parts(candidate.validation_protocol)[1],
+    ):
         remainder, found_title, found = _authors_own_table(text)
         if found and not table:
             title, table = found_title, found
@@ -3915,6 +3923,39 @@ def _authored_extras(
 # power analysis, its blinding and its abort limits reads as one sentence that will
 # not end, and nobody can follow it at a bench.
 _PROTOCOL_STEP = re.compile(r"(?:\A|(?<=[.;:!?\)])\s|\n)\s*(\d{1,2})[.)]\s+(?=\S)")
+# The label a specialist puts over the protocol inside the protocol field, which is
+# the heading this section already carries.
+_PROTOCOL_LABEL = re.compile(
+    # Its own line, or run on after the sentence before it, which is where the
+    # flattener leaves a heading a specialist wrote inside a one-field answer.
+    r"(?:^|(?<=[.;:!?]\s))[ \t]{0,3}(?:#{1,6}[ \t]*)?\**[ \t]*"
+    r"(?:Experimental|Validation|Testing)[ \t]+Protocol[ \t]*\**[ \t]*:?[ \t]*\**[ \t]*",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _protocol_parts(text: str) -> tuple[str, str]:
+    """The protocol itself, and what the specialist headed and wrote in front of it.
+
+    Returned as (the protocol, the preamble). A live Validation Protocol section
+    opened "Critical Scientific Judgment: While HfON offers superior dielectric
+    shielding, the primary risk is ..." and reached the protocol 300 words later
+    behind a bold "Experimental Protocol:" -- a heading inside a section, under a
+    heading that says the same thing, with the bench steps buried behind it.
+
+    Only where the preamble is entirely sections the specialist headed: anything
+    else in front of the label is protocol prose the specialist wrote, and moving
+    it out of the protocol would lose it.
+    """
+    source = str(text or "")
+    label = _PROTOCOL_LABEL.search(source)
+    if not label:
+        return source, ""
+    preamble, protocol = source[: label.start()], source[label.end() :]
+    leading, parts = _authors_own_parts(preamble)
+    if not protocol.strip() or leading.strip() or not parts:
+        return source, ""
+    return protocol, preamble
 
 
 def _protocol_steps(text: str) -> list[str]:
@@ -3924,7 +3965,7 @@ def _protocol_steps(text: str) -> list[str]:
     protocol that cites "4.3 V" or "n=5" mid-sentence would otherwise be cut into
     steps at the citation, which is worse than leaving it whole.
     """
-    body = _blocks_as_prose(text).strip()
+    body = _blocks_as_prose(_protocol_parts(text)[0]).strip()
     marks = list(_PROTOCOL_STEP.finditer(body))
     if len(marks) < 2 or [int(mark.group(1)) for mark in marks] != list(
         range(1, len(marks) + 1)
