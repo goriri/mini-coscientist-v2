@@ -48,6 +48,10 @@ WITHDRAWN_TEXT = (
     "cycling performance"
 )
 TITLE = "Ultrathin Al2O3 coatings on high-nickel cathodes"
+SECOND_TITLE = (
+    "Tailoring performance of the LiNi0.8Mn0.1Co0.1O2 cathode by plasma-enhanced "
+    "atomic layer deposition"
+)
 
 
 def _record(*, evidence_for=(), evidence_against=(), evidence_gaps=()):
@@ -60,7 +64,13 @@ def _record(*, evidence_for=(), evidence_against=(), evidence_gaps=()):
                 url="https://pubmed.ncbi.nlm.nih.gov/12345678/",
                 title=TITLE,
                 verification_status="verified",
-            )
+            ),
+            SourceRecord(
+                id="source_2",
+                url="https://pubmed.ncbi.nlm.nih.gov/23456789/",
+                title=SECOND_TITLE,
+                verification_status="discovered_unverified",
+            ),
         ],
         claims=[
             EvidenceClaim(
@@ -76,6 +86,20 @@ def _record(*, evidence_for=(), evidence_against=(), evidence_gaps=()):
                 source_id="source_1",
                 verification_status="inaccessible",
                 confidence=0.4,
+            ),
+            EvidenceClaim(
+                id="claim_3",
+                claim="ALD alumina suppresses surface corrosion",
+                source_id="source_1",
+                verification_status="discovered_unverified",
+                confidence=0.5,
+            ),
+            EvidenceClaim(
+                id="claim_4",
+                claim="A PEALD interphase layer suppresses thermal runaway",
+                source_id="source_2",
+                verification_status="discovered_unverified",
+                confidence=0.5,
             ),
         ],
     )
@@ -236,6 +260,41 @@ def test_an_id_the_specialist_opened_the_statement_with_takes_the_sentence_capit
     assert said == (
         "The finding that increased coating thickness causes severe mass transfer "
         "resistance at the particle surface is why thickness cannot be pushed further."
+    )
+
+
+def test_a_run_of_ids_of_one_kind_says_what_they_are_once_and_then_lists_them():
+    """A live bullet read "**[Literature Lead]** The unverified claim drawn from
+    Identification of the dual roles of Al2O3 coatings on NMC811-cathodes via theory
+    and experiment and the unverified claim drawn from Tailoring Performance of the
+    LiNi0.8Mn0.1Co0.1O2 Cathode by Al2O3 and MoO3 artificial cathode electrolyte
+    interphase (CEI) layers through plasma-enhanced atomic layer deposition (PEALD)
+    Coating show ALD Al2O3 prevents surface corrosion" -- the same eight words of
+    standing around each of two titles that between them carry four further "and"s,
+    so the reader has no way to see where one name ends. The idea's own prose already
+    collapsed this; the bullets went by a different path and did not."""
+    ((_heading, badge, said),) = _notes(
+        evidence_for=["claim_3 and claim_4 show the coating prevents corrosion."]
+    )
+
+    assert badge == LEAD_BADGE
+    assert said == (
+        f"The unverified claims drawn from {TITLE} and {SECOND_TITLE} show the "
+        "coating prevents corrosion."
+    )
+
+
+def test_a_run_of_ids_the_run_holds_differently_is_named_one_by_one():
+    """A plural drawn over a mixture says of each record what is true of one of them:
+    claim_1 was verified and claim_2 could not be retrieved, and "the unverified claims
+    drawn from ..." would be wrong about both."""
+    ((_heading, _badge, said),) = _notes(
+        evidence_for=["claim_1 and claim_2 disagree about the floor."]
+    )
+
+    assert said == (
+        f"The claim drawn from {TITLE} and the unretrieved claim drawn from {TITLE} "
+        "disagree about the floor."
     )
 
 

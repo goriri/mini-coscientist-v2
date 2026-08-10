@@ -5904,6 +5904,12 @@ class _EvidenceRecord:
 # specialist naming a record instead of saying what the record holds.
 _BARE_REFERENCE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+")
 
+# Several of them in a series, which is one phrase and not two. Named id by id, the
+# standing and the kind get said once per id: see ``_named_run``.
+_BARE_REFERENCE_RUN = re.compile(
+    rf"(?:{_BARE_REFERENCE.pattern})(?:(?:,? and |, )(?:{_BARE_REFERENCE.pattern}))+"
+)
+
 # The same thing with the underscore left out. A live run's specialists wrote
 # "stmt5" and "stmt3" where the evidence base holds "stmt_5" and "pass4_stmt_5",
 # the pattern above did not see them, and "stmt5." went to the reader as the whole
@@ -6181,6 +6187,33 @@ def _stated_evidence(
         # bullets whose statements held no id and so began with a capital.
         return name[:1].upper() + name[1:] if match.start() == 0 else name
 
+    def _named_run(match: re.Match[str]) -> str:
+        """A list of ids of one kind, named once and listed by title.
+
+        The collapse the naming pass over the review prose does, which this pass did
+        not: an Evidence Assessment bullet read "**[Literature Lead]** The unverified
+        claim drawn from Identification of the dual roles of Al2O3 coatings on
+        NMC811-cathodes via theory and experiment and the unverified claim drawn from
+        Tailoring Performance of the LiNi0.8Mn0.1Co0.1O2 Cathode by Al2O3 and MoO3
+        artificial cathode electrolyte interphase (CEI) layers through
+        plasma-enhanced atomic layer deposition (PEALD) Coating show ALD Al2O3
+        prevents surface corrosion" -- eight words of standing said twice, around two
+        titles that between them carry four further "and"s.
+        """
+        ids = _BARE_REFERENCE.findall(match.group(0))
+        parts = [_NAMED_RECORD.match(names.get(item, "")) for item in ids]
+        # Anything the run cannot place, or a run whose records are not all of one
+        # kind and one standing, is left to the id-by-id pass below.
+        if not all(parts) or len({(part[1], part[2]) for part in parts}) != 1:
+            return match.group(0)
+        standing, kind = parts[0][1], parts[0][2]
+        titles = _joined_titles([part[3] for part in parts])
+        plural = "sources" if kind == "source" else "claims drawn from"
+        named = f"the {standing}{plural} {titles}"
+        return named[:1].upper() + named[1:] if match.start() == 0 else named
+
+    # The run pass first: a series is only visible while the ids are still ids.
+    text = _BARE_REFERENCE_RUN.sub(_named_run, text)
     return _sentence(_BARE_REFERENCE.sub(_named, text))
 
 
