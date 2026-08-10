@@ -2342,6 +2342,60 @@ def test_a_rewrite_made_over_two_rounds_is_not_attributed_to_one():
     assert critiques.split(". ")[0].endswith("the inhalation risk")
 
 
+def test_a_rewritten_protocol_that_names_its_steps_is_set_one_step_to_a_line():
+    """An evolved idea's protocol arrives as one field, and the specialist that wrote
+    it named its steps: a live Revised Form printed 1,377 characters of "**Variables &
+    Sample Size**: ... **Synthesis & Deposition**: ... **Cell Assembly & Calibration**:
+    ..." as a single paragraph, five named steps deep, where the same idea's unevolved
+    protocol a page above is a numbered list."""
+    from coscientist.dossier import _revised_form_block
+
+    block = _revised_form_block(
+        _brief(
+            "A coated cathode",
+            [],
+            revised_form=[
+                (
+                    "Validation protocol",
+                    "**Variables & Sample Size**: Sample size is n=13 cells per "
+                    "group. **Synthesis & Deposition**: Perform ALD of Al2O3 at "
+                    "150 °C. **Cell Assembly & Calibration**: Assemble CR2032 coin "
+                    "cells in an Ar-filled glovebox.",
+                )
+            ],
+        )
+    )
+
+    assert block[4:8] == [
+        "**Validation protocol:**",
+        "",
+        "- **Variables & Sample Size:** Sample size is n=13 cells per group.",
+        "- **Synthesis & Deposition:** Perform ALD of Al2O3 at 150 °C.",
+    ]
+    assert block[8] == (
+        "- **Cell Assembly & Calibration:** Assemble CR2032 coin cells in an "
+        "Ar-filled glovebox."
+    )
+
+
+def test_a_rewritten_field_written_as_prose_stays_the_paragraph_it_was():
+    """Two of the four live protocols were written as prose and read as prose, and a
+    paragraph is free to bold a phrase of its own: what marks a run of steps is
+    several bolded names, each of them opening a sentence rather than sitting in
+    one."""
+    from coscientist.dossier import _revised_form_block
+
+    written = (
+        "Deposit 2 nm of Al2O3 by **ALD**, then cycle at 1C for 500 cycles and "
+        "compare **capacity retention** against an uncoated control."
+    )
+    block = _revised_form_block(
+        _brief("A coated cathode", [], revised_form=[("Validation protocol", written)])
+    )
+
+    assert block[4] == f"**Validation protocol:** {written}"
+
+
 def test_a_critique_recorded_with_its_remedy_stays_inside_the_sentence():
     """Evolution records what it addressed as "Missing Structured Evaluation Table:
     Added to mechanism_model", and "to address" in front of four of those produced a

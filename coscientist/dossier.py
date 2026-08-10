@@ -864,6 +864,39 @@ def _numbered_subsections(titles: Iterable[str], bodies: Iterable[str]) -> list[
     return lines
 
 
+# A step named in bold, inline in the paragraph its steps were run into. The name is
+# a phrase and not a sentence, so it is short and holds no full stop; the colon after
+# it belongs to the label whether it was set inside the bold or outside.
+_INLINE_STEP = re.compile(r"\*\*(?P<label>[A-Z][^*\n.]{2,44}?):?\*\*:?[ \t]+")
+
+
+def _stepped(text: str) -> list[str]:
+    """``text`` set one step to a line where it runs several of them together.
+
+    An evolved idea's protocol arrives as one field, and the specialist that wrote it
+    named its steps: a live report printed 1,377 characters of "**Variables & Sample
+    Size**: ... **Synthesis & Deposition**: ... **Cell Assembly & Calibration**: ..."
+    as one paragraph, five named steps deep, where the same idea's unevolved protocol
+    a page above is a numbered list. Nothing is returned for prose, or where a bolded
+    phrase sits inside a sentence rather than opening one -- a paragraph is free to
+    bold a phrase of its own, and that phrase is not a step.
+    """
+    steps = list(_INLINE_STEP.finditer(text))
+    if len(steps) < 3:
+        return []
+    if any(
+        text[: step.start()].rstrip()[-1:] not in ("", ".", ":", ";", "!", "?")
+        for step in steps
+    ):
+        return []
+    lead = text[: steps[0].start()].strip()
+    lines = [lead, ""] if lead else []
+    for step, following in zip(steps, [*steps[1:], None], strict=True):
+        said = text[step.end() : following.start() if following else len(text)]
+        lines.append(f"- **{step.group('label')}:** {said.strip()}")
+    return lines
+
+
 def _revised_form_block(brief: IdeaBrief) -> list[str]:
     """The rewrite the recommendation is actually for, set out where the idea is.
 
@@ -882,7 +915,11 @@ def _revised_form_block(brief: IdeaBrief) -> list[str]:
     )
     lines = [heading, "", brief.revised_lead_in, ""]
     for label, text in brief.revised_form:
-        lines.extend([f"**{label}:** {text}", ""])
+        stepped = _stepped(text)
+        if stepped:
+            lines.extend([f"**{label}:**", "", *stepped, ""])
+        else:
+            lines.extend([f"**{label}:** {text}", ""])
     return lines
 
 
