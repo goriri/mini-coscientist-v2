@@ -10128,6 +10128,21 @@ def _recommendation_grounding(
         )
     else:
         lead = f" None of the {total} rests on verified evidence."
+    # "The others do not rest on verified evidence" is equally true of an idea nobody
+    # got round to checking and of an idea whose sources were retracted, and those are
+    # not the same standing to act on. Three of the four ideas a live recommendation
+    # carried were discredited, and the sentence a reader met at the recommendation
+    # said only that they were not verified.
+    broken = [
+        item for item in ordered if supports[item] in {"unsupported", "discredited"}
+    ]
+    if broken:
+        lead += (
+            f" {_number_word(len(broken))} of the {total} "
+            + ("cites" if len(broken) == 1 else "cite")
+            + " evidence that was retracted, could not be retrieved, or is not in "
+            "this report at all, which is a weaker position than unchecked."
+        )
     if supports[ordered[0]] == "uncited":
         lead += (
             f" {record.title_for(ordered[0])}, which leads the recommendation, cites "

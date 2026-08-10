@@ -2559,6 +2559,39 @@ def test_the_recommendation_carries_the_grounding_the_appendix_records():
     assert "Evidence integrity in the appendix" in core
 
 
+def test_a_recommendation_resting_on_broken_evidence_is_not_reported_as_merely_unchecked():
+    """ "Not verified" covers an idea nobody checked and one whose sources were pulled.
+
+    Three of the four ideas a live recommendation carried had their grounding recorded
+    as discredited, and the only sentence about grounding a reader met at the
+    recommendation itself said the others did not rest on verified evidence -- true of
+    both, and the weaker of the two readings.
+    """
+    core = _nine(
+        _recommended_pair("retracted"),
+        [_brief("An uncited conjecture", [], facts=_facts(), candidate_id="cand_a")],
+    )
+
+    assert "None of the two rests on verified evidence." in core
+    assert (
+        "One of the two cites evidence that was retracted, could not be retrieved, "
+        "or is not in this report at all, which is a weaker position than unchecked."
+        in core
+    )
+    # The idea that cites nothing at all is a third case again, and keeps its clause.
+    assert "An uncited conjecture, which leads the recommendation, cites none" in core
+
+
+def test_a_recommendation_nobody_checked_is_not_told_its_evidence_was_pulled():
+    """Discovered and never verified is unchecked, which is the sentence as it was."""
+    core = _nine(
+        _recommended_pair("discovered_unverified"),
+        [_brief("An uncited conjecture", [], facts=_facts(), candidate_id="cand_a")],
+    )
+
+    assert "was retracted, could not be retrieved" not in core
+
+
 def test_a_recommendation_resting_on_checked_evidence_is_not_qualified_as_if_it_did_not():
     """The clause states the run's grounding, so a verified run has to read as one."""
     core = _nine(
