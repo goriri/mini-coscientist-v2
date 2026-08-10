@@ -6489,6 +6489,40 @@ def test_a_table_row_and_a_bare_source_name_are_not_printed_as_findings():
     assert "a source's own name, or a row of a table" in prose
 
 
+def test_a_finding_written_as_the_record_about_itself_prints_as_the_finding():
+    """A live run's fifth pass wrote each finding as the record it kept of it, and
+    Main Research Directions printed twelve of them whole: "**Statement:** ...
+    **Facet:** methods **Category:** Finding **Primary Literature:** Yan, P., et al.
+    (2016). ... URL: https://pubs.acs.org/...", one paragraph each among fifty
+    findings that are a sentence each. The source stays -- it is already carried as
+    the citation, and prints as the reference number the other fifty print."""
+    from coscientist.narrative import _evidence_statements
+
+    record = _discovery_with(
+        [
+            "* **Statement:** The overarching finding is that no single coating "
+            "outperforms the others across every cell chemistry. * **Facet:** "
+            "methods * **Category:** Finding * **Primary Literature:** Yan, P., "
+            "et al. (2016). *Atomic to Nanoscale Investigation of an Al2O3 Coating "
+            "Layer.* URL: https://pubs.acs.org/doi/10.1021/acs.chemmater.5b04301",
+            "Thicker coatings raised the impedance of the cell.",
+            "The reviewer wrote **Category:** Finding into the middle of a sentence.",
+        ],
+        [SourceLead(canonical_url="https://aalto.fi/x", title="Coatings and cycling")],
+    )
+
+    printed = [statement.text for statement in _evidence_statements(record)]
+
+    assert printed == [
+        "The overarching finding is that no single coating outperforms the others "
+        "across every cell chemistry.",
+        "Thicker coatings raised the impedance of the cell.",
+        # A paragraph is free to bold a phrase of its own: what is stripped is a
+        # record that opens on its statement, not any bold label anywhere.
+        "The reviewer wrote **Category:** Finding into the middle of a sentence.",
+    ]
+
+
 def test_a_findings_list_that_drops_nothing_says_nothing_about_dropping():
     """The admission is a report of a defect, not a standing disclaimer."""
     from coscientist.narrative import _section_three, _unstated_findings

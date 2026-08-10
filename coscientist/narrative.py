@@ -7336,6 +7336,55 @@ _FACET_TAG_RE = re.compile(
 _PASS_CITE_RE = re.compile(r"[ \t]*`?\[cite:[^\]\n]{0,80}\]`?")
 
 
+# The pass's own record, handed back where a finding was asked for. One live run's
+# fifth pass wrote each of its findings as "* **Statement:** ... * **Facet:** methods
+# * **Category:** Finding * **Primary Literature:** Yan, P., et al. (2016). ... URL:
+# https://...", and Main Research Directions printed twelve of them as that whole
+# record run together in a paragraph, among fifty findings that are a sentence each.
+_RECORD_LABEL = re.compile(
+    r"(?:^|\s)[*\-•]?\s*\*\*(?P<label>[A-Za-z][A-Za-z ]{2,24}?):?\*\*:?\s*"
+)
+_RECORD_STATEMENT = frozenset({"statement", "finding", "claim"})
+_RECORD_FIELDS = frozenset(
+    {
+        "category",
+        "citation",
+        "confidence",
+        "evidence",
+        "facet",
+        "primary literature",
+        "relation",
+        "scope",
+        "source",
+        "sources",
+        "uncertainty",
+        "url",
+        "urls",
+    }
+)
+
+
+def _without_record_labels(text: str) -> str:
+    """A finding written as the record about itself, reduced to the finding.
+
+    Only where the record opens on its statement, and only up to the next field of
+    the same record. The labels are the provider's own words and a paragraph is free
+    to bold a phrase of its own further in, so what ends the finding is a label that
+    names another field rather than any label at all.
+    """
+    labels = list(_RECORD_LABEL.finditer(text))
+    if not labels or labels[0].start():
+        return text
+    if labels[0].group("label").strip().lower() not in _RECORD_STATEMENT:
+        return text
+    ends = [
+        match.start()
+        for match in labels[1:]
+        if match.group("label").strip().lower() in _RECORD_FIELDS
+    ]
+    return text[labels[0].end() : ends[0] if ends else len(text)].strip()
+
+
 def _without_pipeline_markup(text: str) -> str:
     """A sentence the provider addressed to the pipeline, addressed to a reader.
 
@@ -7457,7 +7506,9 @@ def _all_evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]
                     # Directions on a live run read "Not stated by the specialist."
                     text=_sentence(
                         _with_heading_separated(
-                            _without_pipeline_markup(statement.text)
+                            _without_record_labels(
+                                _without_pipeline_markup(statement.text)
+                            )
                         ),
                         fallback="",
                     ),
@@ -7482,7 +7533,9 @@ def _all_evidence_statements(record: ResearchRecord) -> list[_EvidenceStatement]
                 # keys on the text: a tag left on one copy and not the other makes
                 # two findings of one.
                 text=_sentence(
-                    _with_heading_separated(_without_pipeline_markup(claim.claim)),
+                    _with_heading_separated(
+                        _without_record_labels(_without_pipeline_markup(claim.claim))
+                    ),
                     fallback="",
                 ),
                 urls=[source.url] if source else [],
