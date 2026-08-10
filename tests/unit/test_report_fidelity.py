@@ -861,7 +861,10 @@ def test_a_constraint_reviewers_wrote_about_is_not_reported_as_unchecked():
             "Must specify exact charge/discharge rates, voltage windows, and temperature",
         ],
     )
-    assert "constraint one, in one review under Feasibility" in line
+    assert (
+        "constraint one is reached by a reviewer's own words: in one review under "
+        "Feasibility" in line
+    )
     assert "reaches constraint two" in line
     assert "none of them writes about any of the constraints" not in line.lower()
 
@@ -3909,3 +3912,78 @@ def test_an_idea_with_no_accepted_flaw_says_nothing_about_one():
     lead_in, _, _ = _revised_form(_twice_revised(), _candidate("cand_a"))
 
     assert "fatal flaw" not in lead_in
+
+
+def _coverage(constraints: list[str], criteria: list[str]) -> str:
+    """The constraint-coverage paragraph of a run whose reviews all said the same."""
+    from coscientist.models import CandidatePopulation, ReviewSet
+    from coscientist.narrative import ResearchRecord, _constraint_coverage
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.population = CandidatePopulation(candidates=[_candidate("cand_a")])
+    record.reviews = [
+        ReviewSet(
+            reviews=[
+                _review("cand_a", criterion=criterion, objections=[constraint])
+                for criterion in criteria
+                for constraint in constraints
+            ]
+        )
+    ]
+    return _constraint_coverage(record, constraints)
+
+
+def test_constraints_reached_in_the_same_place_are_told_where_once():
+    """The clause before the colon already names the constraints, so one item per
+    constraint printed "constraints one, two and three are reached by a reviewer's own
+    words: constraint one, in one review under Feasibility; constraint two, in one
+    review under Feasibility; constraint three, in one review under Feasibility"."""
+    line = _coverage(
+        [
+            "Must include uncoated control cells for direct comparison",
+            "Must specify exact charge and discharge rates and voltage windows",
+        ],
+        ["methods_feasibility"],
+    )
+
+    assert "constraint one, in one review under Feasibility" not in line
+    assert (
+        "are reached by a reviewer's own words: each in one review under Feasibility."
+        in line
+    )
+
+
+def test_constraints_reached_in_different_places_are_still_told_apart():
+    """The fold is only for a list that says the same thing about every item."""
+    from coscientist.models import CandidatePopulation, ReviewSet
+    from coscientist.narrative import ResearchRecord, _constraint_coverage
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.population = CandidatePopulation(candidates=[_candidate("cand_a")])
+    record.reviews = [
+        ReviewSet(
+            reviews=[
+                _review(
+                    "cand_a",
+                    criterion="methods_feasibility",
+                    objections=["No uncoated control cells are described."],
+                ),
+                _review(
+                    "cand_a",
+                    criterion="evidence_correctness",
+                    objections=["The charge and discharge rates are never stated."],
+                ),
+            ]
+        )
+    ]
+
+    line = _constraint_coverage(
+        record,
+        [
+            "Must include uncoated control cells for direct comparison",
+            "Must specify exact charge and discharge rates",
+        ],
+    )
+
+    assert "constraint one, in one review under Feasibility" in line
+    assert "constraint two, in one review under Correctness" in line

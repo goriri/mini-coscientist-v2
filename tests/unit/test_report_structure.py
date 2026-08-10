@@ -1817,8 +1817,9 @@ def test_a_fork_does_not_claim_the_corpus_as_literature_it_gathered(
 
     assert "The literature this run gathered" not in report
     assert "the literature this run retrieved" not in report
-    assert "The literature carried into this run from session_earlier" in report
-    assert "the literature carried into this run from session_earlier" in report
+    carried = "carried into this run from an earlier run of the same question"
+    assert f"The literature {carried} (session_earlier)" in report
+    assert f"the literature {carried} (session_earlier)" in report
     # The sentence the two contradicted is still the one that says where it came from.
     assert "This run did not search the literature." in report
 
@@ -6860,3 +6861,43 @@ def test_a_goal_too_long_to_print_whole_is_still_shortened_in_its_own_mood(
     assert report.splitlines()[0].endswith("?")
     # And the chapter headings that hang the title off a preposition stay out of it.
     assert "Ranked Research Ideas for Can a" not in report
+
+
+def test_a_forked_corpus_is_glossed_where_the_report_first_names_the_run_it_came_from(
+    rich_session: Session,
+):
+    """Both sentences that name the earlier session stand chapters above the Knowledge
+    Base that explains it, so "The literature carried into this run from
+    session_6897ccf96dec4d50" was the first thing on the page to mention another
+    session and the reader met the identifier cold, twice."""
+    rich_session.seeded_evidence_from = "session_earlier"
+
+    report = compile_dossier(rich_session)
+    first = report.index("session_earlier")
+
+    assert "carried into this run from session_earlier" not in report
+    assert (
+        report[:first]
+        .rsplit(". ", 1)[-1]
+        .endswith("carried into this run from an earlier run of the same question (")
+    )
+
+
+def test_the_leader_is_named_where_the_runner_up_was_just_named_twice(
+    rich_session: Session,
+):
+    """ "It was never paired against ..." closed a paragraph whose two preceding
+    sentences both name the nearest rival, so the sentence that says which ideas the
+    leader never met read as a fact about the runner-up."""
+    from coscientist.narrative import _lead_over_rival, build_idea_briefs
+
+    record = load_record(rich_session)
+    briefs = build_idea_briefs(record)
+    leader = briefs[0]
+    # Ranked above two ideas it never played, which is what the sentence reports.
+    object.__setattr__(leader, "matches", [])
+
+    paragraph = _lead_over_rival(leader, briefs)
+
+    assert paragraph.count("It was never paired") == 0
+    assert "The leading idea was never paired against" in paragraph

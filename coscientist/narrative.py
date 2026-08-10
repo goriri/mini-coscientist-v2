@@ -9144,9 +9144,19 @@ def _gathered_corpus(record: ResearchRecord) -> str:
     this run retrieved" -- so the report both claimed and disclaimed the search, and
     a reader who met the claims first carried the wrong provenance into everything
     the novelty judgements rest on.
+
+    Glossed at first use, because both sentences that take this clause stand chapters
+    above the Knowledge Base. "The literature carried into this run from
+    session_6897ccf96dec4d50" was the first thing on the page to mention another
+    session, and a reader met the identifier with nothing yet said about what it
+    names -- twice, four hundred words apart, before the chapter that explains it.
     """
     source = record.session.seeded_evidence_from
-    return f"carried into this run from {source}" if source else "this run gathered"
+    return (
+        f"carried into this run from an earlier run of the same question ({source})"
+        if source
+        else "this run gathered"
+    )
 
 
 def _reference_standing(record: ResearchRecord) -> str:
@@ -10298,26 +10308,38 @@ def _constraint_coverage(record: ResearchRecord, constraints: Sequence[str]) -> 
                 else ""
             )
         )
-    reached = _series(
-        [
-            _numbered_constraints([index])
-            + f", in {_plural(counts[index], 'review')} under "
-            + (
-                # Not _series: it folds every item after the first to lower case,
-                # which turned a pair of section headings into "the Correctness, and
-                # novelty reviews" -- a heading the reader cannot then find. Past two
-                # headings the list stops being a pointer and becomes a recital, so
-                # it is counted instead.
-                _joined_titles(sorted(spoken[index]))
-                if len(spoken[index]) <= 2
-                else _number_word(len(spoken[index])).lower()
-                + " of the "
-                + _number_word(len(REVIEW_SECTIONS)).lower()
-                + " review headings"
-            )
-            for index in sorted(spoken)
-        ]
-    )
+
+    def _where(index: int) -> str:
+        return f"in {_plural(counts[index], 'review')} under " + (
+            # Not _series: it folds every item after the first to lower case,
+            # which turned a pair of section headings into "the Correctness, and
+            # novelty reviews" -- a heading the reader cannot then find. Past two
+            # headings the list stops being a pointer and becomes a recital, so
+            # it is counted instead.
+            _joined_titles(sorted(spoken[index]))
+            if len(spoken[index]) <= 2
+            else _number_word(len(spoken[index])).lower()
+            + " of the "
+            + _number_word(len(REVIEW_SECTIONS)).lower()
+            + " review headings"
+        )
+
+    # Where every constraint was reached in the same place, said once. The clause
+    # before the colon already names the constraints, so listing them again one per
+    # item printed "constraints one, two and three are reached by a reviewer's own
+    # words: constraint one, in one review under Feasibility; constraint two, in one
+    # review under Feasibility; constraint three, in one review under Feasibility" --
+    # the same five words three times, and the numbers a second time.
+    places = {index: _where(index) for index in sorted(spoken)}
+    if len(set(places.values())) == 1:
+        reached = ("each " if len(places) > 1 else "") + next(iter(places.values()))
+    else:
+        reached = _series(
+            [
+                f"{_numbered_constraints([index])}, {where}"
+                for index, where in places.items()
+            ]
+        )
     untouched = [
         index for index in range(1, len(constraints) + 1) if index not in spoken
     ]
@@ -10787,7 +10809,12 @@ def _lead_over_rival(leader: IdeaBrief, briefs: Sequence[IdeaBrief]) -> str:
     unmet = [brief.title for brief in briefs[1:] if brief.title not in faced]
     if unmet:
         parts.append(
-            "It was never paired against "
+            # Named rather than pronominalised. Two sentences stand between this one
+            # and the leader it is about, and the nearest rival is named in both, so
+            # "It was never paired against ..." read as a fact about the runner-up --
+            # in the paragraph whose whole subject is how far clear the leader
+            # finished.
+            "The leading idea was never paired against "
             + _joined_titles(unmet)
             + f", so {_plural(len(unmet), 'idea')} of the "
             f"{_number_word(len(briefs) - 1).lower()} it is "
