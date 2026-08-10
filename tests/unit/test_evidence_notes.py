@@ -54,7 +54,7 @@ SECOND_TITLE = (
 )
 
 
-def _record(*, evidence_for=(), evidence_against=(), evidence_gaps=()):
+def _record(*, evidence_for=(), evidence_against=(), evidence_gaps=(), cites=()):
     """A run whose evidence base holds one verified claim and one search finding."""
     evidence = EvidencePacket(
         question=QUESTION,
@@ -136,6 +136,7 @@ def _record(*, evidence_for=(), evidence_against=(), evidence_gaps=()):
                 evidence_for=list(evidence_for),
                 evidence_against=list(evidence_against),
                 evidence_gaps=list(evidence_gaps),
+                evidence_ids=list(cites),
             )
         ]
     )
@@ -169,9 +170,18 @@ def _record(*, evidence_for=(), evidence_against=(), evidence_gaps=()):
     return load_record(session)
 
 
-def _notes(**kwargs):
+def _marked_notes(**kwargs):
     record = _record(**kwargs)
     return _evidence_notes(record, record.candidates[0])
+
+
+def _notes(**kwargs):
+    """The three fields these cases are about: the heading, the badge and the words.
+
+    A note also carries the reference number of the record it restates, which is what
+    Motivation points back at. That field has its own case in test_report_structure.
+    """
+    return [note[:3] for note in _marked_notes(**kwargs)]
 
 
 def test_a_statement_that_is_only_an_id_is_printed_as_what_the_record_holds():
@@ -345,3 +355,57 @@ def test_the_reading_guide_says_what_the_new_badge_means():
     from coscientist.narrative import DEEP_DIVE_PREAMBLE
 
     assert any(DISCREDITED_BADGE in note for note in DEEP_DIVE_PREAMBLE)
+
+
+def test_the_markers_motivation_sends_a_reader_to_are_printed_on_the_bullets():
+    """Motivation names the findings printed above it by reference number only.
+
+    "The statements printed above under Evidence Assessment citing [5], [14] and [3]"
+    stood in a live report a few hundred words under bullets that carried a grounding
+    label and no number at all, so the three places the sentence named were nowhere
+    on the page it named them on.
+    """
+    import re
+
+    from coscientist.dossier import compile_dossier
+
+    record = _record(
+        evidence_for=["claim_1", "claim_3"],
+        evidence_against=["claim_4"],
+        cites=["claim_1", "claim_3", "claim_4"],
+    )
+    body = compile_dossier(record.session)
+    block = body[body.index("### Evidence Assessment") : body.index("### Reviews")]
+    sent_to = set(
+        re.findall(
+            r"\[\d+\]",
+            re.search(
+                r"printed above under Evidence Assessment citing ([^.]+)\.", body
+            ).group(1),
+        )
+    )
+
+    assert sent_to == {"[1]", "[2]"}
+    assert sent_to <= set(re.findall(r"\[\d+\]", block))
+    assert (
+        "- **[Verified Source]** A conformal alumina layer of five to ten nanometres "
+        "reduces first-cycle irreversible capacity loss in silicon-containing anodes "
+        "[1]." in block
+    )
+    # The marker goes inside the sentence, where a citation goes, rather than after
+    # the full stop that closes it.
+    assert "anodes. [1]" not in block
+
+
+def test_a_statement_no_numbered_record_stands_behind_carries_no_marker():
+    """A discovery statement is not in the reference list, so there is no [N] for it.
+
+    A number printed against one would send a reader to whichever document happened
+    to hold that position, which is not the finding the bullet states.
+    """
+    ((_heading, _badge, said, marker),) = _marked_notes(
+        evidence_against=["pass4_stmt_5"]
+    )
+
+    assert said == f"{STATEMENT_TEXT}."
+    assert marker == ""

@@ -1306,8 +1306,14 @@ class IdeaBrief:
     """
     mermaid: str = ""
     """The specialist's own workflow diagram, when it drew one."""
-    evidence_notes: list[tuple[str, str, str]] = field(default_factory=list)
-    """The idea's categorized evidence, as (heading, grounding label, statement).
+    evidence_notes: list[tuple[str, str, str, str]] = field(default_factory=list)
+    """The idea's evidence, as (heading, grounding label, statement, marker).
+
+    The marker is the reference number of the record the statement restates, where
+    the run holds one. Motivation, a few hundred words below, points back here by
+    number -- "the statements printed above under Evidence Assessment citing [5],
+    [14] and [3]" -- and the bullets carried a grounding label and no number at all,
+    so a live report sent a reader to three places that were not printed.
 
     A candidate states what it takes to argue for it, against it, and what is
     missing. None of the three reached the page: the report printed the citation
@@ -6697,7 +6703,7 @@ def _cited_evidence(record: ResearchRecord, candidate: Candidate) -> _CitedEvide
     # times over -- the sources printed under Evidence against were the whole of the
     # section headed Supporting Arguments and Evidence forty lines below.
     filed: dict[str, str] = {}
-    for heading, _, text in _evidence_notes(record, candidate):
+    for heading, _, text, _marker in _evidence_notes(record, candidate):
         if text:
             filed.setdefault(_comparable(text), heading)
     above = set(filed)
@@ -6987,8 +6993,15 @@ def _grounding_badge(
 
 def _evidence_notes(
     record: ResearchRecord, candidate: Candidate
-) -> list[tuple[str, str, str]]:
-    """The candidate's own for/against/missing statements, each labelled by grounding."""
+) -> list[tuple[str, str, str, str]]:
+    """The candidate's own for/against/missing statements, labelled and numbered.
+
+    The number is what Motivation refers back to. That section names the findings the
+    idea cites which are already printed here, and names them by reference marker;
+    these bullets carried a grounding label and nothing else, so "the statements
+    printed above under Evidence Assessment citing [5], [14] and [3]" pointed at
+    three markers a reader scanning the bullets above could not find.
+    """
     sources = record.evidence.sources if record.evidence else []
     known = {source.url.lower() for source in sources if source.url}
     verified = {
@@ -7010,7 +7023,15 @@ def _evidence_notes(
             list(candidate.evidence_gaps),
         ],
     )
-    notes: list[tuple[str, str, str]] = []
+    # Keyed the way Motivation matches a bullet to a record: by the statement as
+    # printed. URLs rather than markers, because the registry numbers on first use --
+    # asking it for every record in the index would number the ones no chapter prints
+    # and leave the reference list padded and reordered.
+    located: dict[str, str] = {}
+    for entry in index.values():
+        if entry.url:
+            located.setdefault(_comparable(_sentence(entry.text)), entry.url)
+    notes: list[tuple[str, str, str, str]] = []
     for heading, statements in zip(
         ("Evidence for", "Evidence against", "Evidence gaps"), recorded, strict=True
     ):
@@ -7032,9 +7053,13 @@ def _evidence_notes(
                 or any(entry.status in DISCREDITED_STATUSES for entry in cited)
                 else ""
             )
-            notes.append(
-                (heading, badge, _stated_evidence(text, index, names, prefixes))
-            )
+            stated = _stated_evidence(text, index, names, prefixes)
+            # Unannotated: a qualifier beside every restated bullet would spend the
+            # ceiling that keeps the annotated markers rare, and the badge already on
+            # the bullet says what this run thinks of the record behind it.
+            url = located.get(_comparable(stated))
+            marker = record.citations.marker([url], annotate=False) if url else ""
+            notes.append((heading, badge, stated, marker))
     return notes
 
 

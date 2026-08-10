@@ -6965,7 +6965,9 @@ def test_an_evidence_gap_that_names_a_broken_record_is_badged_as_one(
 
     notes = _evidence_notes(record, candidate)
     gaps = [
-        (badge, text) for heading, badge, text in notes if heading == "Evidence gaps"
+        (badge, text)
+        for heading, badge, text, _marker in notes
+        if heading == "Evidence gaps"
     ]
 
     assert gaps and gaps[0][0] == DISCREDITED_BADGE
@@ -6988,7 +6990,10 @@ def test_a_gap_that_names_nothing_still_carries_no_badge(rich_session: Session):
 
     notes = _evidence_notes(record, candidate)
 
-    assert [badge for heading, badge, _ in notes if heading == "Evidence gaps"] == [""]
+    gaps = [
+        badge for heading, badge, _text, _marker in notes if heading == "Evidence gaps"
+    ]
+    assert gaps == [""]
 
 
 def test_the_reading_guide_admits_the_one_gap_that_does_carry_a_label():

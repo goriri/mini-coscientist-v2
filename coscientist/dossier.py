@@ -1605,18 +1605,26 @@ def _workflow_diagram(brief: IdeaBrief) -> list[str]:
 
 
 def _evidence_assessment(brief: IdeaBrief) -> list[str]:
-    """What the proposing specialist thought the literature did to its own idea."""
+    """What the proposing specialist thought the literature did to its own idea.
+
+    Each bullet that restates a record of this run's evidence base ends on that
+    record's reference number. Motivation, further down the same idea, names the
+    findings printed here by that number and by nothing else -- "the statements
+    printed above under Evidence Assessment citing [5], [14] and [3]" -- so without
+    it the cross-reference named three markers this section did not carry.
+    """
     if not brief.evidence_notes:
         return []
     lines = ["### Evidence Assessment", ""]
     current = ""
-    for heading, badge, statement in brief.evidence_notes:
+    for heading, badge, statement, marker in brief.evidence_notes:
         if heading != current:
             if current:
                 lines.append("")
             current = heading
             lines.extend([f"**{heading}:**", ""])
-        lines.append(f"- {f'**{badge}** ' if badge else ''}{statement}")
+        said = _sentence(f"{statement.rstrip('.')} {marker}") if marker else statement
+        lines.append(f"- {f'**{badge}** ' if badge else ''}{said}")
     lines.append("")
     return lines
 

@@ -1359,7 +1359,7 @@ def test_an_evidence_bullet_that_is_only_an_id_says_so():
         "stmt_5",
     ]
 
-    stated = [text for _, _, text in _evidence_notes(record, candidate)]
+    stated = [text for _, _, text, _marker in _evidence_notes(record, candidate)]
     assert "stmt5" in stated[0]
     assert "no record of that id exists in this run's evidence base" in stated[0]
     # A formula is the same shape as an id and is what the ideas are about, so the
