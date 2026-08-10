@@ -4739,6 +4739,36 @@ def test_a_normalizer_complaint_is_not_printed_as_a_scientific_open_question():
     ]
 
 
+def test_the_regions_nothing_was_proposed_for_are_spliced_onto_the_sentence():
+    """A coverage gap is a noun phrase, and a list of them is not a sentence.
+
+    A live report set them after a full stop: "The map also shows where nothing was
+    proposed. Independent replication evidence, negative and null-result evidence,
+    and external-validity boundary conditions." -- a second sentence with no verb.
+    """
+    from coscientist.models import ResearchLandscape
+    from coscientist.narrative import ResearchRecord, _section_three
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.landscape = ResearchLandscape(
+        coverage_gaps=[
+            "Independent replication evidence",
+            "Negative and null-result evidence",
+        ]
+    )
+
+    said = " ".join(_section_three(record).extra)
+    assert (
+        "The map also shows where nothing was proposed: independent replication "
+        "evidence, and negative and null-result evidence." in said
+    )
+
+    # A list holding nothing the series prints used to leave the sentence standing
+    # over "No gap was recorded.", which says the opposite of the sentence above it.
+    record.landscape = ResearchLandscape(coverage_gaps=["N/A"])
+    assert "where nothing was proposed" not in " ".join(_section_three(record).extra)
+
+
 def test_a_template_landscapes_coverage_gaps_are_not_this_runs_open_questions():
     """Three noun-phrase labels the clustering fallback carries, read as findings.
 

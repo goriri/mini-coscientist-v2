@@ -8133,12 +8133,24 @@ def _section_one(record: ResearchRecord) -> _Draft:
             # under Requirements. Numbering them on the cover instead gives this
             # paragraph something to point at and leaves it free to say the thing the
             # cover cannot: that nothing checked them.
+            # Only the number agreed with the count, so a goal that carries one of
+            # them read "The goal carries one explicit constraints".
             "The goal carries "
-            + _number_word(len(plan.constraints)).lower()
-            + " explicit constraints that bound what may legitimately be proposed. "
-            "They are set out and numbered under Requirements on the cover, and those "
-            "numbers are what the rest of this report refers to. No stage of this run "
-            "screened the ideas against them mechanically, and compliance was not a "
+            + _plural(len(plan.constraints), "explicit constraint")
+            + " that "
+            + ("bounds" if len(plan.constraints) == 1 else "bound")
+            + " what may legitimately be proposed. "
+            + (
+                "It is set out and numbered under Requirements on the cover, and that "
+                "number is"
+                if len(plan.constraints) == 1
+                else "They are set out and numbered under Requirements on the cover, "
+                "and those numbers are"
+            )
+            + " what the rest of this report refers to. No stage of this run "
+            "screened the ideas against "
+            + ("it" if len(plan.constraints) == 1 else "them")
+            + " mechanically, and compliance was not a "
             "condition of being ranked or promoted. "
             + _constraint_coverage(record, plan.constraints)
         )
@@ -8146,13 +8158,23 @@ def _section_one(record: ResearchRecord) -> _Draft:
         core.append(
             # Likewise listed on the cover, under Attributes. What this paragraph adds
             # is their standing, which is the part a reader acts on.
+            # Same agreement defect as the constraints paragraph above: a live plan
+            # recording one of them read "The plan also records one assumptions the
+            # work rests on", and the three clauses that follow were all plural.
             "The plan also records "
-            + _number_word(len(plan.assumptions)).lower()
-            + " assumptions the work rests on, listed under Attributes on the cover. "
+            + _plural(len(plan.assumptions), "assumption")
+            + " the work rests on, listed under Attributes on the cover. "
             "They matter because an idea inherits every assumption its goal was framed "
-            "with. Each is an inference rather than an observation, none was tested in "
-            "this run, and a reviewer who disagrees with one should expect the "
-            "corresponding ideas to weaken."
+            "with. "
+            + (
+                "It is an inference rather than an observation, it was not tested in "
+                "this run, and a reviewer who disagrees with it should expect the "
+                "ideas that rest on it to weaken."
+                if len(plan.assumptions) == 1
+                else "Each is an inference rather than an observation, none was tested "
+                "in this run, and a reviewer who disagrees with one should expect the "
+                "corresponding ideas to weaken."
+            )
         )
     # A governance block that a person answered is a decision about this report's
     # contents, so it belongs beside the approval regime rather than in an appendix.
@@ -8807,11 +8829,23 @@ def _section_three(record: ResearchRecord) -> _Draft:
                 + "."
             )
     extra = []
-    if record.landscape and record.landscape.coverage_gaps:
+    # A list of regions is not a sentence. The gaps are noun phrases, and set after
+    # a full stop a live report read "The map also shows where nothing was proposed.
+    # Independent replication evidence, negative and null-result evidence, and
+    # external-validity boundary conditions." -- a second sentence with no verb in
+    # it. Spliced onto the first, they are what that sentence is about.
+    #
+    # Taken before the paragraph rather than inside it, because the series drops the
+    # stubs: a gap list holding nothing else used to print "No gap was recorded."
+    # directly under the sentence saying the map shows where nothing was proposed.
+    gaps = (
+        _join(record.landscape.coverage_gaps, fallback="") if record.landscape else ""
+    )
+    if gaps:
         extra.append(
-            "The map also shows where nothing was proposed. "
-            f"{_join(record.landscape.coverage_gaps, fallback='No gap was recorded.')} A "
-            "coverage gap is not evidence that the region is unpromising; it is "
+            "The map also shows where nothing was proposed: "
+            + _sentence(_spliced(gaps))
+            + " A coverage gap is not evidence that the region is unpromising; it is "
             "evidence that this run did not look there."
         )
     return _Draft(3, "Main Research Directions", core, extra)

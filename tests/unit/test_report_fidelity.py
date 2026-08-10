@@ -3932,6 +3932,47 @@ def test_the_goal_details_are_not_restated_in_full_by_the_sections_that_use_them
     assert "stated under Criteria on the cover" in two
 
 
+def test_a_goal_carrying_one_constraint_and_one_assumption_reads_as_singular():
+    """Only the number agreed with the count in either paragraph.
+
+    A live plan with one of each opened section one with "The goal carries one
+    explicit constraints that bound what may legitimately be proposed" and "The plan
+    also records one assumptions the work rests on", each followed by three clauses
+    written for several.
+    """
+    from coscientist.models import CandidatePopulation, ResearchPlan
+
+    plan = ResearchPlan(
+        question="Can a coating help?",
+        constraints=["Must include uncoated control cells"],
+        assumptions=["The coating does not alter bulk properties"],
+    )
+    record = ResearchRecord(session=Session(question="Can a coating help?"), plan=plan)
+    record.population = CandidatePopulation(candidates=[_candidate("cand_a")])
+
+    one = _section_one_core(record)
+    assert "The goal carries one explicit constraint that bounds what may" in one
+    assert (
+        "It is set out and numbered under Requirements on the cover, and that number "
+        "is what the rest of this report refers to." in one
+    )
+    assert "screened the ideas against it mechanically" in one
+    assert "The plan also records one assumption the work rests on" in one
+    assert (
+        "It is an inference rather than an observation, it was not tested in this "
+        "run, and a reviewer who disagrees with it should expect the ideas that rest "
+        "on it to weaken." in one
+    )
+
+    plan.constraints.append("Cells must be cycled at 25 °C")
+    plan.assumptions.append("The control cells are otherwise identical")
+    several = _section_one_core(record)
+    assert "The goal carries two explicit constraints that bound what may" in several
+    assert "screened the ideas against them mechanically" in several
+    assert "The plan also records two assumptions the work rests on" in several
+    assert "Each is an inference rather than an observation" in several
+
+
 def test_the_cover_separates_what_would_meet_the_goal_from_what_ranked_the_ideas():
     """One bulleted list held both, set by different stages and answering different
     questions, with nothing on the page marking where one ended."""
