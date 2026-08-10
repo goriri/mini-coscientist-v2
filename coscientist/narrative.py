@@ -3863,6 +3863,23 @@ def _authors_own_table(text: str) -> tuple[str, str, list[list[str]]]:
     return str(text or ""), "", []
 
 
+# A bullet a specialist wrote inside a prose field. The field is printed as one line,
+# so the marker lands mid-sentence: two live debate turns read "Critical Evaluation of
+# Novelty and Goal Alignment: - the opposing idea directly addresses the goal's core
+# question" and "Methodological Constraints: - the opposing idea relies on comparing
+# wet-chemical and ALD routes" -- a hyphen standing where the reader expects a word.
+#
+# The space after the marker is required, so a horizontal rule and an em-dash opening
+# are not bullets.
+_LIST_MARKER = re.compile(r"^\s*[-*+]\s+")
+
+
+def _list_item(line: str) -> str:
+    """The content of a Markdown bullet, or "" for a line that is not one."""
+    marker = _LIST_MARKER.match(line)
+    return line[marker.end() :].strip() if marker else ""
+
+
 def _blocks_as_prose(text: str) -> str:
     """A specialist's own Markdown, written as the prose the field is declared to hold.
 
@@ -3890,6 +3907,23 @@ def _blocks_as_prose(text: str) -> str:
         ):
             heading = _MARKDOWN_HEADING_RE.match(lines[index].strip())
             if not heading:
+                if _LIST_MARKER.match(lines[index]):
+                    # The case the specialist wrote is kept, for the reason
+                    # ``_sentence`` gives about its own opening word: a bullet may
+                    # legitimately begin on pH or n-hexane, and capitalising those
+                    # would be a worse error than the one being fixed. The live
+                    # lower-case openings were not the specialist's -- the debater
+                    # wrote "Hypothesis 2 directly addresses", and the pass that
+                    # rewrites that label as "the opposing idea" restores the capital
+                    # after a full stop, which is what closing the item here supplies.
+                    if item := _list_item(lines[index]):
+                        if (previous := out[-1].rstrip() if out else "") and not (
+                            previous.endswith(_OPEN_FOR_A_LIST)
+                        ):
+                            out[-1] = _stopped(previous)
+                        out.append(_stopped(item))
+                    index += 1
+                    continue
                 out.append(lines[index])
                 index += 1
                 continue
@@ -3917,7 +3951,11 @@ def _blocks_as_prose(text: str) -> str:
                 continue
             while lines[index].strip() == "":
                 index += 1
-            out.append(f"{title}: {lines[index].lstrip()}")
+            # A heading over a list introduces its first item, and the colon is what
+            # introduces it -- the marker would be a second introduction, in a
+            # character.
+            opens = _list_item(lines[index]) or lines[index].lstrip()
+            out.append(f"{title}: {opens}")
             index += 1
             continue
         index += 2
@@ -3967,6 +4005,15 @@ _CONTRACT_FIELD_RE = re.compile(
 
 _TERMINAL = (".", "!", "?", "…")
 """What already closes a sentence, so nothing closes it a second time."""
+
+
+_OPEN_FOR_A_LIST = (*_TERMINAL, ":", ";")
+"""What a line can end on and still have a bullet follow it rather than run into it.
+
+A colon or a semicolon introduces the items under it; a terminator closes the sentence
+before them. Anything else is a lead-in that was closed by the line break alone, and
+the line break is what flattening a prose field takes away.
+"""
 
 
 def _stopped(text: str) -> str:

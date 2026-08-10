@@ -4189,6 +4189,48 @@ def test_a_debate_turn_is_read_from_the_side_whose_section_prints_it():
     )
 
 
+def test_a_bullet_a_debater_wrote_inside_a_turn_becomes_a_sentence_of_the_turn():
+    """A prose field prints as one line, so a marker written into it lands mid-line.
+
+    Two live debate turns read "Critical Evaluation of Novelty and Goal Alignment: -
+    the opposing idea directly addresses the goal's core question" -- a hyphen where
+    the reader expects a word. The label after it stayed lower case for the same
+    reason: the pass that restores a substituted label's capital looks for a full stop
+    in front of it and found a list marker.
+    """
+    from coscientist.narrative import _sentence, _sided
+
+    turn = (
+        "Critical Evaluation of Novelty and Goal Alignment:\n"
+        "- Hypothesis 2 addresses the goal by arguing the negative.\n"
+        "- Hypothesis 1 aligns with the success criteria."
+    )
+
+    assert _sided(_sentence(turn), first=True) == (
+        "Critical Evaluation of Novelty and Goal Alignment: the opposing idea "
+        "addresses the goal by arguing the negative. This idea aligns with the "
+        "success criteria."
+    )
+
+
+def test_a_lead_in_the_line_break_closed_is_closed_before_the_bullets_under_it():
+    """Flattening takes the line break away, so the lead-in runs into the first item."""
+    from coscientist.narrative import _sentence
+
+    assert _sentence("Two risks stand\n- Radical recombination.\n- Plasma damage.") == (
+        "Two risks stand. Radical recombination. Plasma damage."
+    )
+
+
+def test_a_heading_over_a_list_introduces_its_first_item_without_the_marker():
+    """The colon is what introduces the item; the marker would be a second one."""
+    from coscientist.narrative import _sentence
+
+    assert _sentence("### Key risks\n- Radical recombination.\n- Plasma damage.") == (
+        "Key risks: Radical recombination. Plasma damage."
+    )
+
+
 def test_a_label_the_debater_stopped_capitalising_is_still_a_label():
     """A judge capitalises it introducing the positions and drops the capital arguing.
 
