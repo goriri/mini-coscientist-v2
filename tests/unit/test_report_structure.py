@@ -2085,6 +2085,23 @@ def test_a_broken_grounding_verdict_is_unmissable(support: str):
     assert notice.startswith("Warning:")
 
 
+def test_the_discredited_warning_does_not_borrow_the_tournaments_words():
+    """The warning read "the claim below should not be carried forward until it is
+    re-grounded", and eighty lines under it the same idea's Executive Verdict read
+    "finished rank 1 on an Elo of 1290 and was carried forward onto the shortlist".
+    Both were true of the run's top idea and the shared phrase made them read as a
+    contradiction, so the warning says what it means -- do not act on it -- and says
+    what the shortlist was decided on instead."""
+    notice = support_notice("discredited", [])
+
+    assert "should not be acted on until it is re-grounded" in notice
+    assert "should not be carried forward" not in notice
+    assert (
+        "Where the ranking below carried it forward, it did so on the reviews and "
+        "the tournament, neither of which went back to the evidence." in notice
+    )
+
+
 def test_two_broken_citations_are_named_as_a_pair_and_not_as_a_short_list():
     """ "claim_1_2, and stmt_3_pass2" -- ids are noun phrases, and the clause joiner
     put a comma before the conjunction, which reads as a list with an item lost
@@ -6806,9 +6823,13 @@ def test_a_fork_says_which_of_the_models_it_names_it_never_called(
 
     assert "deep-research-preview-04-2026" in produced
     assert (
-        "of which deep-research-preview-04-2026 produced the forked scope and "
-        "evidence rather than anything this run ran" in produced
+        "of which deep-research-preview-04-2026 ran only in the scope and evidence "
+        "this run forked, and in nothing it executed itself" in produced
     )
+    # And it does not claim the forked work for that model. Table 27 gives the forked
+    # scope to the model that wrote it, which on a live fork was a different one --
+    # dropped from this qualifier only because it also ran stages the run executed.
+    assert "produced the forked scope" not in produced
 
 
 def test_the_warnings_chapter_says_the_evidence_base_is_not_this_runs(

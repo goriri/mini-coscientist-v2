@@ -3097,11 +3097,20 @@ def _support_parts(
             "must be read as unsupported rather than as evidence-backed.",
         )
     if support == "discredited":
+        # "acted on", not "carried forward": the tournament carries ideas forward onto
+        # the shortlist, and eighty lines below this warning the same idea's Executive
+        # Verdict read "This idea finished rank 1 on an Elo of 1290 and was carried
+        # forward onto the shortlist". Both sentences were right and the phrase they
+        # shared made them read as a contradiction, over the top-ranked idea of the
+        # run. Nothing in the shortlist is an evidence check, which is why the warning
+        # stands whatever the ranking did.
         return (
             "",
             f"Warning: this idea cites evidence that {broken_grounding_clause(causes)}"
             ". Its stated grounding is discredited, and the claim below should not be "
-            "carried forward until it is re-grounded on evidence that still stands.",
+            "acted on until it is re-grounded on evidence that still stands. Where the "
+            "ranking below carried it forward, it did so on the reviews and the "
+            "tournament, neither of which went back to the evidence.",
         )
     return _SUPPORT_NOTICES.get(support, _SUPPORT_NOTICES["unknown"])
 

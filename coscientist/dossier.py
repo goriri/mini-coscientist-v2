@@ -1827,11 +1827,19 @@ def _run_facts(record: ResearchRecord) -> list[str]:
     # named the Deep Research model here, unqualified, one bullet under the line
     # saying the run did not search the literature -- in the field an auditor uses
     # to reproduce it.
+    #
+    # The set is the models that ran in a forked stage and nowhere else, and the
+    # qualifier has to say that rather than claim the forked work. Written as
+    # "produced the forked scope and evidence", it credited the whole of both to
+    # whatever survived the difference: a live fork read "of which
+    # deep-research-preview-04-2026 produced the forked scope and evidence", while
+    # Table 27 four bullets below gave the scope to gemini-3.1-pro-preview -- dropped
+    # from the qualifier only because it also ran stages this run executed.
     inherited = sorted(produced[True] - produced[False], key=str.lower)
     if session.seeded_evidence_from and inherited:
         fact += (
-            f" — of which {_listed(inherited)} produced the forked scope and "
-            "evidence rather than anything this run ran"
+            f" — of which {_listed(inherited)} ran only in the scope and evidence "
+            "this run forked, and in nothing it executed itself"
         )
     facts.append(fact)
     prompts = sorted(
