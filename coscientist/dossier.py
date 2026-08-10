@@ -2128,6 +2128,37 @@ def _advisory_appendix(advisories: Sequence[Advisory]) -> list[str]:
     return lines
 
 
+_REPAIR_REASON = re.compile(r"^(?P<detail>.*\S) \((?P<reason>[^()]+)\)$")
+
+
+def _grouped_repairs(repairs: Sequence[str]) -> str:
+    """The repair list with a shared trailing reason stated once, not once per field.
+
+    Every rescaled score carries the same parenthetical, and the renderer joined the
+    raw strings. A live report printed "(answered on a 1-10 scale)" twenty times in
+    one sentence -- once after each of the twenty fields the run rescaled -- which
+    reads as twenty findings where there is one, and buries the field names it is
+    the only record of. Grouped in first-seen order, so the sentence still walks the
+    fields in the order the repair pass met them.
+    """
+    grouped: dict[str, list[str]] = {}
+    for repair in repairs:
+        match = _REPAIR_REASON.match(repair)
+        if match:
+            grouped.setdefault(match["reason"], []).append(match["detail"])
+        else:
+            # Its own group, keyed on itself so it is never folded into another's
+            # reason, and printed back exactly as the repair pass wrote it.
+            grouped.setdefault(f"\x00{repair}", []).append(repair)
+    stated = []
+    for reason, details in grouped.items():
+        if reason.startswith("\x00"):
+            stated.extend(details)
+        else:
+            stated.append(", ".join(details) + f" ({reason})")
+    return "; ".join(stated)
+
+
 def _provenance_appendix(record: ResearchRecord) -> list[str]:
     """Where each stage's payload came from, so a template can never pass as reasoning."""
     lines = ["# Provenance", "", "## Run", "", *_run_facts(record), ""]
@@ -2311,7 +2342,7 @@ def _provenance_appendix(record: ResearchRecord) -> list[str]:
             [
                 f"The {_agent_name(note.agent)} answer was repaired before it "
                 "could be accepted: "
-                + "; ".join(note.repairs or ["no repair detail was recorded"])
+                + _grouped_repairs(note.repairs or ["no repair detail was recorded"])
                 + ".",
                 "",
             ]

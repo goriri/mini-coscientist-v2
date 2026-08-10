@@ -2659,6 +2659,45 @@ def test_a_stage_run_by_one_specialist_of_its_own_name_says_so_once(
     assert fanned == ["literature discovery", "source verification"]
 
 
+def test_one_reason_behind_twenty_repairs_is_written_once(rich_session: Session):
+    """A live report's repair paragraph read "Candidate.score_novelty 6 -> 3
+    (answered on a 1-10 scale); Candidate.score_feasibility 9 -> 5 (answered on a
+    1-10 scale); ..." for twenty fields, the identical parenthetical after every
+    one. It is one finding about the stage, not twenty, and repeating it buries
+    the field names the sentence exists to record."""
+    from coscientist.dossier import _provenance_appendix
+    from coscientist.narrative import ProvenanceNote
+
+    record = load_record(rich_session)
+    record.provenance.append(
+        ProvenanceNote(
+            stage="reflect",
+            agent="reflection",
+            schema_name="ReviewSet",
+            source="repaired",
+            repairs=[
+                "Candidate.score_novelty 6 -> 3 (answered on a 1-10 scale)",
+                "Candidate.score_feasibility 9 -> 5 (answered on a 1-10 scale)",
+                "ReviewSet.reviews: wrapped a scalar in a list",
+                "Candidate.score_impact 80 -> 4 (answered on a 1-100 scale)",
+            ],
+            error="",
+            model="gemini-3.1-pro-preview",
+        )
+    )
+    appendix = "\n".join(_provenance_appendix(record))
+
+    assert appendix.count("(answered on a 1-10 scale)") == 1
+    assert (
+        "Candidate.score_novelty 6 -> 3, Candidate.score_feasibility 9 -> 5 "
+        "(answered on a 1-10 scale)" in appendix
+    )
+    # A different reason is a different finding and keeps its own parenthetical,
+    # and a repair that carries no reason is printed exactly as it was recorded.
+    assert "Candidate.score_impact 80 -> 4 (answered on a 1-100 scale)" in appendix
+    assert "ReviewSet.reviews: wrapped a scalar in a list" in appendix
+
+
 def test_a_title_never_opens_a_bracket_it_does_not_close():
     """Claims carry their parameters in brackets, so a nine-word cut lands inside
     one often enough to matter: "... Island Coating (5 Nm" was a real heading."""
