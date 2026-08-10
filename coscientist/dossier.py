@@ -58,6 +58,7 @@ from .models import FACET_PHRASES, FORKED_STAGES, MERGE_PRODUCER, Session
 from .narrative import (
     _AGENT_NAMES,
     _CONTRACT_FIELD_NAMES,
+    _UNSTATED,
     CRITERION_SECTIONS,
     DEEP_DIVE_PREAMBLE,
     DISCOVERY_STOOD_IN,
@@ -1428,9 +1429,15 @@ def _validation_protocol(brief: IdeaBrief) -> list[str]:
     go/no-go threshold were in the saved session for all eight live ideas and in none
     of the three exports. Without it the report proposes hypotheses and says nothing
     about how to test them.
+
+    Where the specialist left it empty the section is still set, and says so. The
+    field is required by the contract, seven of eight live ideas carried one, and
+    dropping the heading for the eighth left that idea with a flowchart of an
+    experiment, no steps under it, and nothing anywhere saying which of the two
+    happened -- the specialist writing no protocol, or this report losing it.
     """
     if not brief.validation_protocol:
-        return []
+        return ["### Validation Protocol", "", _UNSTATED["Validation protocol"], ""]
     lines = ["### Validation Protocol", ""]
     if len(brief.validation_protocol) == 1:
         lines.extend([brief.validation_protocol[0], ""])

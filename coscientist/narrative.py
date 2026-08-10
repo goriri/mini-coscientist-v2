@@ -4517,11 +4517,25 @@ def _authored_extras(
 _PROTOCOL_STEP = re.compile(r"(?:\A|(?<=[.;:!?\)])\s|\n)\s*(\d{1,2})[.)]\s+(?=\S)")
 # The label a specialist puts over the protocol inside the protocol field, which is
 # the heading this section already carries.
+#
+# "Protocol" on its own too, because a specialist that opened the field with a
+# section of its own goes back to the bench steps under whatever word it likes. One
+# live idea wrote "Critical Scientific Judgment: The main risk is the high impedance
+# ... Protocol: Deposit 2-5 nm LiPON on NMC811 via ALD. Assemble CR2032 coin cells
+# (n >= 5 ...)", and with the word unrecognised the whole field read as the section
+# it opened with: that idea printed a workflow diagram of an experiment and no
+# Validation Protocol at all, the one section of the eight that had none.
+#
+# The bare word needs its colon. The qualified ones name a section whatever follows
+# them, but "Protocol" alone is an ordinary noun, and a step reading "Follow the ASTM
+# protocol under load" opens no section.
 _PROTOCOL_LABEL = re.compile(
     # Its own line, or run on after the sentence before it, which is where the
     # flattener leaves a heading a specialist wrote inside a one-field answer.
     r"(?:^|(?<=[.;:!?]\s))[ \t]{0,3}(?:#{1,6}[ \t]*)?\**[ \t]*"
-    r"(?:Experimental|Validation|Testing)[ \t]+Protocol[ \t]*\**[ \t]*:?[ \t]*\**[ \t]*",
+    r"(?:(?:Experimental|Validation|Testing)[ \t]+Protocol[ \t]*\**[ \t]*:?"
+    r"|Protocol[ \t]*\**[ \t]*:)"
+    r"[ \t]*\**[ \t]*",
     re.IGNORECASE | re.MULTILINE,
 )
 

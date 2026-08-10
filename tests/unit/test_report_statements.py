@@ -810,6 +810,71 @@ def test_the_protocol_is_printed_as_the_steps_the_specialist_numbered():
     assert lines[2:5] == [f"{index}. {step}" for index, step in enumerate(steps, 1)]
 
 
+def test_a_specialist_that_goes_back_to_the_bench_under_one_word_is_followed():
+    """The label is the specialist's choice, and "Protocol" alone is one of them.
+
+    A live idea wrote its judgment and then its bench steps into the protocol field
+    under a bare "Protocol:", so with only the qualified labels recognised the whole
+    field read as the section it opened with. That idea printed a workflow diagram of
+    an experiment and no Validation Protocol -- the one of eight that had none.
+    """
+    from coscientist.models import Candidate
+    from coscientist.narrative import _authored_extras, _protocol_steps
+
+    candidate = Candidate(
+        title="A 3 nm LiPON Coating",
+        claim="A pre-formed LiPON layer raises retention.",
+        mechanism_model="LiPON blocks solvent transport.",
+        rationale="A single-ion conductor passes Li+ and nothing else.",
+        validation_protocol=(
+            "Critical Scientific Judgment: The main risk is the impedance of a layer "
+            "past the tunnelling distance. Protocol: Deposit 2-5 nm LiPON on NMC811 "
+            "by ALD. Assemble CR2032 coin cells (n >= 5 per arm). Cycle at 1C."
+        ),
+        falsifier="Resistance grows faster than the control.",
+    )
+
+    assert _protocol_steps(candidate.validation_protocol) == [
+        "Deposit 2-5 nm LiPON on NMC811 by ALD. Assemble CR2032 coin cells "
+        "(n >= 5 per arm). Cycle at 1C."
+    ]
+    assert _authored_extras(candidate)[2] == [
+        (
+            "Critical Scientific Judgment",
+            "The main risk is the impedance of a layer past the tunnelling distance.",
+        )
+    ]
+
+
+def test_the_ordinary_noun_is_not_read_as_a_label_the_specialist_wrote():
+    """ "Protocol" qualified names a section whatever follows it; alone it is a word a
+    bench step is entitled to use, so the bare one is only a label with its colon."""
+    from coscientist.narrative import _protocol_steps
+
+    written = "Cells are built in an argon glovebox. Protocol requires a hood."
+
+    assert _protocol_steps(written) == [written]
+
+
+def test_an_idea_whose_specialist_wrote_no_protocol_is_not_left_silent_about_it():
+    """The field is required by the contract and seven of eight live ideas filled it.
+
+    Dropping the heading for the eighth left that idea with a flowchart of an
+    experiment, no steps under it, and nothing saying which of the two happened --
+    the specialist writing no protocol, or this report losing it.
+    """
+    from dataclasses import replace
+
+    from coscientist.dossier import _validation_protocol
+
+    said = _validation_protocol(
+        replace(_brief_without_a_rating(), validation_protocol=[])
+    )
+
+    assert said[0] == "### Validation Protocol"
+    assert "recorded no protocol for testing this idea" in said[2]
+
+
 def _brief_with_own_sections(title: str) -> object:
     from coscientist.narrative import IdeaBrief
 
