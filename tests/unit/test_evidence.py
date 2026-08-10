@@ -649,3 +649,58 @@ def test_a_facet_pass_is_told_not_to_hand_the_pipelines_words_back_as_prose():
     assert "mean nothing to a reader" in " ".join(prompt.split())
     assert "honest empty facet" not in prompt
     assert "genuinely does not exist" not in prompt
+
+
+@pytest.mark.parametrize(
+    ("language", "reported_in"),
+    [("en", "Summarise it in English"), ("zh-Hans", "Summarise it in Simplified")],
+)
+def test_the_one_prompt_that_searches_the_open_web_is_told_what_to_report_in(
+    language: str, reported_in: str
+):
+    """It was the one prompt in the system carrying no working language at all.
+    A Chinese run's whole Knowledge Base came back in English because nothing
+    here said otherwise, and an English run carried a German paper's own sentence
+    into its findings: "Die Lebensdauer der Elektrodenmaterialien wird durch die
+    Beschichtung stark erhöht" stood among the evidence findings."""
+    session = Session(
+        question="Can a coating extend lithium-ion cycle life?", language=language
+    )
+    plan = ResearchPlan(question=session.question, intended_claim="hypothesis")
+    prompt = build_research_prompt(session, plan, pass_number=1, facet="supporting")
+
+    assert reported_in in prompt
+    assert "never carry a sentence across in the language you found it in" in prompt
+    # The title names a document that exists, and translating it names one that
+    # does not.
+    assert "title, authors, and publisher are the exception" in prompt
+    assert ("简体中文" in prompt) is (language == "zh-Hans")
+
+
+@pytest.mark.parametrize(
+    ("language", "reported_in"),
+    [("en", "Summarise it in English"), ("zh-Hans", "Summarise it in Simplified")],
+)
+def test_the_extractor_is_told_the_working_language_of_the_run_it_extracts_for(
+    language: str, reported_in: str
+):
+    """ "Copied verbatim" is asked of the URLs, and this is where it was taken to
+    cover the prose as well."""
+    seen: dict[str, str] = {}
+
+    def _capture(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return json.dumps(
+            {"question": "Q", "research_directions": [], "statements": []}
+        )
+
+    normalize_report(
+        question="Q",
+        report="A German paper reports longer electrode life.",
+        pass_number=1,
+        normalizer=_capture,
+        language=language,
+    )
+
+    assert reported_in in seen["prompt"]
+    assert ("简体中文" in seen["prompt"]) is (language == "zh-Hans")

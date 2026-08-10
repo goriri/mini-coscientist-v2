@@ -207,6 +207,28 @@ def language_clause(code: str) -> str:
     return language_choice(code).clause
 
 
+def source_language_rule(code: str) -> str:
+    """What to do with a source published in some other language.
+
+    Separate from :func:`language_clause`, and spliced only into the two prompts
+    that read documents, because it is the one thing an English run needs said
+    about language and the rest of the prompts do not read documents. The
+    English clause is empty on the argument that every prompt here is written in
+    English already, which holds until a source is not: a German paper on
+    coating lifetimes put "Die Lebensdauer der Elektrodenmaterialien wird durch
+    die Beschichtung stark erhöht" into the evidence findings of an English
+    report, one line of a corpus summary its reader could not read.
+    """
+    return (
+        "A source is in whatever language it was published in, and the working "
+        f"language is what you report in regardless. Summarise it in "
+        f"{language_choice(code).label}, translate anything you quote, and never "
+        "carry a sentence across in the language you found it in. A source's own "
+        "title, authors, and publisher are the exception: those name a document "
+        "that exists."
+    )
+
+
 def session_language_clause(session: object) -> str:
     """The working-language clause for a session, ready to concatenate.
 

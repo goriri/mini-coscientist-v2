@@ -17,6 +17,12 @@ from urllib.request import Request, urlopen
 
 from pydantic import ValidationError
 
+from .model_catalog import (
+    DEFAULT_LANGUAGE,
+    language_clause,
+    session_language_clause,
+    source_language_rule,
+)
 from .models import (
     CREDITED_STATUSES,
     EVIDENCE_FACETS,
@@ -1302,6 +1308,7 @@ def normalize_report(
     pass_number: int,
     normalizer: Callable[[str], str] | None = None,
     citation_urls: list[str] | None = None,
+    language: str = DEFAULT_LANGUAGE,
 ) -> DiscoveryNarrative:
     """Normalize a report, accepting only citations the provider itself returned.
 
@@ -1330,6 +1337,15 @@ def normalize_report(
             if cited
             else ""
         )
+        # Verbatim is asked for of the URLs, and was taken to cover the prose: this
+        # extractor is where "Die Lebensdauer der Elektrodenmaterialien wird durch
+        # die Beschichtung stark erhöht" entered the findings of an English report,
+        # lifted whole out of the German paper the pass cited.
+        working_language = "\n".join(
+            part
+            for part in (language_clause(language), source_language_rule(language))
+            if part
+        )
         prompt = (
             "Extract one DiscoveryNarrative JSON object from the report below. "
             "Do not add facts or URLs. Each statement must contain its originating "
@@ -1337,6 +1353,7 @@ def normalize_report(
             "verbatim from the report or from the numbered source list beneath "
             "it. Where the report cites a marker such as [3], resolve it against "
             "that list.\n\n"
+            f"{working_language}\n\n"
             f"Research question: {question}\n\nReport:\n{report[:180000]}"
             f"{sources_block}"
         )
@@ -1730,6 +1747,12 @@ def build_research_prompt(
         f"Constraints: {'; '.join(plan.constraints) or 'none supplied'}\n"
         f"Literature-only fallback: {'yes' if session.literature_only else 'no'}\n\n"
         f"{focus}\n\nRequired evidence coverage:\n{coverage_requirements}\n\n"
+        # The one prompt in the system that searches the open web, and the only
+        # one that had no working language at all. A Chinese run's whole Knowledge
+        # Base came back in English because this prompt never said otherwise.
+        f"{session_language_clause(session)}"
+        f"{source_language_rule(getattr(session, 'language', '') or DEFAULT_LANGUAGE)}"
+        "\n\n"
         "Prefer primary sources, authoritative repositories, standards, registered "
         "studies, and datasets. Use readable citations with source URLs. Clearly "
         "separate findings, disagreement, inference, and proposals. If evidence is "
@@ -2026,6 +2049,7 @@ class IterativeEvidenceDiscovery:
                 pass_number=run.pass_number,
                 normalizer=normalizer,
                 citation_urls=citation_urls,
+                language=getattr(session, "language", "") or DEFAULT_LANGUAGE,
             )
             # What the pass was sent to cover, which for the gap-closing pass is
             # nothing in particular: it is planned with no facet because it covers
