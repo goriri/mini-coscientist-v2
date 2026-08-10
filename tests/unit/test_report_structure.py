@@ -5418,6 +5418,67 @@ def test_two_records_cited_side_by_side_are_given_their_standing_once():
     )
 
 
+def test_a_sentence_opening_on_a_bare_evidence_noun_is_not_read_as_an_instruction():
+    """ "Evidence source_2 and source_5 demonstrate that ..." is an ellipsis while the
+    ids are ids and an imperative once they are named. A live motivation ran "Evidence
+    the unverified sources Improvement of the Cycling Performance and Thermal Stability
+    of Lithium-Ion Cells by Double-Layer Coating of Cathode Materials with Al2O3
+    Nanoparticles and Conductive Polymer and Conductive Polymer Frameworks in Silicon
+    Anodes for Advanced Lithium-Ion Batteries demonstrate that double-layer Al2O3 and
+    conductive polymer coatings significantly improve cycling and thermal stability."
+    -- the reader is told to evidence two documents, and the verb that says otherwise
+    is forty words away."""
+    from coscientist.models import (
+        Candidate,
+        CandidatePopulation,
+        EvidencePacket,
+        SourceRecord,
+    )
+    from coscientist.narrative import ResearchRecord, _name_ids_in_prose
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id=f"source_{index}",
+                url=f"https://example.org/{index}",
+                title=title,
+                verification_status="discovered_unverified",
+            )
+            for index, title in enumerate(
+                ("Double-Layer Coating", "Polymer Frameworks")
+            )
+        ],
+    )
+    record.population = CandidatePopulation(
+        candidates=[
+            Candidate(
+                id="cand_1",
+                title="A Nacre-Mimetic Shield",
+                claim="A double layer extends cycle life.",
+                rationale="Brick and mortar dissipates stress. "
+                "Evidence source_0 and source_1 demonstrate that it holds.",
+                mechanism_model="Evidence source_0 demonstrates the barrier holds.",
+                validation_protocol="Coin cells against an uncoated control.",
+                falsifier="No difference at ten cells per arm.",
+            )
+        ]
+    )
+
+    _name_ids_in_prose(record)
+
+    candidate = record.population.candidates[0]
+    assert candidate.rationale == (
+        "Brick and mortar dissipates stress. The unverified sources Double-Layer "
+        "Coating and Polymer Frameworks demonstrate that it holds."
+    )
+    # And at the head of the field, where there is no full stop to read behind.
+    assert candidate.mechanism_model == (
+        "The unverified source Double-Layer Coating demonstrates the barrier holds."
+    )
+
+
 def test_naming_an_id_does_not_take_the_quotes_off_the_words_around_it():
     """The pass that names ids swept every apostrophe-and-space out of any field that
     held one, to clear the quotes it had orphaned. A live mechanism read "This

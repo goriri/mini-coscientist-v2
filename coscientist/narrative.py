@@ -2268,6 +2268,21 @@ def _double_named(match: re.Match[str]) -> str:
     )
 
 
+# A specialist that opens the sentence on a bare "Evidence" and then cites. While the
+# ids are ids it reads as an ellipsis -- "Evidence source_2 and source_5 demonstrate
+# that ..." -- and once they are named it reads as an instruction: a live motivation
+# ran "Evidence the unverified sources Improvement of the Cycling Performance and
+# Thermal Stability of Lithium-Ion Cells by Double-Layer Coating of Cathode Materials
+# with Al2O3 Nanoparticles and Conductive Polymer and Conductive Polymer Frameworks in
+# Silicon Anodes for Advanced Lithium-Ion Batteries demonstrate that ...", telling the
+# reader to evidence two documents and only correcting itself at a verb forty words
+# later. The noun carries nothing the names do not, so the names take the sentence.
+_BARE_EVIDENCE_HEAD = re.compile(
+    r"(\A|(?<=[.!?])\s+)(?:Evidence|Sources|Claims|Findings)\s+the "
+    r"(?=(?:retracted |unretrieved |unverified )?(?:sources?|claims? drawn from) )"
+)
+
+
 # Records a specialist cited side by side, which it writes as "(claim_2_1, claim_3_4)"
 # at least as often as it writes them into a clause. The name of a claim runs to eight
 # words before it reaches the title, so naming each one separately said the same eight
@@ -2599,6 +2614,7 @@ def _name_ids_in_prose(record: ResearchRecord) -> None:
             text = _RECORD_ID_RUN.sub(_named_run, text)
             text = _RECORD_ID.sub(_named, text)
             text = _DOUBLE_NAMED_SOURCE.sub(_double_named, text)
+            text = _BARE_EVIDENCE_HEAD.sub(r"\1The ", text)
         # A field holding nothing but the enum is the enum, not prose about it, and
         # the renderer formats those itself -- rewriting them here turned every
         # "Evidence First" category path into "Evidence-First".
