@@ -6798,8 +6798,8 @@ def test_the_generation_strategies_are_named_where_the_chapter_counts_them(
 
     assert "described above" not in lead
     assert (
-        "Four generation strategies worked the question in parallel: evidence "
-        "first, mechanism first, analogy transfer, and competing explanation." in lead
+        "Four generation strategies worked the question in parallel: evidence-"
+        "first, mechanism-first, analogy-transfer, and competing-explanation." in lead
     )
 
 
@@ -6964,4 +6964,38 @@ def test_a_cited_finding_is_labelled_with_the_direction_the_record_actually_hold
     assert (
         "The findings this idea cites that the evidence stage recorded as arguing "
         "for the research question: " in stated
+    )
+
+
+def test_one_generator_is_called_the_same_thing_wherever_the_report_names_it(
+    rich_session: Session,
+):
+    """There were two sets of these names. The taxonomy path under each idea called
+    the competing-explanation generator "Falsification-led" and the analogy-transfer
+    one "Transfer-led"; the summary table's Strategy column and the provenance
+    appendix called the same two "competing explanation" and "analogy transfer". Four
+    generators, seven names, and nothing saying which were the same generator."""
+    report = compile_dossier(rich_session)
+
+    for stale in ("Falsification-led", "Transfer-led", "Evidence-led", "Mechanism-led"):
+        assert stale not in report
+    for name in ("Competing-explanation", "Analogy-transfer"):
+        assert f"| {name} " in report, "the Strategy column names the generator"
+        assert f"> {name}" in report, "and the taxonomy path names it the same way"
+
+
+def test_a_specialists_own_colon_does_not_end_up_inside_the_reports(
+    rich_session: Session,
+):
+    """A live Go/No-Go subsection read "Its go/no-go tests: go: XPS confirms a
+    conformal layer at 5 nm; no-go: the layer is discontinuous" -- three colons in one
+    sentence, of which the reader has to work out that the first governs the whole and
+    the others govern a clause each."""
+    from coscientist.narrative import _introduces
+
+    assert _introduces("Its go/no-go tests", "proceed if retention holds") == (
+        "Its go/no-go tests: proceed if retention holds"
+    )
+    assert _introduces("Its go/no-go tests", "go: retention holds; no-go: it does") == (
+        "Its go/no-go tests — go: retention holds; no-go: it does"
     )

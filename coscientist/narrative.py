@@ -3812,6 +3812,18 @@ def _states_a_critique(text: str) -> bool:
     return bool(cleaned) and not _BARE_HANDLE.match(cleaned)
 
 
+def _introduces(lead: str, text: str) -> str:
+    """A lead-in and the text it introduces, joined so that one colon governs.
+
+    A colon inside what a colon introduces leaves the second one with no antecedent a
+    reader can find. A live Go/No-Go subsection read "Its go/no-go tests: go: XPS
+    confirms a conformal layer at 5 nm; no-go: the layer is discontinuous" -- three
+    colons in one sentence, of which the reader has to work out that the first governs
+    the whole and the others govern a clause each.
+    """
+    return f"{lead} — {text}" if ":" in text.split(". ")[0] else f"{lead}: {text}"
+
+
 def _spliced(text: str) -> str:
     """Fold a stated sentence into a longer one without destroying its notation.
 
@@ -4166,11 +4178,18 @@ _REVIEWER_QUESTIONS = {
 }
 
 
+# One name per generator, used wherever the report names the strategy an idea came
+# from. There were two sets of these: the taxonomy path under each idea called the
+# competing-explanation generator "Falsification-led" and the analogy-transfer one
+# "Transfer-led", while the summary table's Strategy column and the provenance
+# appendix called the same two "competing explanation" and "analogy transfer". Four
+# generators, seven names, and nothing on the page saying which of them were the same
+# generator.
 _STRATEGY_POSTURE = {
-    "evidence_first": "Evidence-led",
-    "mechanism_first": "Mechanism-led",
-    "analogy_transfer": "Transfer-led",
-    "competing_explanation": "Falsification-led",
+    "evidence_first": "Evidence-first",
+    "mechanism_first": "Mechanism-first",
+    "analogy_transfer": "Analogy-transfer",
+    "competing_explanation": "Competing-explanation",
 }
 
 
@@ -5255,7 +5274,8 @@ def _summary_sections(
                 # a claim about it. What the tests are for is then the same clause
                 # under every idea that recorded any, so it is in the preamble above
                 # the ideas and this prints the tests alone.
-                f"Its go/no-go tests: {_spliced(facts['Go/no-go tests'])}."
+                _introduces("Its go/no-go tests", _spliced(facts["Go/no-go tests"]))
+                + "."
                 if _stated(facts, "Go/no-go tests")
                 else "No go/no-go threshold was recorded either, so nothing states "
                 "in advance what result would stop the work."
@@ -6240,7 +6260,10 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
                 self_rating_title=rating_title,
                 self_rating=rating,
                 self_rating_source=rating_source,
-                strategy=candidate.generation_strategy.replace("_", " "),
+                strategy=_STRATEGY_POSTURE.get(
+                    candidate.generation_strategy,
+                    candidate.generation_strategy.replace("_", " "),
+                ),
                 validation_protocol=_protocol_steps(candidate.validation_protocol),
                 mermaid=candidate.workflow_diagram_mermaid.strip(),
                 evidence_notes=_evidence_notes(record, candidate),
@@ -8168,7 +8191,10 @@ def _section_four(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
         + (
             f" {_number_word(len(strategies))} generation "
             f"{'strategy' if len(strategies) == 1 else 'strategies'} worked the "
-            f"question in parallel: {_series(strategies)}."
+            # Lower case: these are the names the Strategy column and the taxonomy
+            # path print, and they are capitalised there because a cell and a path
+            # segment start with a capital. Inside a sentence they do not.
+            f"question in parallel: {_series([item.lower() for item in strategies])}."
             if strategies
             else ""
         )

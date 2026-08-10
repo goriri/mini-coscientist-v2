@@ -398,7 +398,7 @@ def test_an_ideas_category_names_the_cluster_that_claimed_its_revision():
 
     path = _category_path(record, _candidate("cand_a"))
 
-    assert path == "Experimental > Physical Barrier Coatings > Mechanism-led"
+    assert path == "Experimental > Physical Barrier Coatings > Mechanism-first"
 
 
 def test_an_idea_no_cluster_claimed_is_not_padded_out_to_three_levels():
@@ -410,7 +410,7 @@ def test_an_idea_no_cluster_claimed_is_not_padded_out_to_three_levels():
 
     path = _category_path(record, _candidate("cand_a"))
 
-    assert path == "Experimental > Mechanism-led"
+    assert path == "Experimental > Mechanism-first"
 
 
 def test_a_fatal_flaw_is_counted_from_the_reviews_not_from_the_summary():
