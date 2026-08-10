@@ -2342,6 +2342,51 @@ def test_a_rewrite_made_over_two_rounds_is_not_attributed_to_one():
     assert critiques.split(". ")[0].endswith("the inhalation risk")
 
 
+def test_several_reviews_answers_are_set_one_review_to_a_line():
+    """Each answer opens on the review that wrote it and on the number of the item it
+    answers, which is what a reader here looks one of them up by. Five run together
+    made a live idea's Addressed Objections 1,116 characters with those numbers buried
+    inside it."""
+    from coscientist.narrative import _attributed_responses
+
+    written = _attributed_responses(
+        [
+            _idea_review(
+                section=section,
+                objections=[f"The {section.lower()} objection was raised here."],
+                rebuttals=[
+                    f"The protocol answers the {section.lower()} objection by "
+                    "tracking the coated and uncoated arms over two hundred cycles, "
+                    "blinded, against a pre-registered threshold."
+                ],
+            )
+            for section in ("Correctness", "Novelty", "Feasibility")
+        ]
+    )
+
+    assert written.startswith("- The correctness review answered the objection it ")
+    assert len(written.splitlines()) == 3
+    assert all(line.startswith("- The ") for line in written.splitlines())
+
+
+def test_two_short_answers_stay_in_the_paragraph_that_attributes_them():
+    """A list costs a reader more than it pays where what it holds is two clauses."""
+    from coscientist.narrative import _attributed_responses
+
+    written = _attributed_responses(
+        [
+            _idea_review(
+                section=section,
+                objections=[f"A {section.lower()} objection."],
+                rebuttals=["The protocol answers it."],
+            )
+            for section in ("Correctness", "Novelty")
+        ]
+    )
+
+    assert "\n" not in written
+
+
 def test_the_change_logs_of_several_rewrites_are_set_one_to_a_line():
     """A reader here is looking up what happened to a named idea. On a live run the
     four change logs ran into the paragraph that introduces them -- 1,724 characters

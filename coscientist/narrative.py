@@ -5049,7 +5049,17 @@ def _attributed_responses(reviews: Sequence[IdeaReview]) -> str:
             else ":"
         )
         parts.append(f"{opening} {_join(review.rebuttals, fallback='')}")
-    return " ".join(parts)
+    # One response to a line where several reviews answered. Each opens on the review
+    # that wrote it and on the number of the item it answers, which is what a reader
+    # here is looking one of these up by -- and five of them run together made a live
+    # idea's Addressed Objections 1,116 characters with those numbers buried inside
+    # it. Two short ones stay in the paragraph, where a list would cost more than it
+    # pays.
+    answers = parts[1:] if len(parts) > len(answering) else parts
+    if len(answers) < 2 or sum(map(len, answers)) <= _SERIES_IN_A_SENTENCE:
+        return " ".join(parts)
+    listed = "\n".join(f"- {answer}" for answer in answers)
+    return f"{parts[0]}\n\n{listed}" if answers is not parts else listed
 
 
 def _answered_item_numbers(reviews: Sequence[IdeaReview]) -> dict[str, int]:
