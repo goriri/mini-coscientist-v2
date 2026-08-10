@@ -728,6 +728,15 @@ def test_the_pdf_sets_the_characters_the_markdown_wrote():
     # missing from a formula is a different formula.
     assert _renderable("E = ∮ B") == "E = (contour integral) B"
 
+    # ACS sets the dash in a paper's name as a box-drawing rule, so a title reaches
+    # the reference list with one in. Named by the rule above rather than folded, it
+    # printed the character's own Unicode name mid-title on a live page.
+    assert (
+        _renderable("Degradation Effects in Cells─Learning from Potential Profiles")
+        == "Degradation Effects in Cells—Learning from Potential Profiles"
+    )
+    assert "box drawings" not in _renderable("Cells━Learning ⸺ and ⸻ and ―")
+
     # The CID face draws these and _shift_scripts turns those into markup: neither
     # is the body face's problem, and folding either would corrupt the page.
     passed = "锂酸锂 Li₂CO₃"

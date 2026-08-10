@@ -2966,6 +2966,18 @@ _PDF_FOLDS = {
     "\u2011": "-",
     "\u2012": "-",
     "\u2212": "-",
+    # ACS sets the dash in a paper's name as a box-drawing rule, and a title arrives
+    # here with it in. Named rather than folded, it printed mid-title in a live
+    # reference list: "Degradation Effects in Li4Ti5O12-Based
+    # Cells(box drawings light horizontal)Learning from Electrode Potential
+    # Profiles". It is punctuation wherever this report meets it -- nothing here
+    # draws a table out of characters -- so it is set as the dash it is being used as.
+    "\u2500": "\u2014",
+    "\u2501": "\u2014",
+    "\u2015": "\u2014",
+    "\u2e3a": "\u2014",
+    "\u2e3b": "\u2014",
+    "\u2043": "-",
     # The shortlist mark. The star is inside the pictograph range, so it was dropped
     # from all ninety-two pages of a live PDF -- under a table whose own caption says
     # "a star marks an idea the tournament shortlisted", over a column of nothing.
