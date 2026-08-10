@@ -2794,7 +2794,14 @@ def shared_grounding_reach(
         )
     return [
         f"Of the {_number_word(len(set(below))).lower()} ideas below, more than one "
-        "rests on the same finding: "
+        + (
+            "rests on the same finding: "
+            if len(shared) == 1
+            # "The same finding" is one finding, and a live run put three after the
+            # colon. Read as an expansion of the singular, the sentence promises one
+            # shared finding and the reader counts two more.
+            else f"rests on each of {_number_word(len(shared)).lower()} findings: "
+        )
         # "Of them" once, on the first item: on a live run of three shared findings
         # it was on all three, and the tail of the sentence read as three copies of
         # one phrase with the numbers changed.

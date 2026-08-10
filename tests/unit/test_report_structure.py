@@ -2118,6 +2118,28 @@ def test_a_finding_more_than_one_idea_rests_on_is_reported_as_carrying_them_both
     assert compile_dossier(rich_session).count(stated) == 1
 
 
+def test_more_than_one_shared_finding_is_not_announced_as_the_same_one(
+    rich_session: Session,
+):
+    """A live report opened this sentence "more than one rests on the same finding:"
+    and then listed three of them -- [9] by five ideas, [11] by three, [12] by three.
+    Read as an expansion of the singular, the colon promises one shared finding and
+    the reader counts two more."""
+    from coscientist.narrative import shared_grounding_reach
+
+    record = load_record(rich_session)
+    by_id = {candidate.id: candidate for candidate in record.candidates}
+    # One more idea onto findings another idea already rests on, so two are shared.
+    by_id["candidate_0006"].evidence_ids = ["claim_0", "claim_1", "claim_2"]
+    briefs = build_idea_briefs(record)
+    stated = shared_grounding_reach(record, briefs)[0]
+
+    assert stated.startswith(
+        "Of the six ideas below, more than one rests on each of two findings: "
+    )
+    assert "the same finding" not in stated
+
+
 def test_a_field_whose_ideas_share_no_finding_says_nothing_about_sharing(
     rich_session: Session,
 ):
