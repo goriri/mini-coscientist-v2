@@ -9,6 +9,7 @@ from coscientist.evidence import (
     GeminiDeepResearchTransport,
     IterativeEvidenceDiscovery,
     _extract_report,
+    build_research_prompt,
     canonicalize_url,
     normalize_report,
 )
@@ -583,3 +584,25 @@ def test_deep_research_is_on_unless_the_deployment_turns_it_off(monkeypatch):
 
     monkeypatch.setenv("COSCIENTIST_DEEP_RESEARCH", "off")
     assert _deep_research_enabled() is False
+
+
+def test_a_facet_pass_is_told_not_to_hand_the_pipelines_words_back_as_prose():
+    """The instruction's own phrasing came back as the finding.
+
+    Two facets of a live run reported nothing found, and both reported it in the
+    words the prompt had used: "In strict adherence to the defined evaluation
+    parameters, this constitutes a genuinely empty facet", and "An exhaustive
+    analysis of the available literature reveals an **honest empty facet**". A
+    reader of the report has no idea what a facet is.
+    """
+    session = Session(question="Can a coating extend lithium-ion cycle life?")
+    plan = ResearchPlan(question=session.question, intended_claim="hypothesis")
+    prompt = build_research_prompt(session, plan, pass_number=1, facet="contradictory")
+
+    # The tag is still demanded, because a statement is filed by it.
+    assert "tag every statement you return with the facet contradictory" in prompt
+    # And it is confined to the field it is read from.
+    assert "never in its prose" in prompt
+    assert "mean nothing to a reader" in " ".join(prompt.split())
+    assert "honest empty facet" not in prompt
+    assert "genuinely does not exist" not in prompt

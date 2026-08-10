@@ -1697,9 +1697,17 @@ def build_research_prompt(
             "coverage rather than adding to it. Go deep on yours: find the "
             "primary literature, name the studies, and tag every statement you "
             f"return with the facet {facet}.\n"
-            "If the literature for this facet genuinely does not exist, report "
-            "that plainly. An honest empty facet is a finding; a facet padded "
-            "with adjacent material is a gap that has been hidden."
+            "If the primary literature does not exist, say so plainly: finding "
+            "nothing is a finding, and padding it out with adjacent material is a "
+            "gap that has been hidden. Write that finding the way the report will "
+            "print it -- name what you searched for, the constraint nothing met, "
+            "and what the absence implies for the question. The words 'facet', "
+            "'empty facet' and 'pass' describe how this run is organised and mean "
+            # A live report printed "this constitutes a genuinely empty facet" and
+            # "an honest empty facet" in the reader's own paragraphs: the prompt's
+            # own phrasing, handed back as the finding.
+            "nothing to a reader; the tag above is machine-read and belongs in the "
+            "facet field of a statement, never in its prose."
         )
     elif pass_number == 1 or previous_manifest is None:
         focus = (
