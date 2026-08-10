@@ -3070,6 +3070,19 @@ def test_a_turn_reaching_two_constraints_is_one_turn():
     assert "both constraints, in one turn across the matches" in line
 
 
+def test_a_series_of_constraint_numbers_is_punctuated_like_every_other_series():
+    """One page carried "passes 1, 2, 3, 5, and 7" and "constraints one, two, three
+    and four": the constraint helper built its own join and dropped the comma before
+    the conjunction that the report's other noun series all carry."""
+    from coscientist.narrative import _numbered_constraints
+
+    assert (
+        _numbered_constraints([1, 2, 3, 4]) == "constraints one, two, three, and four"
+    )
+    assert _numbered_constraints([1, 3]) == "constraints one and three"
+    assert _numbered_constraints([2]) == "constraint two"
+
+
 def test_constraints_all_of_which_were_reached_are_not_recited_and_then_counted():
     """A live report named all four constraints, one by one, and then added "Every
     constraint is reached by at least one review" -- the list it had just printed,

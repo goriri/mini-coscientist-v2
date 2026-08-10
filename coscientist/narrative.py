@@ -9548,7 +9548,11 @@ def _numbered_constraints(indexes: Sequence[int], total: int = 0) -> str:
         return f"{_all_of(total)} constraints"
     if len(words) == 1:
         return f"constraint {words[0]}"
-    return f"constraints {', '.join(words[:-1])} and {words[-1]}"
+    # Punctuated like every other series of bare noun phrases in the report --
+    # see _names. This one built its own join and dropped the comma before the
+    # conjunction, so one page carried both "passes 1, 2, 3, 5, and 7" and
+    # "constraints one, two, three and four".
+    return f"constraints {_names(words)}"
 
 
 def _content_words(text: str) -> set[str]:
