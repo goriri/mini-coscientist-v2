@@ -1181,6 +1181,13 @@ class IdeaBrief:
     printed once above the ideas and the paragraphs below carry only the facts.
     """
     support: str = "unknown"
+    discrediting_statuses: frozenset[str] = frozenset()
+    """Which discrediting verdicts stand behind a ``discredited`` support word.
+
+    ``support`` folds retraction and unretrievability into one word, so the blocking
+    warning written for it said "the records no longer stand" over four ideas whose
+    every citation had merely failed to come back.
+    """
     unresolved_evidence_ids: list[str] = field(default_factory=list)
     accepted_flaw: AdjudicationNote | None = None
     tied_with: int = 0
@@ -1321,7 +1328,9 @@ class IdeaBrief:
 
     @property
     def support_notice(self) -> str:
-        return support_notice(self.support, self.unresolved_evidence_ids)
+        return support_notice(
+            self.support, self.unresolved_evidence_ids, self.discrediting_statuses
+        )
 
     @property
     def support_label(self) -> str:
@@ -1331,7 +1340,9 @@ class IdeaBrief:
     @property
     def support_prose(self) -> str:
         """The same verdict without its form label, for use inside a paragraph."""
-        return support_prose(self.support, self.unresolved_evidence_ids)
+        return support_prose(
+            self.support, self.unresolved_evidence_ids, self.discrediting_statuses
+        )
 
     @property
     def support_is_alarming(self) -> bool:
@@ -3002,7 +3013,28 @@ _SUPPORT_NOTICES = {
 }
 
 
-def _support_parts(support: str, unresolved: Sequence[str]) -> tuple[str, str]:
+def broken_grounding_clause(causes: frozenset[str]) -> str:
+    """What became of the evidence, as the clause that follows "evidence that".
+
+    ``support`` folds retraction and unretrievability into the one word
+    ``discredited``, and every sentence written for that word asserted the first of
+    them over both. On a live run all four ideas in the group had cited a claim that
+    merely failed to come back -- Evidence integrity called each "the unretrieved
+    claim drawn from" its source -- and both the blocking warning and the notice
+    under each idea said the evidence had been retracted. A withdrawn paper and a
+    link that answers nothing are different facts about the literature and call for
+    different work to repair.
+    """
+    if causes == {"retracted"}:
+        return "was retracted"
+    if causes == {"inaccessible"}:
+        return "could not be retrieved"
+    return "was retracted or could not be retrieved"
+
+
+def _support_parts(
+    support: str, unresolved: Sequence[str], causes: frozenset[str] = frozenset()
+) -> tuple[str, str]:
     """The grounding verdict as a label and a body, worst cases stated first."""
     if support == "unsupported":
         # The one place in the body an internal id is printed, because a warning that
@@ -3026,23 +3058,26 @@ def _support_parts(support: str, unresolved: Sequence[str]) -> tuple[str, str]:
     if support == "discredited":
         return (
             "",
-            "Warning: this idea cites evidence that was retracted or could not be "
-            "retrieved. Its stated grounding is discredited, and the claim below "
-            "should not be carried forward until it is re-grounded on evidence that "
-            "still stands.",
+            f"Warning: this idea cites evidence that {broken_grounding_clause(causes)}"
+            ". Its stated grounding is discredited, and the claim below should not be "
+            "carried forward until it is re-grounded on evidence that still stands.",
         )
     return _SUPPORT_NOTICES.get(support, _SUPPORT_NOTICES["unknown"])
 
 
-def support_notice(support: str, unresolved: Sequence[str]) -> str:
+def support_notice(
+    support: str, unresolved: Sequence[str], causes: frozenset[str] = frozenset()
+) -> str:
     """The verdict as its own block, under the label that says what it is."""
-    label, body = _support_parts(support, unresolved)
+    label, body = _support_parts(support, unresolved, causes)
     return f"Evidence support: {label}. {body}" if label else body
 
 
-def support_prose(support: str, unresolved: Sequence[str]) -> str:
+def support_prose(
+    support: str, unresolved: Sequence[str], causes: frozenset[str] = frozenset()
+) -> str:
     """The same verdict as a sentence, for where it is folded into a paragraph."""
-    return _support_parts(support, unresolved)[1]
+    return _support_parts(support, unresolved, causes)[1]
 
 
 # The same notices written of the field rather than of one idea. A run whose evidence
@@ -6048,6 +6083,9 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
                 ties=ties,
                 shortlisted=shortlisted,
                 support=citations.support if citations else "unknown",
+                discrediting_statuses=(
+                    citations.discrediting_statuses if citations else frozenset()
+                ),
                 unresolved_evidence_ids=_invented_ids(record, candidate, citations),
                 accepted_flaw=accepted_flaw,
                 tied_with=len(tied_ids),

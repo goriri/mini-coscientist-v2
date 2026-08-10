@@ -26,6 +26,7 @@ from coscientist.models import (
 )
 from coscientist.narrative import (
     BlockerNote,
+    IdeaBrief,
     ResearchRecord,
     build_idea_briefs,
     load_record,
@@ -81,7 +82,7 @@ def test_the_body_pointer_names_the_blocking_warnings_rather_than_counting_them(
     body, appendix = _halves(rich_session)
 
     assert "a waived evidence gate" in body
-    assert "ideas citing evidence that is absent, retracted or unretrievable" in body
+    assert "ideas citing evidence that does not exist or was retracted" in body
     assert "should not proceed on the material they name" in body
     # Named, not reproduced: the paragraph itself is in one place only.
     assert "Waiving the gate is a distinct act" not in body
@@ -107,7 +108,7 @@ def test_the_body_pointer_names_the_blocking_warnings_rather_than_counting_them(
         # verdicts it covers fail for different reasons and are worded separately.
         (
             lambda session: None,
-            "cites evidence that was retracted or that this run could not retrieve",
+            "cites evidence that was retracted, namely",
         ),
     ],
 )
@@ -141,20 +142,32 @@ def test_a_caveat_about_one_idea_stays_under_that_idea(rich_session: Session):
     assert "unsupported rather than evidence-backed" in appendix
 
 
-def _grounding_advisory(rich_session: Session, verdicts: list[str]) -> str:
-    """The broken-grounding paragraph, with the run's leading ideas given `verdicts`."""
-    record = load_record(rich_session)
+def _grounding_briefs(
+    rich_session: Session, verdicts: list[str], cause: str
+) -> tuple[IdeaBrief, ...]:
+    """The run's leading ideas given `verdicts`, discredited ones for `cause`."""
     original = tuple(build_idea_briefs(load_record(rich_session)))
     assert len(original) >= len(verdicts), "the fixture no longer has ideas to mark"
     marked = list(verdicts) + ["grounded"] * (len(original) - len(verdicts))
-    briefs = tuple(
+    return tuple(
         replace(
             brief,
             support=verdict,
+            discrediting_statuses=(
+                frozenset({cause}) if verdict == "discredited" else frozenset()
+            ),
             unresolved_evidence_ids=["claim_001"] if verdict == "unsupported" else [],
         )
         for brief, verdict in zip(original, marked, strict=True)
     )
+
+
+def _grounding_advisory(
+    rich_session: Session, verdicts: list[str], cause: str = "retracted"
+) -> str:
+    """The broken-grounding paragraph, with the run's leading ideas given `verdicts`."""
+    record = load_record(rich_session)
+    briefs = _grounding_briefs(rich_session, verdicts, cause)
     bodies = [
         item.body
         for item in run_advisories(record, briefs=briefs)
@@ -189,7 +202,31 @@ def test_a_retracted_citation_is_not_reported_as_one_that_resolves_to_nothing(
     for title in retracted_titles:
         assert title in retracted and title not in missing
     assert "resolve to no record" in missing
-    assert "do resolve to records, and the records no longer stand" in retracted
+    assert "do resolve to records, and those records have since been retracted" in (
+        retracted
+    )
+
+
+def test_a_group_that_was_only_unreachable_is_not_told_its_sources_were_retracted(
+    rich_session: Session,
+):
+    """The support word folds retraction and unretrievability into one, and the
+    sentence written for it asserted the first of them over both.
+
+    Every one of four ideas in a live report had cited a claim that merely failed to
+    come back -- Evidence integrity called each "the unretrieved claim drawn from"
+    its source -- and the blocking warning told the reader "those citations do resolve
+    to records, and the records no longer stand".
+    """
+    body = _grounding_advisory(rich_session, ["discredited"], cause="inaccessible")
+
+    assert "cites evidence that could not be retrieved" in body
+    assert (
+        "That citation names a document this run could not reach when it went back "
+        "to it, so nothing was read there and nothing was confirmed" in body
+    )
+    assert "retracted" not in body
+    assert "no longer stands" not in body
 
 
 def test_a_run_whose_only_broken_grounding_was_retracted_is_not_told_it_cited_nothing(
@@ -214,32 +251,22 @@ def test_the_heading_over_the_broken_grounding_claims_no_more_than_the_group_hol
     of the four "the unretrieved claim drawn from ...".
     """
     record = load_record(rich_session)
-    original = tuple(build_idea_briefs(load_record(rich_session)))
 
-    def _headings(verdicts: list[str]) -> list[str]:
-        marked = list(verdicts) + ["grounded"] * (len(original) - len(verdicts))
-        briefs = tuple(
-            replace(
-                brief,
-                support=verdict,
-                unresolved_evidence_ids=(
-                    ["claim_001"] if verdict == "unsupported" else []
-                ),
-            )
-            for brief, verdict in zip(original, marked, strict=True)
-        )
+    def _headings(verdicts: list[str], cause: str = "retracted") -> list[str]:
+        briefs = _grounding_briefs(rich_session, verdicts, cause)
         return [
             item.title
             for item in run_advisories(record, briefs=briefs)
             if item.title.startswith("Ideas citing evidence")
         ]
 
-    assert _headings(["discredited"]) == [
-        "Ideas citing evidence that was retracted or could not be retrieved"
+    assert _headings(["discredited"]) == ["Ideas citing evidence that was retracted"]
+    assert _headings(["discredited"], cause="inaccessible") == [
+        "Ideas citing evidence that could not be retrieved"
     ]
     assert _headings(["unsupported"]) == ["Ideas citing evidence that does not exist"]
     assert _headings(["unsupported", "discredited"]) == [
-        "Ideas citing evidence that is absent, retracted or unretrievable"
+        "Ideas citing evidence that does not exist or was retracted"
     ]
 
 
@@ -252,7 +279,8 @@ def test_a_single_broken_idea_is_written_about_in_the_singular(rich_session: Ses
         assert "whatever their rank says" not in body
         assert "whatever its rank says" in body
         assert "citation was written by the generator and resolves" in body or (
-            "citation does resolve to a record, and the record no longer stands" in body
+            "citation does resolve to a record, and that record has since been "
+            "retracted" in body
         )
 
 

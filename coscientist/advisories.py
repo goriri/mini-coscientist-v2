@@ -31,6 +31,7 @@ from .narrative import (
     _number_word,
     _plural,
     _stage_words,
+    broken_grounding_clause,
 )
 
 ADVISORY_CHAPTER = "Warnings and Limitations"
@@ -157,6 +158,41 @@ def _governance_advisory(record: ResearchRecord) -> list[Advisory]:
     ]
 
 
+def _broken_grounding_reason(causes: frozenset[str], one: bool) -> str:
+    """Why the group is discredited, in the terms of the verdict it in fact carries."""
+    tail = (
+        "the idea carrying it is discredited rather than evidence-backed, whatever "
+        "its rank says."
+        if one
+        else "the ideas carrying them are discredited rather than evidence-backed, "
+        "whatever their rank says."
+    )
+    if causes == {"inaccessible"}:
+        return (
+            "That citation names a document this run could not reach when it went "
+            "back to it, so nothing was read there and nothing was confirmed, and "
+            if one
+            else "Those citations name documents this run could not reach when it "
+            "went back to them, so nothing was read there and nothing was confirmed, "
+            "and "
+        ) + tail
+    if causes == {"retracted"}:
+        return (
+            "That citation does resolve to a record, and that record has since been "
+            "retracted, so "
+            if one
+            else "Those citations do resolve to records, and those records have since "
+            "been retracted, so "
+        ) + tail
+    return (
+        "That citation names a record that was retracted or that this run could not "
+        "reach, so "
+        if one
+        else "Those citations name records that were retracted or that this run could "
+        "not reach, so "
+    ) + tail
+
+
 def _broken_grounding_advisory(briefs: tuple[IdeaBrief, ...]) -> list[Advisory]:
     # The two verdicts collected here break in different ways, and this paragraph
     # used to assert the unsupported reason -- "resolve to no record" -- over both.
@@ -190,37 +226,36 @@ def _broken_grounding_advisory(briefs: tuple[IdeaBrief, ...]) -> list[Advisory]:
             )
         )
         where = ""
+    # Whichever of the two verdicts the run in fact recorded, rather than the
+    # disjunction of both. A live report told four ideas here that "those citations do
+    # resolve to records, and the records no longer stand", and Evidence integrity told
+    # the reader of every one of the four that what it cited was "the unretrieved claim
+    # drawn from" its source. A withdrawn paper and a link that answers nothing are not
+    # the same fact about the literature, and only one of them was found here.
+    causes = frozenset().union(*(brief.discrediting_statuses for brief in retracted))
     if retracted:
         one = len(retracted) == 1
         findings.append(
             f"{_capitalised(_plural(len(retracted), 'idea'))}{where} "
-            f"{'cites' if one else 'cite'} evidence that was retracted "
-            "or that this run could not retrieve, namely "
+            f"{'cites' if one else 'cite'} evidence that {broken_grounding_clause(causes)}, "
+            "namely "
             + _joined_titles([brief.title for brief in retracted], fallback="none")
             + ". "
-            + (
-                "That citation does resolve to a record, and the record no longer "
-                "stands, so the idea carrying it is discredited rather than "
-                "evidence-backed, whatever its rank says."
-                if one
-                else "Those citations do resolve to records, and the records no "
-                "longer stand, so the ideas carrying them are discredited rather "
-                "than evidence-backed, whatever their rank says."
-            )
+            + _broken_grounding_reason(causes, one)
         )
-    # The heading names the same two cases the paragraph under it does. It used to
-    # assert the stronger one alone -- a live report opened on "one says the work
-    # should not proceed on the material it names: ideas citing evidence that has been
-    # retracted", and every one of the four ideas it went on to list had cited a claim
-    # that could not be retrieved, with no retraction anywhere among them. A reader who
-    # checks the heading against the record finds the record does not support it, and
-    # then has no reason to trust the heading that does.
+    # The heading names the same cases the paragraph under it does. It used to assert
+    # the strongest one alone -- a live report opened on "one says the work should not
+    # proceed on the material it names: ideas citing evidence that has been retracted",
+    # and every one of the four ideas it went on to list had cited a claim that could
+    # not be retrieved, with no retraction anywhere among them. A reader who checks the
+    # heading against the record finds the record does not support it, and then has no
+    # reason to trust the heading that does.
     if not retracted:
         title = "Ideas citing evidence that does not exist"
     elif not absent:
-        title = "Ideas citing evidence that was retracted or could not be retrieved"
+        title = f"Ideas citing evidence that {broken_grounding_clause(causes)}"
     else:
-        title = "Ideas citing evidence that is absent, retracted or unretrievable"
+        title = f"Ideas citing evidence that does not exist or {broken_grounding_clause(causes)}"
     return [
         Advisory(
             title=title,

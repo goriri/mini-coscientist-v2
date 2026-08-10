@@ -84,6 +84,21 @@ class CandidateCitations:
         return [item.reference for item in self.citations if item.discredited]
 
     @property
+    def discrediting_statuses(self) -> frozenset[str]:
+        """Which of the two discrediting verdicts this candidate's citations carry.
+
+        ``support`` folds retraction and unretrievability into one word, and the
+        sentence written for that word asserted retraction of both: four ideas whose
+        every citation had merely failed to come back were told "those citations do
+        resolve to records, and the records no longer stand". A withdrawn paper and a
+        dead link are not the same fact about the literature and a reader acting on
+        the warning needs to know which of them they are facing.
+        """
+        return frozenset(
+            item.status for item in self.citations if item.discredited
+        ) & frozenset(DISCREDITED_STATUSES)
+
+    @property
     def support(self) -> str:
         """How much of this candidate's stated grounding actually exists.
 

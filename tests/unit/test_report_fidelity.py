@@ -991,6 +991,32 @@ def test_one_match_moves_both_sides_by_the_same_number_of_points():
     assert loser.shown_after - loser.shown_before == loser.swing
 
 
+def test_the_notice_under_an_idea_names_which_way_its_grounding_broke():
+    """The support word folds retraction and unretrievability into ``discredited``.
+
+    The notice written for it asserted the first of the two over both, so four ideas
+    whose evidence had merely failed to come back -- Evidence integrity called each
+    "the unretrieved claim drawn from" its source -- carried "Warning: this idea cites
+    evidence that was retracted or could not be retrieved".
+    """
+    from coscientist.narrative import support_notice
+
+    unreachable = support_notice("discredited", [], frozenset({"inaccessible"}))
+    withdrawn = support_notice("discredited", [], frozenset({"retracted"}))
+    both = support_notice("discredited", [], frozenset({"retracted", "inaccessible"}))
+
+    assert unreachable.startswith(
+        "Warning: this idea cites evidence that could not be retrieved."
+    )
+    assert "retracted" not in unreachable
+    assert withdrawn.startswith("Warning: this idea cites evidence that was retracted.")
+    assert both.startswith(
+        "Warning: this idea cites evidence that was retracted or could not be retrieved."
+    )
+    # No verdict recorded either way is the disjunction, which is all that is known.
+    assert support_notice("discredited", []) == both
+
+
 def test_a_criterion_every_reviewer_scored_alike_says_so_instead_of_a_flat_range():
     """A spread with one end is not a spread.
 
