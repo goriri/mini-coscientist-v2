@@ -11833,6 +11833,19 @@ _OWN_REPORT = re.compile(
 )
 
 
+# A list marker the provider wrote as an asterisk, which every other list in this
+# document writes as a hyphen. Both are Markdown and both render, so the exporters
+# never saw a difference -- but the Markdown is a deliverable too, and a live one
+# carried "*   Al2O3 on NCM622 Cathodes:" three lines under "- Pass 2 returned".
+#
+# The space after the marker is required, so "**Label:**" opening a line and a "***"
+# rule are both left alone; the indent is kept, so a nested list stays nested.
+_PROVIDER_BULLET = re.compile(r"^(\s*)[*+][ \t]+(?=\S)")
+# "* * *" is a thematic break rather than a list of asterisks, and it starts with a
+# marker and a space like any bullet does.
+_SPACED_RULE = re.compile(r"^\s*(?:\*[ \t]*){3,}$")
+
+
 def _deep_research_prose(text: str) -> str:
     """One pass's report, as Markdown that sits under this report's own headings.
 
@@ -11864,7 +11877,12 @@ def _deep_research_prose(text: str) -> str:
             depth = min(6, 3 + len(heading.group(1)))
             lines.append(f"{'#' * depth} {heading.group(2).strip()}")
             continue
-        lines.append(line.rstrip())
+        stated = line.rstrip()
+        lines.append(
+            stated
+            if _SPACED_RULE.match(stated)
+            else _PROVIDER_BULLET.sub(r"\1- ", stated)
+        )
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 

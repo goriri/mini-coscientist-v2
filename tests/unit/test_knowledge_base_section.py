@@ -352,3 +352,40 @@ def test_a_report_the_pass_is_citing_is_not_renamed_as_the_passs_own():
     )
     assert "The report by Kim et al." in prose
     assert "This pass's report" not in prose
+
+
+def test_a_list_the_provider_marked_with_asterisks_is_set_like_every_other_list():
+    """Both markers are Markdown and both render, so the exporters never saw it.
+
+    The Markdown is a deliverable of its own, and a live one carried "*   **Al2O3 on
+    NCM622 Cathodes:**" three lines under "- Pass 2 returned" -- one document setting
+    its lists two ways, in the one section written by the provider rather than here.
+    """
+    prose = _deep_research_prose(
+        "## Findings\n"
+        "*   **Al2O3 on NCM622:** it outperformed the uncoated control.\n"
+        "    *   Measured over three cells.\n"
+        "+   A marker written as a plus.\n"
+        "- Already a hyphen.\n"
+    )
+
+    assert "- **Al2O3 on NCM622:** it outperformed the uncoated control." in prose
+    # The indent is kept, so a nested list is still nested.
+    assert "    - Measured over three cells." in prose
+    assert "- A marker written as a plus." in prose
+    assert "- Already a hyphen." in prose
+    assert "*   " not in prose
+
+
+def test_what_is_not_a_list_marker_is_left_where_the_provider_put_it():
+    """A bold label opening a line, an emphasised sentence, and both spellings of a
+    thematic break all begin with the character a bullet begins with."""
+    prose = _deep_research_prose(
+        "**Bold label:** this is a paragraph.\n*An emphasised sentence.*\n***\n* * *\n"
+    )
+
+    assert "**Bold label:** this is a paragraph." in prose
+    assert "*An emphasised sentence.*" in prose
+    assert "\n***\n" in prose
+    assert "* * *" in prose
+    assert "- " not in prose
