@@ -1511,6 +1511,11 @@ def _self_rating(brief: IdeaBrief) -> list[str]:
     Which field it was appended to is the specialist's choice, so the sentence names
     it rather than assuming the mechanism: two of eight live ideas appended it to the
     protocol, where it ran on after the last bench step.
+
+    The heading is set beside the table and not at the end of the sentence, where the
+    nearest noun took it: "appended a table of its own to the validation protocol,
+    headed Evaluation of Idea Table" gives the heading to the protocol, which is a
+    field of the idea and has no heading of its own to give.
     """
     if not brief.self_rating:
         return []
@@ -1520,12 +1525,13 @@ def _self_rating(brief: IdeaBrief) -> list[str]:
     return [
         "### The Specialist's Own Rating",
         "",
-        "The specialist that proposed this idea appended a table of its own to the "
+        "The specialist that proposed this idea appended a table of its own"
         + (
-            f"{appended}, headed {brief.self_rating_title}. "
+            f" — headed {brief.self_rating_title} — "
             if brief.self_rating_title
-            else f"{appended}. "
+            else " "
         )
+        + f"to the {appended}. "
         + "The ratings in it are its own assessment of what it had just written, "
         "not a result of the reviews or the tournament below.",
         "",

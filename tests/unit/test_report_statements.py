@@ -686,7 +686,10 @@ def test_a_rating_appended_after_the_bench_steps_is_lifted_out_of_the_protocol()
         )
     )
     # Where the specialist appended it, not where six of eight happened to.
-    assert "to the validation protocol, headed Evaluation of Idea Table." in said
+    assert (
+        "a table of its own — headed Evaluation of Idea Table — to the validation "
+        "protocol." in said
+    )
 
 
 def test_a_table_of_bench_conditions_stays_inside_the_protocol():
@@ -862,10 +865,55 @@ def test_the_self_rating_is_printed_as_the_specialists_own_table():
 
     said = "\n".join(_self_rating(brief))
 
-    assert "headed Evaluation of Idea." in said
+    assert "a table of its own — headed Evaluation of Idea — to the mechanism." in said
     assert "not a result of the reviews or the tournament below" in said
     assert "| Criterion | Description | Judgment |" in said
     assert "| Purity Potential | Amorphous, defect-free layer | Exceptional |" in said
+
+
+def test_the_heading_belongs_to_the_table_and_not_to_the_field_it_was_appended_to():
+    """At the end of the sentence the nearest noun takes it, and that is the field.
+
+    Two of eight live ideas appended the rating to their validation protocol, and the
+    sentence read "appended a table of its own to the validation protocol, headed
+    Evaluation of Idea Table" -- which gives the heading to the protocol, a field of
+    the idea that has no heading of its own to give.
+    """
+    from dataclasses import replace
+
+    from coscientist.dossier import _self_rating
+    from coscientist.narrative import _authors_own_table
+
+    _, title, rating = _authors_own_table(MECHANISM_WITH_A_SCORECARD)
+    brief = replace(
+        _brief_without_a_rating(),
+        self_rating_title=title,
+        self_rating=rating,
+        self_rating_source="validation protocol",
+    )
+
+    said = "\n".join(_self_rating(brief))
+
+    assert "to the validation protocol, headed" not in said
+    assert (
+        "a table of its own — headed Evaluation of Idea — to the validation protocol."
+        in said
+    )
+
+
+def test_a_rating_the_specialist_left_unheaded_still_names_the_field_it_sits_under():
+    from dataclasses import replace
+
+    from coscientist.dossier import _self_rating
+    from coscientist.narrative import _authors_own_table
+
+    _, _, rating = _authors_own_table(MECHANISM_WITH_A_SCORECARD)
+    brief = replace(_brief_without_a_rating(), self_rating=rating)
+
+    said = "\n".join(_self_rating(brief))
+
+    assert "a table of its own to the mechanism." in said
+    assert "—" not in said.partition("\n")[0]
 
 
 def test_an_idea_whose_specialist_rated_nothing_gets_no_rating_section():

@@ -4963,6 +4963,24 @@ def _conclusion(
     return f"{withheld}{order_of_work}{weakest}{accepted}"
 
 
+def _cited_series(items: Sequence[str], cited: _CitedEvidence) -> str:
+    """One direction's cited findings, the ones printed above named by number.
+
+    They are collapsed into one item rather than named one at a time: "the statement
+    printed above under Evidence Assessment at [5], and the statement printed above
+    under Evidence Assessment at [6]" says the same nine words twice to carry two
+    numbers.
+    """
+    fresh = [item for item in items if item not in cited.restated]
+    above = [cited.restated[item] for item in items if item in cited.restated]
+    if above:
+        noun = "statement" if len(above) == 1 else "statements"
+        fresh.append(
+            f"the {noun} printed above under Evidence Assessment at {_names(above)}"
+        )
+    return _join(fresh, fallback="none.", named=cited.titled)
+
+
 def _motivation(facts: dict[str, str], cited: _CitedEvidence) -> str:
     """What the report holds in favour of this idea, and nothing that holds of all.
 
@@ -4984,19 +5002,22 @@ def _motivation(facts: dict[str, str], cited: _CitedEvidence) -> str:
     Printed as "the findings this idea cites in support", a finding the specialist had
     filed under Evidence Against inside the very same section was listed two
     paragraphs above it as evidence for.
+
+    What the specialist already restated under Evidence Assessment is carried here by
+    reference number rather than printed a second time: all four findings under one
+    live idea stood word for word in both places, forty lines apart.
     """
     stated: list[str] = []
     if cited.supports:
         stated.append(
             "The findings this idea cites that the evidence stage recorded as "
-            "arguing for the research question: "
-            + _join(cited.supports, fallback="none.")
+            "arguing for the research question: " + _cited_series(cited.supports, cited)
         )
     if cited.undirected:
         stated.append(
             ("What it cites " if cited.supports else "What this idea cites ")
             + "with no direction recorded either way on the question: "
-            + _join(cited.undirected, fallback="none.", named=cited.titled)
+            + _cited_series(cited.undirected, cited)
         )
     if not stated:
         stated.append(
@@ -6316,6 +6337,9 @@ class _CitedEvidence:
     titled: set[str] = field(default_factory=set)
     """Which of the above are names of documents, which a series keeps capitalised."""
 
+    restated: dict[str, str] = field(default_factory=dict)
+    """Those the idea's own Evidence Assessment already prints, by reference number."""
+
     def __bool__(self) -> bool:
         return bool(self.supports or self.contradicts or self.undirected)
 
@@ -6336,8 +6360,18 @@ def _cited_evidence(record: ResearchRecord, candidate: Candidate) -> _CitedEvide
     two ideas cited nothing but sources and neutral claims, every id of them resolved,
     their Evidence Assessment listed the verified sources by name, and this section
     told the reader that no finding in the report's evidence is cited for the idea.
+
+    A specialist that cites a record usually restates it in its own Evidence
+    Assessment, so most of what resolves here is already on the page. All four findings
+    under one live idea were printed word for word in both places, forty lines apart,
+    and the second copy said nothing the first had not -- except the direction the
+    evidence stage read each one in, which is what this section is for. A finding that
+    stands above is carried here by its reference number instead.
     """
     index = _evidence_index(record)
+    above = {
+        _comparable(text) for _, _, text in _evidence_notes(record, candidate) if text
+    }
     grouped = _CitedEvidence()
     seen: set[str] = set()
     for reference in dict.fromkeys(candidate.evidence_ids):
@@ -6361,7 +6395,16 @@ def _cited_evidence(record: ResearchRecord, candidate: Candidate) -> _CitedEvide
         bucket.append(stated)
         if entry.titled:
             grouped.titled.add(stated)
+        # Only where there is a number to carry it by. A record the reference list
+        # cannot number has nothing standing in for its text, so its text is printed.
+        if marker and _comparable(_sentence(entry.text)) in above:
+            grouped.restated[stated] = marker
     return grouped
+
+
+def _comparable(text: str) -> str:
+    """One statement in the form two renderings of it can be compared in."""
+    return " ".join(text.lower().split()).rstrip(".")
 
 
 _LOCATOR = re.compile(r"(?:https?://\S+|\b10\.\d{4,9}/\S+|\bPMID:?\s*\d+)", re.I)

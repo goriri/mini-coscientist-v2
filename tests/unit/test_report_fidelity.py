@@ -1453,6 +1453,109 @@ def test_an_idea_citing_sources_is_not_told_it_cites_no_evidence():
     )
 
 
+def test_a_finding_the_idea_already_restated_above_is_carried_by_its_number():
+    """Section 5 reprinted the whole Evidence Assessment forty lines below it.
+
+    A specialist that cites a record usually restates it in its own Evidence
+    Assessment. All four findings under one live idea stood word for word in both
+    places, and the second copy said nothing the first had not -- except which way the
+    evidence stage read each one against the research question, which is the whole
+    reason this section prints them.
+    """
+    from coscientist.models import (
+        EvidenceClaim,
+        EvidencePacket,
+        SourceLead,
+        SourceRecord,
+    )
+    from coscientist.narrative import CitationRegistry, _cited_evidence, _motivation
+
+    restated = "An ultrathin AlPO4 coating holds 94% of capacity after 100 cycles"
+    fresh = "Coating uniformity varies with precursor dose"
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="src_1",
+                url="https://example.org/alpo4",
+                title="Ultrathin AlPO4 coatings",
+                verification_status="verified",
+            ),
+            SourceRecord(
+                id="src_2",
+                url="https://example.org/dose",
+                title="Precursor dose and uniformity",
+                verification_status="verified",
+            ),
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_1", source_id="src_1", claim=restated, relation="supports"
+            ),
+            EvidenceClaim(
+                id="claim_2", source_id="src_2", claim=fresh, relation="supports"
+            ),
+        ],
+    )
+    record.citations = CitationRegistry(
+        [
+            SourceLead(canonical_url="https://example.org/alpo4", title="AlPO4"),
+            SourceLead(canonical_url="https://example.org/dose", title="Dose"),
+        ]
+    )
+    candidate = _candidate("cand_a")
+    candidate.evidence_ids = ["claim_1", "claim_2"]
+    candidate.evidence_for = [f"{restated}."]
+
+    cited = _cited_evidence(record, candidate)
+    motivation = _motivation({"Core idea": "A coating helps."}, cited)
+
+    assert list(cited.restated) == [f"{restated} [1]."]
+    # The one the specialist restated above is named by its number; the one it did not
+    # is printed here, because here is the only place in the report it stands.
+    assert restated not in motivation
+    assert motivation.startswith(
+        "The findings this idea cites that the evidence stage recorded as arguing for "
+        "the research question: Coating uniformity varies with precursor dose [2], and "
+        "the statement printed above under Evidence Assessment at [1]."
+    )
+
+
+def test_a_finding_printed_nowhere_above_is_still_printed_in_full():
+    from coscientist.models import EvidenceClaim, EvidencePacket, SourceRecord
+    from coscientist.narrative import _cited_evidence, _motivation
+
+    claim = "Coating uniformity varies with precursor dose"
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="src_1",
+                url="https://example.org/alumina",
+                title="Atomic layer deposition of alumina",
+                verification_status="verified",
+            )
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_1", source_id="src_1", claim=claim, relation="supports"
+            )
+        ],
+    )
+    candidate = _candidate("cand_a")
+    candidate.evidence_ids = ["claim_1"]
+    candidate.evidence_for = ["The coating survives calendering."]
+
+    motivation = _motivation(
+        {"Core idea": "A coating helps."}, _cited_evidence(record, candidate)
+    )
+
+    assert claim in motivation
+    assert "printed above under Evidence Assessment" not in motivation
+
+
 CUTS_AGAINST = (
     "Even coatings of one nanometre were detrimental to the cycling performance "
     "of LNMO."
