@@ -2348,6 +2348,32 @@ def test_an_idea_on_both_of_the_meta_reviews_lists_is_reported_as_on_both():
     )
 
 
+def test_an_idea_the_middle_of_the_field_is_not_said_to_rank_poorly():
+    """Counting the ideas below it, a block of ties across the halfway line has fewer
+    than half the field under it. Three ideas of a live run finished level on 1184 as
+    position four of eight, and one of them was told under Unexpected Connections that
+    it "ranks poorly on its own merits" -- in a report whose chapter on that same idea
+    opens "This idea finished rank 4 on an Elo of 1184 -- tied with two others, which
+    the shortlist cut runs through -- and was carried forward onto the shortlist,
+    averaging 4.4 of five across five reviews." """
+    from coscientist.models import CandidatePopulation, TournamentState
+    from coscientist.narrative import _minority_note
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    ids = [f"cand_{index}" for index in range(8)]
+    record.population = CandidatePopulation(candidates=[_candidate(id) for id in ids])
+    record.titles = {id: f"Coating {id[-1]}" for id in ids}
+    # Positions one to three, a level block at four, then seven and eight.
+    elos = [1290.0, 1234.0, 1200.0, 1184.0, 1184.0, 1184.0, 1172.0, 1152.0]
+    record.tournament = TournamentState(ratings=dict(zip(ids, elos, strict=True)))
+
+    assert "ranks poorly" not in _minority_note(record, "cand_3")
+    assert _minority_note(record, "cand_3").startswith("Coating 3 was protected as a ")
+    # The bottom of the field still says so, ties there included.
+    assert "ranks poorly on its own merits" in _minority_note(record, "cand_6")
+    assert "ranks poorly on its own merits" in _minority_note(record, "cand_7")
+
+
 def test_a_recommended_idea_carrying_an_unacted_flaw_is_not_put_outside_them_all():
     """The guard above asked only about the exclusion list, and a flaw the meta-review
     never acted on is not on it. So both ideas section nine recommends by name while

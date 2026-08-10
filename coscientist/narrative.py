@@ -10146,15 +10146,24 @@ def _minority_note(record: ResearchRecord, candidate_id: str) -> str:
     highest Elo in the tournament, and the report told the reader its winner
     ranked poorly. Protection is about coverage, not about placing: what the note
     can always say is that the region would close without it.
+
+    Counted from below, the guard that was left still fired on the middle of the
+    field: a block of ties across the halfway line has fewer than half the ideas
+    under it and is not therefore near the bottom. Three ideas of a live run
+    finished level on 1184 as the standings' position four of eight, and one of
+    them -- carried onto the shortlist, averaging 4.4 of five across its five
+    reviews, both printed in its own chapter -- was told here that it "ranks
+    poorly on its own merits". So it is counted from above instead: an idea most
+    of the field outranks.
     """
     ranked_id = record.ranked_id(candidate_id)
     title = record.title_for(ranked_id)
     ratings = record.tournament.ratings if record.tournament else {}
     rating = ratings.get(ranked_id)
-    below = sum(1 for value in ratings.values() if value < (rating or 0.0))
+    above = sum(1 for value in ratings.values() if value > (rating or 0.0))
     placing = (
         "It ranks poorly on its own merits, but it "
-        if rating is not None and below < len(ratings) / 2
+        if rating is not None and above > len(ratings) / 2
         else "It "
     )
     # Sole occupancy is a fact about the cluster map, so it is read off the map. A
