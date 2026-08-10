@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime
 from typing import Any
 
 from .citations import (
@@ -30,10 +31,35 @@ from .models import (
     SourceRecord,
     TournamentState,
 )
-from .narrative import _number_word
+from .narrative import _counted, _number_word
 from .parity import DEFAULT_ELO, UNMEASURED_MOVEMENT
 
 PRESENTATION_SCHEMA_VERSION = "1"
+
+
+def _pass_duration(start: str, end: str | None) -> str:
+    """How long one discovery pass took, which is what a row headed Elapsed owes.
+
+    A pass with no completion timestamp is one still running, and that is worth
+    saying: the card is read while the stage is open, and a blank there would look
+    like a missing record rather than a pass that has not come back.
+    """
+    if not end:
+        return "still running"
+    try:
+        span = datetime.fromisoformat(end) - datetime.fromisoformat(start)
+    except ValueError:
+        return "not recorded"
+    # Figures for both parts. This is a cell in a table of numbers, and the prose
+    # rule that spells counts to twelve would set one duration as "9 minutes nine
+    # seconds" -- a single measurement written two ways.
+    seconds = round(span.total_seconds())
+    if seconds < 60:
+        return _counted(seconds, "second")
+    minutes, seconds = divmod(seconds, 60)
+    return _counted(minutes, "minute") + (
+        f" {_counted(seconds, 'second')}" if seconds else ""
+    )
 
 
 def _latest_payload(session: Session, schema_name: str) -> dict[str, Any] | None:
@@ -542,9 +568,21 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
                         "pass": run.pass_number,
                         "facet": run.facet or "gap-closing",
                         "status": run.status,
-                        "elapsed": [run.started_at, run.completed_at],
-                        "cost": run.estimated_cost_usd,
-                        "error": run.error,
+                        # The field said "elapsed" and held the two timestamps it
+                        # would be worked out from, printed full width to the
+                        # microsecond: a live gate card headed a row ELAPSED and
+                        # gave a reader "2026-08-10T12:21:42.296413+00:00" over
+                        # "2026-08-10T12:30:51.045495+00:00" to subtract by eye.
+                        "elapsed": _pass_duration(run.started_at, run.completed_at),
+                        # Named in the unit the metric above it is named in. On its
+                        # own the row read "COST 3", beside an "Estimated cost" of
+                        # 21 USD that these three are a share of.
+                        "cost (USD)": run.estimated_cost_usd,
+                        # Only where there is one. Empty, it rendered as "Not
+                        # specified", so seven passes of a run in which nothing went
+                        # wrong each carried an ERROR row reporting that the error
+                        # was unknown rather than that there was none.
+                        **({"error": run.error} if run.error else {}),
                     }
                     for run in manifest.runs
                 ],

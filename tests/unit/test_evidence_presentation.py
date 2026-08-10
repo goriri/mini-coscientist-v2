@@ -404,3 +404,73 @@ def test_each_pass_names_the_facet_it_was_sent_to_cover():
         "supporting",
         "gap-closing",
     ]
+
+
+def _passes(manifest: DiscoveryManifest) -> list[dict]:
+    presentation = build_stage_presentation(_session(manifest, _packet()), "evidence")
+    assert presentation is not None
+    return next(
+        detail for detail in presentation["details"] if detail["label"] == "Passes"
+    )["value"]
+
+
+def test_a_row_headed_elapsed_says_how_long_the_pass_took():
+    """It held the two timestamps the duration would be worked out from, printed
+    full width to the microsecond, and left the subtraction to the reader."""
+    rows = _passes(
+        _manifest(
+            runs=[
+                DeepResearchRun(
+                    pass_number=1,
+                    facet="supporting",
+                    status="completed",
+                    started_at="2026-08-10T12:21:42.296413+00:00",
+                    completed_at="2026-08-10T12:30:51.045495+00:00",
+                )
+            ]
+        )
+    )
+
+    assert rows[0]["elapsed"] == "9 minutes 9 seconds"
+
+
+def test_a_pass_that_has_not_come_back_says_so_rather_than_reading_as_blank():
+    rows = _passes(
+        _manifest(runs=[DeepResearchRun(pass_number=1, status="in_progress")])
+    )
+
+    assert rows[0]["elapsed"] == "still running"
+
+
+def test_the_per_pass_cost_is_named_in_the_unit_the_stage_total_is_named_in():
+    """On its own the row read "COST 3", beside an estimated cost given in USD."""
+    rows = _passes(
+        _manifest(
+            runs=[
+                DeepResearchRun(
+                    pass_number=1, status="completed", estimated_cost_usd=3.0
+                )
+            ]
+        )
+    )
+
+    assert rows[0]["cost (USD)"] == 3.0
+    assert "cost" not in rows[0]
+
+
+def test_a_pass_that_did_not_fail_carries_no_error_row():
+    """Empty, the field rendered as "Not specified", so every pass of a run in
+    which nothing went wrong reported its error as unknown rather than absent."""
+    rows = _passes(
+        _manifest(
+            runs=[
+                DeepResearchRun(pass_number=1, status="completed"),
+                DeepResearchRun(
+                    pass_number=2, status="failed", error="provider returned 503"
+                ),
+            ]
+        )
+    )
+
+    assert "error" not in rows[0]
+    assert rows[1]["error"] == "provider returned 503"
