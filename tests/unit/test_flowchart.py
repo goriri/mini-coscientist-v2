@@ -87,6 +87,46 @@ def test_a_hyphen_inside_a_label_is_not_read_as_an_arrow():
     assert [node.label for node in chart.nodes] == ["HR-TEM/XPS Check", "Cycles 1-10"]
 
 
+def test_a_label_written_in_the_middle_of_the_arrow_is_read_as_the_arrows_label():
+    """Half of one live report's eight figures branched their decisions this way."""
+    chart = parse_mermaid(
+        "graph TD\n"
+        "    C[Coat] --> D{Total thickness 3nm?}\n"
+        "    D -- No --> C\n"
+        "    D -- Yes --> E[Assemble CR2032 Coin Cells n=5]\n"
+    )
+
+    assert chart is not None
+    assert [(edge.source, edge.target, edge.label) for edge in chart.edges] == [
+        ("C", "D", ""),
+        ("D", "C", "No"),
+        ("D", "E", "Yes"),
+    ]
+    assert {node.id: node.label for node in chart.nodes}["E"] == (
+        "Assemble CR2032 Coin Cells n=5"
+    )
+
+
+def test_the_dotted_and_thick_arrows_carry_a_middle_label_the_same_way():
+    chart = parse_mermaid(
+        "graph LR\n  A[One] -. maybe .-> B[Two]\n  B == surely ==> C[Three]\n"
+    )
+
+    assert chart is not None
+    assert [edge.label for edge in chart.edges] == ["maybe", "surely"]
+
+
+def test_an_arrow_inside_a_node_label_is_left_in_the_label():
+    """The rewrite above reads the gaps between nodes, not the words inside one."""
+    chart = parse_mermaid("graph TD\n  A[Charge -. then .-> rest] --> B[Measure]\n")
+
+    assert chart is not None
+    assert [node.label for node in chart.nodes] == [
+        "Charge -. then .-> rest",
+        "Measure",
+    ]
+
+
 def test_styling_statements_and_comments_are_skipped_rather_than_refused():
     chart = parse_mermaid(
         "graph TD\n  %% the happy path\n  A[One] --> B[Two]\n"

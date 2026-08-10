@@ -40,6 +40,17 @@ _UNSUPPORTED = re.compile(r"^(?:subgraph\b|end\b)", re.IGNORECASE)
 # ``|label|`` after the arrow. Two dashes minimum before the head, three for a plain
 # link, so a node label holding "HR-TEM" or "1-10" is not read as an arrow.
 _LINK = re.compile(r"\s*(?:-{2,}>|-\.-+>|={2,}>|-{3,}|-\.-+)\s*(?:\|([^|]*)\|\s*)?")
+# Mermaid's other way of labelling an arrow: the label sits in the middle of the link,
+# ``D -- Yes --> E``, rather than in a pipe pair after the head. Half the live figures
+# label their decision branches that way, and reading only the pipe form left their
+# source printed on the page as the drawing -- the very thing this module exists to
+# stop. The dotted and thick links carry theirs the same way, ``-. Yes .->`` and
+# ``== Yes ==>``, so all three openers are read and rewritten into the pipe form the
+# splitter above already understands.
+_MID_LABEL = re.compile(
+    r"(?:-{2,}|={2,}|-\.)\s*(?P<label>[^-=.|<>\s][^|<>]*?)\s*"
+    r"(?P<head>-{2,}>|={2,}>|\.-+>|-{3,})"
+)
 _NODE_ID = re.compile(r"^[A-Za-z0-9_.\-]+$")
 _BREAK = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
@@ -99,6 +110,31 @@ def _node(token: str, seen: dict[str, FlowNode]) -> FlowNode | None:
     return seen.setdefault(token, FlowNode(token, token, "box"))
 
 
+def _pipe_labels(line: str) -> str:
+    """``D -- Yes --> E`` rewritten as ``D -->|Yes| E``, outside node labels.
+
+    A node's own text is left alone. Nothing stops a generator writing an arrow inside
+    a bracket, and rewriting there would move a word out of the label it belongs to,
+    so the depth of the brackets is tracked and only the gaps between nodes are read.
+    """
+    depth, inside = 0, []
+    for character in line:
+        if character in "[({":
+            depth += 1
+        inside.append(depth > 0)
+        if character in "])}":
+            depth = max(0, depth - 1)
+
+    def rewrite(match: re.Match[str]) -> str:
+        if inside[match.start()]:
+            return match.group(0)
+        head = match.group("head")
+        # The dotted head arrives as ``.->`` with its opening dash consumed above.
+        return f"{'-' + head if head.startswith('.') else head}|{match.group('label')}|"
+
+    return _MID_LABEL.sub(rewrite, line)
+
+
 def parse_mermaid(source: str) -> Flowchart | None:
     """The subset of Mermaid the generators write, or ``None`` for anything else."""
     lines = [line.strip() for line in source.splitlines()]
@@ -114,7 +150,7 @@ def parse_mermaid(source: str) -> Flowchart | None:
     for line in lines[1:]:
         if _UNSUPPORTED.match(line):
             return None
-        parts = _LINK.split(line)
+        parts = _LINK.split(_pipe_labels(line))
         if len(parts) == 1:
             # A statement declaring a node without linking it. Anything else on its
             # own line is syntax this parser does not model.
