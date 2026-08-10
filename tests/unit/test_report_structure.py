@@ -148,6 +148,12 @@ def test_the_goal_title_opens_the_document(report: str):
     assert not text.startswith("Research Goal")
 
 
+def test_the_document_ends_on_a_newline_like_any_other_text_file(report: str):
+    """The downloaded .md ended mid-line, on the last entry of the index of exhibits."""
+    assert report.endswith("\n")
+    assert not report.endswith("\n\n")
+
+
 def test_the_narrative_has_exactly_nine_numbered_sections_in_order(body: str):
     numbers = [
         int(match.group(1))

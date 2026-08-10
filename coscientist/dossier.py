@@ -2870,7 +2870,12 @@ def compile_dossier(session: Session) -> str:
     )
     # Numbering runs before the contents list, so the index of exhibits it adds
     # is itself an entry in the contents rather than a section nothing points at.
-    return table_of_contents(number_figures_and_tables(report))
+    listed = table_of_contents(number_figures_and_tables(report))
+    # Both of those rebuild the document from its lines and hand back the join, which
+    # is a line short of a text file: the downloaded .md ended on the last entry of
+    # the index of exhibits with no newline after it, so a terminal ran the next
+    # prompt onto it and git called the last line incomplete.
+    return listed.rstrip("\n") + "\n"
 
 
 SUMMARY_TABLE_HEADING = "## Executive Candidate Summary"
