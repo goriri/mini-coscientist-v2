@@ -3038,7 +3038,7 @@ def test_the_governance_obligations_are_a_list_the_lead_in_carries():
     )
     core = _nine(record, [_brief("A coating", [], facts=_facts())])
     assert (
-        "discharged by a named owner: adherence to laboratory safety protocols, and "
+        "discharged by a named owner: adherence to laboratory safety protocols and "
         "proper disposal procedures for hazardous battery materials." in core
     )
     assert "named owner. Adherence" not in core

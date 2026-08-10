@@ -4266,6 +4266,50 @@ def _swallows_a_conjunction(text: str) -> bool:
     return "," in stripped or " — " in stripped
 
 
+# A conjunct with no finite verb in it is a noun phrase, and two noun phrases joined
+# by "and" take no comma. The specialists reach for a small closed set of finite verbs
+# -- a modal, an auxiliary, or one of the reporting verbs a prediction is written with
+# -- and anything outside it is read as a phrase. Guessing wrong that way drops a comma
+# two clauses could have carried, which is a style loss; guessing wrong the other way
+# is the defect itself.
+_SERIES_AUXILIARY = re.compile(
+    r"\b(?:will|shall|would|should|can|could|may|might|must|be|been|being"
+    r"|do|does|did|remains?|becomes?|acts?|yields?|causes?|raises?|generates?"
+    r"|triggers?|scavenges?|produces?|prevents?|improves?|reduces?|increases?"
+    r"|forms?|occurs?|falls?|grows?|retains?|leads?|drives?|allows?)\b",
+    re.IGNORECASE,
+)
+
+# A conjunct that already has "and" or "or" inside it needs the series conjunction
+# marked off from its own, which is the rule ``_needs_marking_off`` applies to titles.
+# Without it a pair of coverage gaps set as "independent replication evidence and
+# negative and null-result evidence" gives the reader three conjuncts and two ways to
+# bracket them.
+_SERIES_CONJUNCTION = re.compile(r"\b(?:and|or|nor)\b", re.IGNORECASE)
+
+
+# Short enough that a conjunct with no verb in it is a noun phrase and nothing else.
+# The verb lists are a guess about wording, and a long conjunct is where that guess
+# goes wrong: "Coating uniformity varies with precursor dose [2]" is a clause on a verb
+# no list holds, and dropping the comma in front of the phrase beside it left the
+# phrase reading as a second thing the dose varies with.
+_PHRASE_IN_A_SERIES = 7
+
+
+def _reads_as_a_phrase(text: str) -> bool:
+    """Whether a conjunct is a bare noun phrase, and so takes no comma before "and"."""
+    return (
+        len(text.split()) <= _PHRASE_IN_A_SERIES
+        and not _CLAUSE_VERB.search(text)
+        and not _SERIES_AUXILIARY.search(text)
+        # A conjunct carrying "and" of its own needs the series conjunction marked off
+        # from it, which is the rule ``_needs_marking_off`` applies to titles. Without
+        # it a pair of coverage gaps set as "independent replication evidence and
+        # negative and null-result evidence" gives the reader three conjuncts.
+        and not _SERIES_CONJUNCTION.search(text)
+    )
+
+
 def _series(items: Sequence[str], *, named: Container[str] = frozenset()) -> str:
     """One series, in the separator its own conjuncts allow."""
     if len(items) == 1:
@@ -4287,6 +4331,19 @@ def _series(items: Sequence[str], *, named: Container[str] = frozenset()) -> str
     separator = (
         "; " if any(_swallows_a_conjunction(item) for item in folded[:-1]) else ", "
     )
+    # Two items and no comma inside either of them is the one shape where the comma
+    # before "and" is not a series separator but a clause break, and it belongs there
+    # only if there are two clauses to break. A live idea's alternatives went to the
+    # page as "ZrO2 ALD coating, and TiO2 ALD coating" and its inputs as "ALD with
+    # in-situ FTIR, and high-precision battery cyclers for GITT" -- pairs of noun
+    # phrases punctuated as though a third had been dropped between them. Three or
+    # more items keep the serial comma, which is right for either kind.
+    #
+    # Dropped only where both conjuncts are phrases. A clause paired with a phrase
+    # still needs the break: without it "GITT formation may be too time-consuming for
+    # commercial scale-up and trace moisture in ALD" reads as one risk with two causes.
+    if len(folded) == 2 and separator == ", " and all(map(_reads_as_a_phrase, folded)):
+        return f"{folded[0]} and {folded[1]}"
     return separator.join(folded[:-1]) + separator + "and " + folded[-1]
 
 

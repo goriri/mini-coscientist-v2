@@ -3588,6 +3588,61 @@ def test_a_two_item_series_of_clean_clauses_joins_on_a_comma():
     assert joined.endswith("(swelling), and anode poisoning by dissolved Zn2+ ions.")
 
 
+def test_a_pair_of_noun_phrases_carries_no_comma_before_the_conjunction():
+    """A comma there is a clause break, and two noun phrases have no clause to break.
+
+    A live idea's alternatives went to the page as "ZrO2 ALD coating, and TiO2 ALD
+    coating" and its required inputs as "ALD with in-situ FTIR, and high-precision
+    battery cyclers for GITT" -- pairs punctuated as though a third item had been
+    dropped between them, which is the defect ``_names`` was written for.
+    """
+    from coscientist.narrative import _join
+
+    assert (
+        _join(["ZrO2 ALD coating", "TiO2 ALD coating"], fallback="")
+        == "ZrO2 ALD coating and TiO2 ALD coating."
+    )
+    assert (
+        _join(
+            ["ALD with in-situ FTIR", "High-precision battery cyclers for GITT"],
+            fallback="",
+        )
+        == "ALD with in-situ FTIR and high-precision battery cyclers for GITT."
+    )
+    # Three of them keep the serial comma, which is right for phrases as well.
+    assert _join(["Alpha coating", "Beta coating", "Gamma coating"], fallback="") == (
+        "Alpha coating, beta coating, and gamma coating."
+    )
+
+
+def test_a_phrase_beside_a_clause_keeps_the_comma_that_marks_them_apart():
+    """The comma is what stops the phrase reading as more of the clause.
+
+    "GITT formation may be too time-consuming for commercial scale-up and trace
+    moisture in ALD" is one risk with two causes; the two the specialist recorded are a
+    clause and a phrase, and only the comma says so. A phrase carrying "and" of its own
+    needs the same mark, or the series conjunction cannot be told from its.
+    """
+    from coscientist.narrative import _join
+
+    mixed = _join(
+        [
+            "GITT formation may be too time-consuming for commercial scale-up",
+            "Trace moisture in ALD",
+        ],
+        fallback="",
+    )
+    assert "for commercial scale-up, and trace moisture in ALD." in mixed
+
+    own = _join(
+        ["Independent replication evidence", "Negative and null-result evidence"],
+        fallback="",
+    )
+    assert own == (
+        "Independent replication evidence, and negative and null-result evidence."
+    )
+
+
 def test_a_comma_that_cannot_be_read_as_the_separator_does_not_force_semicolons():
     """An aside, a thousands separator and a trailing clause are not item breaks."""
     from coscientist.narrative import _join
@@ -3752,7 +3807,8 @@ def test_a_plural_noun_that_reads_as_a_verb_still_keeps_its_series():
         fallback="",
     )
 
-    assert joined == "Uses of the coated cells beyond automotive, and cost at scale."
+    # Two noun phrases, so the conjunction carries no comma in front of it.
+    assert joined == "Uses of the coated cells beyond automotive and cost at scale."
 
 
 def test_an_item_carrying_its_own_semicolon_does_not_extend_the_series():
