@@ -711,6 +711,18 @@ async def sweep_verification(
     return apply_retrieval_outcomes(packet, outcomes)
 
 
+def _document_title(title: str) -> str:
+    """A retrieved document's own title, where it is long enough to be one.
+
+    A publisher's ``<title>`` is as often the site as the paper -- "ScienceDirect",
+    "PubMed" -- and asserting a site's name as a paper's is worse than saying
+    nothing. Four words is the floor, below which the reference list keeps its
+    "Untitled source on <host>" and the locator gets its turn at naming the entry.
+    """
+    cleaned = " ".join(title.split())
+    return cleaned if len(cleaned.split()) >= 4 else ""
+
+
 def apply_retrieval_outcomes(
     packet: EvidencePacket, outcomes: dict[str, RetrievalOutcome]
 ) -> EvidencePacket:
@@ -729,8 +741,14 @@ def apply_retrieval_outcomes(
                 )
             continue
         metadata = outcome.metadata
-        if metadata.title and not source.title:
-            source.title = metadata.title
+        if not source.title:
+            # The registry holds the title of record and answers first, but a source
+            # with no DOI has no registry entry -- and the document itself carries
+            # one, in its <title> element or its PDF /Title. Retrieval read it for
+            # its text and never for that, so a paper this run had in full reached
+            # the reference list as "Untitled source on sandia.gov" and was counted
+            # among those "checked against the document they name".
+            source.title = metadata.title or _document_title(outcome.document.title)
         if metadata.authors:
             source.authors = metadata.authors
         if metadata.year:

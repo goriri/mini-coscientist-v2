@@ -255,13 +255,40 @@ def test_a_locator_that_spells_the_paper_out_names_the_entry_the_search_did_not(
 
     # The catalogue's record number in front of the name is the catalogue's, and the
     # slug's own capitals are the title's and are kept.
+    # And the points the path dropped out of the composition are put back: the entry
+    # shipped "LiNi05Co02Mn03O2", which is not a compound anyone could look up.
     assert _reference_title(researchgate) == (
         "Ultrathin Al2O3 Coatings for Improved Cycling Performance and Thermal "
-        "Stability of LiNi05Co02Mn03O2 Cathode Material"
+        "Stability of LiNi0.5Co0.2Mn0.3O2 Cathode Material"
     )
     assert _reference_title(aip) == "Understanding the roles of atomic layer deposition"
     assert _reference_title(blog) == (
         "Why dot un 38.3 is required for lithium batteries"
+    )
+
+
+def test_only_a_formula_gets_its_decimal_points_back_from_the_address():
+    """A path cannot carry a point, and one kind of word is missing one for certain.
+
+    A zero between an element symbol and another digit opened a fractional subscript,
+    since no compound writes an integer one with a leading zero. Nothing else in a
+    title is treated that way: a word needs three element groups to be read as a
+    formula at all, so an initialism with a number after it is left as it was.
+    """
+    formula = _lead(
+        "https://example.org/papers/"
+        "Thermal-runaway-of-LiNi08Mn01Co01O2-under-abuse-conditions"
+    )
+    report = _lead(
+        "https://example.org/papers/"
+        "Why-the-CO2-and-NMC811-figures-in-report-PR2024-are-not-comparable"
+    )
+
+    assert _reference_title(formula) == (
+        "Thermal runaway of LiNi0.8Mn0.1Co0.1O2 under abuse conditions"
+    )
+    assert _reference_title(report) == (
+        "Why the CO2 and NMC811 figures in report PR2024 are not comparable"
     )
 
 

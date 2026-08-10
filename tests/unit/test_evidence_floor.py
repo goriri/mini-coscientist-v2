@@ -449,3 +449,85 @@ def test_a_retraction_is_counted_even_though_it_is_not_a_shortfall():
     assert floor.retracted_sources == 1
     assert floor.weighted_credit == 0.0
     assert floor.met is False
+
+
+def test_a_retrieved_document_names_itself_when_no_registry_holds_it():
+    """A paper the run read in full still reached the list as an untitled source.
+
+    Retrieval parsed a PDF for its text and never for its ``/Title``, and the
+    write-back only ever consulted the registry -- which has nothing to say about a
+    source with no DOI. Entry 22 of a live reference list therefore read "Untitled
+    source on sandia.gov" while being counted among the six "retrieved and checked
+    against the document they name".
+    """
+    source = SourceRecord(
+        id="src_1",
+        url="https://www.sandia.gov/reports/safety-reliability.pdf",
+        title="",
+        source_type="primary_study",
+        verification_status="discovered_unverified",
+    )
+    outcome = RetrievalOutcome(
+        url=source.url,
+        tier="verified",
+        document=FetchedDocument(
+            url=source.url,
+            status=200,
+            text="Full text of the report.",
+            title="Safety and Reliability of Lithium-Ion Cells Under Abuse",
+        ),
+        metadata=SourceMetadata(),
+        reason="tier=verified",
+    )
+
+    updated = apply_retrieval_outcomes(_packet(source), {source.url: outcome})
+
+    assert updated.sources[0].title == (
+        "Safety and Reliability of Lithium-Ion Cells Under Abuse"
+    )
+
+
+def test_a_registry_title_still_outranks_the_page_the_document_was_served_on():
+    """The registry holds the title of record; the served page holds site chrome.
+
+    Below four words the document's own title is refused outright, since a
+    publisher's ``<title>`` is as often the site as the paper and asserting a site's
+    name as a paper's is worse than saying nothing.
+    """
+    registered = SourceRecord(
+        id="src_1",
+        url="https://doi.org/10.1000/1",
+        title="",
+        source_type="primary_study",
+    )
+    chrome = SourceRecord(
+        id="src_2",
+        url="https://example.org/article/2",
+        title="",
+        source_type="primary_study",
+    )
+    outcomes = {
+        registered.url: RetrievalOutcome(
+            url=registered.url,
+            tier="verified",
+            document=FetchedDocument(
+                url=registered.url, status=200, text="Text.", title="ScienceDirect"
+            ),
+            metadata=SourceMetadata(title="Interphase Coatings on Layered Oxides"),
+            reason="tier=verified",
+        ),
+        chrome.url: RetrievalOutcome(
+            url=chrome.url,
+            tier="verified",
+            document=FetchedDocument(
+                url=chrome.url, status=200, text="Text.", title="ScienceDirect"
+            ),
+            metadata=SourceMetadata(),
+            reason="tier=verified",
+        ),
+    }
+
+    updated = apply_retrieval_outcomes(_packet(registered, chrome), outcomes)
+
+    assert updated.sources[0].title == "Interphase Coatings on Layered Oxides"
+    assert updated.sources[1].title == ""

@@ -827,6 +827,28 @@ _TITLE_FUNCTION_WORDS = frozenset(
 # What a server appends to the name of the thing it is serving.
 _LOCATOR_EXTENSIONS = (".pdf", ".html", ".htm", ".php", ".aspx", ".full", ".abstract")
 
+# A run of three or more element symbols with their subscripts, which is what a
+# chemical formula looks like once a path has stripped its punctuation out. Three
+# rather than two, so a two-group word that is an initialism and a number -- PR2024,
+# CO2 -- is left alone. The single optional lower-case letter is what excludes an
+# ordinary word: "Section05" has six of them in a row and does not match.
+_FORMULA_WORD = re.compile(r"^(?:[A-Z][a-z]?\d*){3,}$")
+# The zero that opened a fractional subscript, with the point the address dropped.
+# No compound has an integer subscript written with a leading zero, so a zero sitting
+# between an element symbol and another digit was a decimal point's left-hand side.
+_LOST_SUBSCRIPT = re.compile(r"(?<=[A-Za-z])0(\d)")
+
+
+def _restored_formula(word: str) -> str:
+    """A formula from a path, with the decimal points the path could not carry.
+
+    Entry 6 of a live reference list read "... Thermal Stability of LiNi05Co02Mn03O2
+    Cathode Material", which is not a composition: it is LiNi0.5Co0.2Mn0.3O2 with
+    three points dropped by the URL that carried it. A reader copying the entry into
+    a citation copies a compound that does not exist.
+    """
+    return _LOST_SUBSCRIPT.sub(r"0.\1", word) if _FORMULA_WORD.match(word) else word
+
 
 def _name_from_locator(url: str) -> str:
     """The document's name where the address carries it and the search did not.
@@ -844,7 +866,8 @@ def _name_from_locator(url: str) -> str:
     three surnames) and "lithium-ion-batteries-ald-coatings-forge-nano" (a topic and
     the site's own name) have none, and are left to say they are untitled. A slug
     cannot mark which of its hyphens joined a compound, so "solid-state" comes back
-    as two words -- which is why the entry says where the name came from.
+    as two words -- which is why the entry says where the name came from. What it can
+    put back is a formula's decimal points, since nothing else they could have been.
     """
     if not url.startswith(("http://", "https://")) or GROUNDING_REDIRECT_MARKER in url:
         return ""
@@ -865,7 +888,7 @@ def _name_from_locator(url: str) -> str:
             continue
         if not any(word.lower() in _TITLE_FUNCTION_WORDS for word in words):
             continue
-        name = " ".join(words)
+        name = " ".join(_restored_formula(word) for word in words)
         # A slug is lower-cased whatever case the title was set in; one that kept its
         # capitals kept them from the title, so only the flattened form is restored.
         return name if name != name.lower() else name[:1].upper() + name[1:]

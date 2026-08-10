@@ -246,18 +246,55 @@ def html_to_text(markup: str) -> tuple[str, str, dict[str, str]]:
 
 def pdf_to_text(payload: bytes) -> str:
     """Prose from a PDF, or an empty string when it cannot be read."""
+    return _pdf_content(payload)[0]
+
+
+# What an authoring tool leaves in /Title when the author never set one. A title that
+# is really the file it was exported from names the export, not the document.
+_TOOL_TITLE = re.compile(
+    r"^(?:microsoft\s+word\s*-\s*|untitled\b|document\d*$|print$|slide\s*\d*$)", re.I
+)
+_FILE_TITLE = re.compile(r"\.(?:pdf|docx?|tex|indd|pptx?|rtf|odt)$", re.I)
+
+
+def pdf_title(payload: bytes) -> str:
+    """The document's own title, where the PDF carries one worth printing.
+
+    A PDF was read for its text and never for its ``/Title``, so a paper the run had
+    retrieved in full still reached the reference list as "Untitled source on
+    sandia.gov" -- an entry that was checked against a document it could not name.
+
+    An authoring tool fills the field in when the author does not, so an export
+    artefact is refused: "Microsoft Word - draft3.docx" is what the file was made
+    from, and a bare filename is the file rather than the work. Four words is the
+    floor, which is where a real title starts and a tool's placeholder stops.
+    """
+    title = " ".join(_pdf_content(payload)[1].split())
+    if len(title.split()) < 4 or _TOOL_TITLE.match(title) or _FILE_TITLE.search(title):
+        return ""
+    return title
+
+
+def _pdf_content(payload: bytes) -> tuple[str, str]:
+    """The prose and the recorded title, or empty strings where neither can be read."""
     try:
         from io import BytesIO
 
         from pypdf import PdfReader
     except Exception:
-        return ""
+        return "", ""
     try:
         reader = PdfReader(BytesIO(payload))
         pages = [page.extract_text() or "" for page in reader.pages[:60]]
+        # A PDF with a damaged trailer can still yield pages, so the title is read
+        # separately: losing it is not a reason to lose the text as well.
+        try:
+            title = str((reader.metadata or {}).get("/Title") or "")
+        except Exception:
+            title = ""
     except Exception:
-        return ""
-    return _BLANK_LINES.sub("\n\n", "\n\n".join(pages)).strip()
+        return "", ""
+    return _BLANK_LINES.sub("\n\n", "\n\n".join(pages)).strip(), title
 
 
 def _is_public_host(host: str) -> bool:
@@ -460,6 +497,10 @@ class SourceRetriever:
                     result.text = strip_unstorable_characters(pdf_to_text(body))[
                         :MAX_DOCUMENT_CHARS
                     ]
+                    # Read for its text and never for its title, so a paper this run
+                    # had in full still reached the reference list as "Untitled
+                    # source on sandia.gov".
+                    result.title = strip_unstorable_characters(pdf_title(body))
                     if not result.text:
                         result.error = "The PDF carried no extractable text layer."
                 else:

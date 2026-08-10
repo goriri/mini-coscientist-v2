@@ -32,6 +32,8 @@ from coscientist.retrieval import (
     extract_doi,
     fetch_source_document,
     html_to_text,
+    pdf_title,
+    pdf_to_text,
     titles_agree,
 )
 
@@ -488,3 +490,49 @@ async def test_the_tool_reports_the_tier_and_truncates_a_sixty_page_pdf(
     assert result["registry_authors"] == ["Wei Chen"]
     assert result["text_truncated"] is True
     assert len(result["text"]) == TOOL_TEXT_BUDGET_CHARS
+
+
+def _pdf(title: str, body: str = "Full text of the report.") -> bytes:
+    """A one-page PDF carrying the given /Title, built without touching the disk."""
+    from io import BytesIO
+
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(200, 200)
+    if title:
+        writer.add_metadata({"/Title": title})
+    buffer = BytesIO()
+    writer.write(buffer)
+    assert body  # the fixture's text layer is beside the point of these tests
+    return buffer.getvalue()
+
+
+def test_a_pdf_is_read_for_the_title_it_carries_and_not_only_for_its_text():
+    """Entry 22 of a live reference list read "Untitled source on sandia.gov" over a
+    PDF this run had retrieved in full, because the parser took the text and left
+    the /Title where it found it -- and the entry was then counted among the six
+    "retrieved and checked against the document they name"."""
+    payload = _pdf("Safety and Reliability of Lithium-Ion Cells Under Abuse")
+
+    assert pdf_title(payload) == (
+        "Safety and Reliability of Lithium-Ion Cells Under Abuse"
+    )
+    # Reading the title costs the text nothing.
+    assert pdf_to_text(payload) == ""
+
+
+def test_an_authoring_tools_placeholder_is_not_taken_for_the_documents_name():
+    """A tool fills /Title in when the author does not, and what it fills it in with
+    is the file the export came from. Naming the export is not naming the work."""
+    assert pdf_title(_pdf("Microsoft Word - PR2024_701_final_v3.docx")) == ""
+    assert pdf_title(_pdf("Safety-Reliability-2024-final.pdf")) == ""
+    assert pdf_title(_pdf("Untitled")) == ""
+    assert pdf_title(_pdf("")) == ""
+    # And a fragment too short to be a paper's name leaves the entry untitled.
+    assert pdf_title(_pdf("Annual Report")) == ""
+
+
+def test_a_pdf_that_cannot_be_parsed_costs_neither_its_text_nor_a_traceback():
+    assert pdf_title(b"not a pdf at all") == ""
+    assert pdf_to_text(b"not a pdf at all") == ""
