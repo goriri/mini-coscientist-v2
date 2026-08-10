@@ -148,9 +148,24 @@ def _created(**body) -> dict:
 def test_the_launcher_forks_the_run_whose_id_was_pasted_in(api):
     source = _searched(approval_profile=ApprovalProfile.MILESTONE, ledger=api)
 
-    snapshot = _created(seed_evidence_from=source.session.id)
+    snapshot = _created(
+        seed_evidence_from=source.session.id,
+        approval_profile="milestone",
+        evidence_review=True,
+    )
 
     assert snapshot["stage"] == "generate"
+    # And the snapshot says where the corpus came from. The evidence stage of a
+    # fork reports the passes, the leads and the cost of the search that built it,
+    # every number of which belongs to another run -- and the dossier that says so
+    # is the last thing to exist. The page watching the run needs it before then.
+    assert snapshot["seeded_evidence_from"] == source.session.id
+    assert snapshot["evidence_review"] is False
+
+
+def test_a_run_that_searched_for_itself_is_not_labelled_a_fork(api):
+    snapshot = _created()
+    assert snapshot["seeded_evidence_from"] == ""
 
 
 def test_an_id_nobody_holds_is_a_typo_in_the_field_and_says_so(api):

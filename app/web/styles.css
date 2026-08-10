@@ -319,6 +319,23 @@ button {
   text-transform: uppercase;
 }
 
+/* The rule above is a block, which outranks the user agent's own rule for the
+   hidden attribute -- so on every run that is not a fork this line reserved six
+   pixels and an empty row under the status. */
+.current-session-card > span[hidden] {
+  display: none;
+}
+
+/* A caveat about where the evidence came from, not a second status. Scoped to
+   the card because the bare class loses to the child rule above on specificity,
+   which would set a whole sentence in letterspaced uppercase. */
+.current-session-card > .session-forked {
+  color: var(--rail);
+  font-style: italic;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
 .stage-nav ol {
   margin: 13px 0 0;
   padding: 0;

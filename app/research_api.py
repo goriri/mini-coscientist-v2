@@ -343,6 +343,11 @@ def _snapshot(workflow: CoScientistWorkflow) -> dict:
         # gate, and the launcher needs to be able to say so rather than promise
         # a stop that never comes.
         "evidence_review": session.evidence_review,
+        # A forked run's evidence card reports the search that built the corpus --
+        # seven passes, ninety leads, twenty-one dollars -- and none of it was this
+        # run's. The report says so, but the report is the last thing to exist; a
+        # person watching the run needs it from the stage the corpus shows up in.
+        "seeded_evidence_from": session.seeded_evidence_from,
         "literature_only": session.literature_only,
         "pending_draft": _artifact_summary(workflow.pending_draft, workflow),
         "pending_artifacts": [

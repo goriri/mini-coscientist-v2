@@ -86,6 +86,7 @@ const elements = {
   currentSessionCard: document.querySelector("#currentSessionCard"),
   currentSessionName: document.querySelector("#currentSessionName"),
   currentSessionState: document.querySelector("#currentSessionState"),
+  currentSessionForked: document.querySelector("#currentSessionForked"),
   sessionHistory: document.querySelector("#sessionHistory"),
   sessionCount: document.querySelector("#sessionCount"),
   historyButton: document.querySelector("#historyButton"),
@@ -840,6 +841,18 @@ function updateSessionIdentity(workflow) {
     `Current query: ${workflow.question}`,
   );
   elements.currentSessionState.textContent = `${stageLabel(workflow.stage)} · ${workflowStatusCopy(workflow)}`;
+  // Said for as long as the run is on screen, not only in the finished dossier.
+  // The evidence stage of a fork shows the passes, the leads and the cost of the
+  // search that built its corpus, and every one of those numbers belongs to
+  // another run.
+  const forkedFrom = workflow.seeded_evidence_from || "";
+  elements.currentSessionForked.hidden = !forkedFrom;
+  elements.currentSessionForked.textContent = forkedFrom
+    ? `Evidence carried over from ${forkedFrom} — this run did not search.`
+    : "";
+  elements.currentSessionForked.title = forkedFrom
+    ? "Scope and evidence were forked from an earlier run of this same question. This run started at idea generation, and the search reported under Evidence is that earlier run's."
+    : "";
   renderSessionTitle(workflow);
 }
 
