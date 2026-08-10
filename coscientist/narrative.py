@@ -5079,9 +5079,28 @@ def _motivation(facts: dict[str, str], cited: _CitedEvidence) -> str:
     """
     stated: list[str] = []
     if cited.supports:
+        # Saying whose reading the direction is was not enough where the specialist's
+        # own reading is the opposite one. The disconfirming idea of a live run --
+        # that coatings accelerate decay -- listed under Supporting Arguments the
+        # three sources it had printed under Evidence against forty lines above, and
+        # nothing between the two said they were the same three.
+        contested = [item for item in cited.supports if item in cited.contested]
+        against = (
+            ""
+            if not contested
+            else " The specialist read "
+            + ("that one" if len(contested) == 1 else f"{_number_word(len(contested))}")
+            + " the other way and filed "
+            + ("it" if len(contested) == 1 else "them")
+            + " under Evidence against above; a finding can argue for the question "
+            "and against the idea that cites it, and this idea is the case where it "
+            "does."
+        )
         stated.append(
             "The findings this idea cites that the evidence stage recorded as "
-            "arguing for the research question: " + _cited_series(cited.supports, cited)
+            "arguing for the research question: "
+            + _cited_series(cited.supports, cited)
+            + against
         )
     if cited.undirected:
         stated.append(
@@ -6459,6 +6478,9 @@ class _CitedEvidence:
     restated: dict[str, str] = field(default_factory=dict)
     """Those the idea's own Evidence Assessment already prints, by reference number."""
 
+    contested: set[str] = field(default_factory=set)
+    """Those the specialist itself filed under Evidence against, reading them back."""
+
     def __bool__(self) -> bool:
         return bool(self.supports or self.contradicts or self.undirected)
 
@@ -6488,9 +6510,17 @@ def _cited_evidence(record: ResearchRecord, candidate: Candidate) -> _CitedEvide
     stands above is carried here by its reference number instead.
     """
     index = _evidence_index(record)
-    above = {
-        _comparable(text) for _, _, text in _evidence_notes(record, candidate) if text
-    }
+    # Which heading the specialist filed each restatement under, not only that it
+    # filed one: the direction this section reports is the evidence stage's reading
+    # of the research question, and the specialist's reading of the same finding can
+    # be the opposite of it. On the disconfirming idea of a live run it was, three
+    # times over -- the sources printed under Evidence against were the whole of the
+    # section headed Supporting Arguments and Evidence forty lines below.
+    filed: dict[str, str] = {}
+    for heading, _, text in _evidence_notes(record, candidate):
+        if text:
+            filed.setdefault(_comparable(text), heading)
+    above = set(filed)
     grouped = _CitedEvidence()
     seen: set[str] = set()
     for reference in dict.fromkeys(candidate.evidence_ids):
@@ -6516,8 +6546,11 @@ def _cited_evidence(record: ResearchRecord, candidate: Candidate) -> _CitedEvide
             grouped.titled.add(stated)
         # Only where there is a number to carry it by. A record the reference list
         # cannot number has nothing standing in for its text, so its text is printed.
-        if marker and _comparable(_sentence(entry.text)) in above:
+        comparable = _comparable(_sentence(entry.text))
+        if marker and comparable in above:
             grouped.restated[stated] = marker
+        if bucket is grouped.supports and filed.get(comparable) == "Evidence against":
+            grouped.contested.add(stated)
     return grouped
 
 

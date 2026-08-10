@@ -1453,6 +1453,101 @@ def test_an_idea_citing_sources_is_not_told_it_cites_no_evidence():
     )
 
 
+def test_a_finding_the_specialist_read_the_other_way_says_so_where_it_is_reused():
+    """The direction on file is the evidence stage's reading of the research question,
+    read long before any idea exists. On the disconfirming idea of a live run -- that
+    coatings accelerate decay -- the three sources printed under Evidence against were
+    the whole of the section headed "5. Supporting Arguments & Evidence (Motivation)"
+    forty lines below, and nothing between the two said they were the same three."""
+    from coscientist.models import (
+        EvidenceClaim,
+        EvidencePacket,
+        SourceLead,
+        SourceRecord,
+    )
+    from coscientist.narrative import CitationRegistry, _cited_evidence, _motivation
+
+    claim = "ALD Al2O3 on NMC811 scavenges HF and prevents surface corrosion"
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="src_1",
+                url="https://example.org/dual-roles",
+                title="Dual roles of Al2O3 coatings",
+                verification_status="verified",
+            )
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_1", source_id="src_1", claim=claim, relation="supports"
+            )
+        ],
+    )
+    record.citations = CitationRegistry(
+        [SourceLead(canonical_url="https://example.org/dual-roles", title="Dual roles")]
+    )
+    candidate = _candidate("cand_a")
+    candidate.evidence_ids = ["claim_1"]
+    # The idea argues the consensus is wrong, so the consensus paper is what it has to
+    # displace -- and the evidence stage still read that paper as arguing for the goal.
+    candidate.evidence_against = [f"{claim}."]
+
+    cited = _cited_evidence(record, candidate)
+    motivation = _motivation({"Core idea": "Coatings hurt."}, cited)
+
+    assert cited.contested
+    assert (
+        "The specialist read that one the other way and filed it under Evidence "
+        "against above; a finding can argue for the question and against the idea "
+        "that cites it, and this idea is the case where it does." in motivation
+    )
+
+
+def test_a_finding_both_stages_read_the_same_way_carries_no_such_note():
+    """The note is for the collision, not for every reused finding: printed over an
+    idea whose own reading agrees with the evidence stage's, it would report a
+    disagreement that is not there."""
+    from coscientist.models import (
+        EvidenceClaim,
+        EvidencePacket,
+        SourceLead,
+        SourceRecord,
+    )
+    from coscientist.narrative import CitationRegistry, _cited_evidence, _motivation
+
+    claim = "ALD Al2O3 on NMC811 scavenges HF and prevents surface corrosion"
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="src_1",
+                url="https://example.org/dual-roles",
+                title="Dual roles of Al2O3 coatings",
+                verification_status="verified",
+            )
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_1", source_id="src_1", claim=claim, relation="supports"
+            )
+        ],
+    )
+    record.citations = CitationRegistry(
+        [SourceLead(canonical_url="https://example.org/dual-roles", title="Dual roles")]
+    )
+    candidate = _candidate("cand_a")
+    candidate.evidence_ids = ["claim_1"]
+    candidate.evidence_for = [f"{claim}."]
+
+    cited = _cited_evidence(record, candidate)
+
+    assert not cited.contested
+    assert "the other way" not in _motivation({}, cited)
+
+
 def test_a_finding_the_idea_already_restated_above_is_carried_by_its_number():
     """Section 5 reprinted the whole Evidence Assessment forty lines below it.
 
