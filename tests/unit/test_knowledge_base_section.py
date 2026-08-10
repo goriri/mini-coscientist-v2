@@ -174,6 +174,56 @@ def test_a_pass_that_hands_back_its_payload_is_still_printed_as_a_report():
     assert "- **ALD:** a vapour-phase technique." in prose
 
 
+RECORDS = """# Methodological Evaluation of Protective Coatings
+
+## Summary
+
+- **Statement:** Testing this hypothesis requires a framework that isolates the
+coating's impact from extraneous variables.
+- **Facet:** methods
+- **Category:** Finding
+- **Primary Literature:** Yan, P., et al. (2016). *Atomic to Nanoscale
+Investigation of an Al2O3 Coating Layer.* URL: https://pubs.acs.org/doi/10.1021/x
+
+- **Statement:** Wet chemical processing struggles to reach angstrom-level control.
+- **Facet:** methods
+- **Category:** Inference
+- **Primary Literature:** None (Literature Gap / Empty Facet)
+"""
+
+
+def test_a_pass_that_hands_its_records_back_as_markdown_prints_what_it_found():
+    """The same payload, set as Markdown. One live pass answered with twenty records
+    of "- **Statement:** ... - **Facet:** methods - **Category:** Finding - **Primary
+    Literature:** ... URL: https://..." where the other seven answered with prose, so
+    its section was four bulleted labels and a bare address per finding -- thirty-one
+    raw URLs in a report that numbers every source it cites."""
+    prose = _deep_research_prose(RECORDS)
+
+    for label in ("**Statement:**", "**Facet:**", "**Category:**", "**Primary"):
+        assert label not in prose
+    assert "https://" not in prose
+    assert "None (Literature Gap / Empty Facet)" not in prose
+    assert "#### Methodological Evaluation of Protective Coatings" in prose
+    assert "Testing this hypothesis requires a framework that isolates the" in prose
+    assert "Wet chemical processing struggles to reach angstrom-level control." in (
+        prose
+    )
+
+
+def test_a_report_that_bolds_a_label_of_its_own_keeps_it():
+    """A pass writing prose is free to open a paragraph on a bolded phrase, and one
+    such line is not the contract handed back. What marks the payload is more than one
+    line naming a field of it."""
+    written = (
+        "- **ALD:** a vapour-phase technique.\n"
+        "- **Sol-gel:** a wet chemical route.\n"
+        "\n**Category:** the two divide the literature.\n"
+    )
+
+    assert _deep_research_prose(written) == written.strip()
+
+
 def test_a_fence_a_pass_leaves_open_is_closed_before_the_next_one_starts():
     """The rest of the document is not the pass's to set. A live report's Pass 1 came
     back as an unclosed `````yaml`` block, and the eight hypotheses, the

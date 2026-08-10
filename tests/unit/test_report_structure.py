@@ -5614,6 +5614,36 @@ def test_two_sums_of_money_on_one_line_are_not_read_as_a_formula():
     )
 
 
+def test_a_bare_number_between_two_dollars_is_notation_and_not_two_prices():
+    """Two prices need a word between them, and this span has no space in it at all.
+    A live pass set the growth rate of a deposition cycle as "$0.04$ to $0.11$
+    nanometers", and both dollars went to the Markdown, the PDF and the Word file."""
+    from coscientist.dossier import _without_math_markup
+
+    assert _without_math_markup("yielding $0.04$ to $0.11$ nanometers per cycle") == (
+        "yielding 0.04 to 0.11 nanometers per cycle"
+    )
+    # Still two prices where a price is what it is: the span between these two runs
+    # from a digit to a space, and a run that ends on a space is prose.
+    assert _without_math_markup("from $3.00 to $21.00 a pass") == (
+        "from $3.00 to $21.00 a pass"
+    )
+
+
+def test_a_unit_is_set_against_its_prefix_and_not_parted_from_it():
+    """The space belongs between the number and the unit. A live report printed the
+    injected electrolyte volume as "exactly 40 µ L to 45 µ L via micropipette", nine
+    times over, which reads as a quantity in micro and a separate letter L."""
+    from coscientist.dossier import _joined_units
+
+    assert _joined_units("exactly 40 µ L to 45 µ L via micropipette") == (
+        "exactly 40 µL to 45 µL via micropipette"
+    )
+    # The number keeps its own space, and a prefix standing before a word is a word.
+    assert _joined_units("40 µL and 5 µm") == "40 µL and 5 µm"
+    assert _joined_units("the 3 m long cable") == "the 3 m long cable"
+
+
 def test_the_integrity_lead_in_agrees_with_the_number_of_ideas_it_covers(
     rich_session: Session,
 ):

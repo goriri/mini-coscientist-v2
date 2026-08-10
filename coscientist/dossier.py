@@ -2867,7 +2867,9 @@ def compile_dossier(session: Session) -> str:
     lines += _advisory_appendix(advisories)
     lines += _provenance_appendix(record)
     report = _em_dashed(
-        _densely_numbered(_without_math_markup("\n".join(lines).rstrip() + "\n"))
+        _joined_units(
+            _densely_numbered(_without_math_markup("\n".join(lines).rstrip() + "\n"))
+        )
     )
     # Numbering runs before the contents list, so the index of exhibits it adds
     # is itself an entry in the contents rather than a section nothing points at.
@@ -3106,8 +3108,21 @@ def _is_math(span: str) -> bool:
 
     "$21.00" is the estimated cost of a discovery run and appears in the provenance
     appendix; two of those on one line must not read as a formula between them.
+
+    A number and nothing else is notation whatever it holds: two prices cannot make
+    that span, since two of them need a word between them and this one has no space
+    in it at all. A live pass set its growth rate as "$0.04$ to $0.11$ nanometers per
+    cycle" and the dollars went to the page, six times over.
     """
-    return bool(set(span) & set("\\_^{")) or span[:1].isalpha()
+    return (
+        bool(set(span) & set("\\_^{"))
+        or span[:1].isalpha()
+        or (
+            span[:1].isdigit()
+            and span[-1:].isdigit()
+            and not any(map(str.isspace, span))
+        )
+    )
 
 
 def _plain_superscript(match: re.Match[str]) -> str:
@@ -3138,6 +3153,20 @@ def _without_math_markup(report: str) -> str:
         return " ".join(text.replace("--", "\u2013").split()) or match.group(0)
 
     return _MATH_SPAN.sub(spelled, report)
+
+
+# The micro sign parted from the unit it qualifies. The space belongs between the
+# number and the unit, not inside the unit: a live pass wrote the injected electrolyte
+# volume as "exactly 40 µ L to 45 µ L via micropipette", nine times over, which reads
+# as a quantity in micro and a separate letter L. Only this prefix, and only against a
+# single letter: the rest are ordinary words of English where they stand alone, and
+# closing a gap between two of those would make a word of them.
+_PARTED_PREFIX = re.compile(r"(?<=\d )([µμ])[ \t]+(?=[A-Za-zΩ]\b)")
+
+
+def _joined_units(report: str) -> str:
+    """Every unit in the report set as one token, prefix against its measure."""
+    return _PARTED_PREFIX.sub(r"\1", report)
 
 
 def _em_dashed(report: str) -> str:

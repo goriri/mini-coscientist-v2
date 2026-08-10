@@ -12120,6 +12120,17 @@ _PAYLOAD_SCAFFOLD = re.compile(
     r"^\s*(?:- )?(?:facet|statement|summary):[ \t]*[|>\w-]*$"
 )
 
+# The same payload, set as Markdown rather than as YAML. One live pass answered with
+# twenty records of "- **Statement:** ... / - **Facet:** methods / - **Category:**
+# Finding / - **Primary Literature:** Yan, P., et al. (2016). ... URL: https://..."
+# where the other seven answered with prose, so the reader met four bulleted labels
+# and a bare address per finding, and thirty-one raw URLs in a report that numbers
+# every source it cites.
+_RECORD_LINE = re.compile(
+    r"^\s*(?:[-*+][ \t]+)?\*\*(?P<label>[A-Za-z][A-Za-z ]{2,24}?):?\*\*:?[ \t]*"
+    r"(?P<said>.*)$"
+)
+
 
 def _deep_research_prose(text: str) -> str:
     """One pass's report, as Markdown that sits under this report's own headings.
@@ -12141,8 +12152,37 @@ def _deep_research_prose(text: str) -> str:
     # as a listing of itself.
     source = stripped.splitlines()
     payload = sum(bool(_PAYLOAD_SCAFFOLD.match(line)) for line in source) > 1
+    # A pass writing its records as Markdown says the same thing, and is read the same
+    # way: what the pass found is the statement, and the fields around it are the
+    # contract it was asked to fill. They are dropped rather than reformatted -- the
+    # facet is already the heading this section prints above the pass, and every one
+    # of these statements is printed again under Main Research Directions carrying
+    # the reference number its literature was given.
+    labelled = [_RECORD_LINE.match(line) for line in source]
+    records = (
+        sum(
+            bool(match) and match.group("label").strip().lower() in _RECORD_FIELDS
+            for match in labelled
+        )
+        > 1
+    )
     fences = 0
-    for line in source:
+    dropping = False
+    for line, labels in zip(source, labelled, strict=True):
+        if records and labels:
+            field = labels.group("label").strip().lower()
+            dropping = field in _RECORD_FIELDS
+            if dropping:
+                continue
+            if field in _RECORD_STATEMENT:
+                line = labels.group("said")
+        elif dropping:
+            # A field long enough to wrap carries on over the lines after it, and a
+            # dropped one takes its own continuation with it: the address of the
+            # paper the pass cited wrapped, and half of it stayed on the page.
+            if line.strip() and not _MARKDOWN_HEADING_RE.match(line.strip()):
+                continue
+            dropping = False
         if _FENCE.match(line):
             if payload:
                 continue
