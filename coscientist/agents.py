@@ -923,7 +923,7 @@ SPECIALISTS = (
     Specialist(
         "generate",
         "generation_mechanism_first",
-        "Generate 2 bottom-up candidates by constructing novel causal pathways, mathematical formulations, or biophysical/computational models.",
+        "Generate 2 bottom-up candidates by constructing novel causal pathways, mathematical formulations, or physical, biophysical or computational models.",
     ),
     Specialist(
         "generate",

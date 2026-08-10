@@ -106,8 +106,8 @@ def test_discipline_dynamic_prompt_loading():
         in actor_prompt
     )
     # Verify no hardcoded chemistry/biology bias
-    assert "reagents/additives" not in actor_prompt
-    assert "epimerization controls" not in actor_prompt
+    assert "precursors or additives" not in actor_prompt
+    assert "epimerization" not in actor_prompt
     assert "stereochemical integrity" not in actor_prompt
     assert "ligation strategy" not in actor_prompt
     assert "fragmentation points" not in actor_prompt
@@ -120,8 +120,8 @@ def test_discipline_dynamic_prompt_loading():
     assert "data leakage controls" in critic_prompt
     assert "computational limits" in critic_prompt
     # Verify no hardcoded chemistry/biology bias in critic rubric
-    assert "reagents/additives" not in critic_prompt
-    assert "epimerization controls" not in critic_prompt
+    assert "precursors or additives" not in critic_prompt
+    assert "epimerization" not in critic_prompt
     assert "stereochemical integrity" not in critic_prompt
     assert "fragmentation points" not in critic_prompt
     assert "cohort designs" not in critic_prompt
@@ -137,7 +137,7 @@ def test_discipline_dynamic_prompt_loading():
     assert "Scientific discipline: mathematics_statistics" in math_actor_prompt
     assert "axiomatic rigor" in math_actor_prompt
     assert "proof sketches" in math_actor_prompt
-    assert "reagents/additives" not in math_actor_prompt
+    assert "precursors or additives" not in math_actor_prompt
     assert "cohort designs" not in math_actor_prompt
 
     math_critic_prompt = specialist._build_critic_prompt(
@@ -145,7 +145,7 @@ def test_discipline_dynamic_prompt_loading():
     )
     assert "Scientific Discipline: mathematics_statistics" in math_critic_prompt
     assert "proof gaps" in math_critic_prompt
-    assert "reagents/additives" not in math_critic_prompt
+    assert "precursors or additives" not in math_critic_prompt
 
     # 3. Test Chemistry / Materials (verifying domain-specific chemistry prompt is preserved for Chemistry)
     chem_session = Session(
@@ -156,8 +156,10 @@ def test_discipline_dynamic_prompt_loading():
         chem_session, "- check", "prior", ""
     )
     assert "Scientific discipline: chemistry_materials" in chem_actor_prompt
-    assert "reagents/additives" in chem_actor_prompt
-    assert "epimerization controls" in chem_actor_prompt
+    assert "precursors or additives" in chem_actor_prompt
+    assert "epimerization or racemization where there are stereocentres" in (
+        chem_actor_prompt
+    )
 
     # 4. Test Specialist.run() during scope stage automatically classifies a general session
     unclassified_session = Session(question=cs_question)
@@ -166,6 +168,43 @@ def test_discipline_dynamic_prompt_loading():
     provider = DeterministicProvider()
     scope_specialist.run(unclassified_session, provider)
     assert unclassified_session.discipline == "computer_science_ai"
+
+
+def test_a_peptide_construct_is_an_example_and_not_a_pillar_the_critic_demands():
+    """The chemistry pillars have to fit a thin film as well as a peptide.
+
+    They were written off the peptide benchmark and named its constructs outright,
+    and the generate critic rejected any draft that left them out. A live run on ALD
+    coatings for NMC811 cathodes duly supplied them: "Strict epimerization controls
+    -- in this solid-state context, precise precursor pulsing to prevent uneven film
+    growth", for an amorphous oxide with no stereocentre to invert, and a row reading
+    "Ligation Strategy | ALD coating adhesion under mechanical stress", for a surface
+    with nothing being joined.
+    """
+    profile = get_discipline_profile("chemistry_materials")
+    actor = profile.get_actor_guidance("generate")
+    critic = profile.get_critic_rubric("generate")
+
+    # The five-row table is still mandatory, and the peptide categories are still
+    # named -- as what a molecular synthesis typically fills them with.
+    assert "structured Markdown table" in actor
+    assert "Aggregation Control, Stereochemical Integrity and Ligation Strategy" in (
+        actor
+    )
+    assert "For a molecular synthesis those are typically" in actor
+    assert "film conformality" in actor
+    assert "never carry over a category the system has no instance of" in actor
+
+    # Nothing demands them of a system that has no instance of them, and the critic
+    # now rejects each one used outside its domain rather than requiring it.
+    assert "epimerization controls, stereochemical integrity" not in critic
+    assert "Reject as a rigor failure" in critic
+    assert "stereochemical integrity claimed for a system with no stereocentre" in (
+        critic
+    )
+    assert "a ligation strategy for one with nothing being joined" in critic
+    assert "fragmentation points where no species is being fragmented" in critic
+    assert "a biophysical risk in a system with no biology in it" in critic
 
 
 def test_the_generate_rubric_does_not_reach_a_reviewer_of_reviews():

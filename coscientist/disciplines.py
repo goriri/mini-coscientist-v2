@@ -103,27 +103,48 @@ def _create_registry() -> dict[str, DisciplineProfile]:
     registry: dict[str, DisciplineProfile] = {}
 
     # 1. chemistry_materials
+    #
+    # This profile covers a peptide synthesis and an inorganic thin film alike, so the
+    # pillars it mandates have to be ones both systems have. They were written off the
+    # peptide benchmark and named its constructs outright -- epimerization controls,
+    # Stereochemical Integrity, Ligation Strategy, exact fragmentation points -- and
+    # the generate critic rejected any draft that left them out. A live run on ALD
+    # coatings for NMC811 cathodes duly supplied them, and the words reached the
+    # reader: "Strict epimerization controls -- in this solid-state context, precise
+    # precursor pulsing to prevent uneven film growth" (an amorphous oxide film has no
+    # stereocentre to invert), "Ligation Strategy | ALD coating adhesion under
+    # mechanical stress" (nothing is being ligated; the row means does it stick), "a
+    # >50% reduction in exact fragmentation points for m/z 44", and "the primary
+    # biophysical risk is a potential increase in initial Li-ion charge-transfer
+    # resistance" in a coin cell. So the categories that are properties of a specific
+    # chemistry are asked for by what they measure, with the peptide terms kept as the
+    # example they are, and the critic now rejects a term used outside its domain
+    # instead of demanding it.
     registry["chemistry_materials"] = DisciplineProfile(
         name="chemistry_materials",
         default_actor_guidance=(
-            "Apply Chemistry and Materials Science standards: specify chemical structures, reagents, "
-            "reaction pathways, synthetic routes, thermodynamic/kinetic parameters, and epimerization controls."
+            "Apply Chemistry and Materials Science standards: specify chemical structures or phases, reagents and precursors, "
+            "reaction pathways, synthetic or deposition routes, thermodynamic/kinetic parameters, and the controls that suppress "
+            "the side reactions the system at hand can actually undergo."
         ),
         actor_guidance={
             "generate": (
                 "For candidate hypothesis generation ('generate' stage), EVERY candidate must strictly follow "
                 "the gold-standard scientific structure of chemistry/materials benchmarks:\n"
-                "1. Rich Technical Narrative: Detailed chemical/biophysical mechanisms, specific state-of-the-art reagents/additives, exact fragmentation points, synthetic routes, and quantitative parameters.\n"
+                "1. Rich Technical Narrative: Detailed chemical, structural or physical mechanisms, specific state-of-the-art reagents, precursors or additives, synthetic or deposition routes, the characterization endpoints that resolve them, and quantitative parameters.\n"
                 "2. Motivation and Supporting Evidence: A dedicated subsection explaining the scientific rationale and citing empirical evidence from the knowledge base.\n"
-                "3. Evaluation of Idea Table: A structured Markdown table ('Category | Description | Judgment') evaluating Aggregation Control, Stereochemical Integrity, Ligation Strategy, Technological Leap, and Purity Potential.\n"
-                "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against specific chemical/biophysical risks, epimerization controls, or failure modes."
+                "3. Evaluation of Idea Table: A structured Markdown table ('Category | Description | Judgment') of five categories. Technological Leap and Purity Potential are fixed; the other three must name properties the proposed system actually has. For a molecular synthesis those are typically Aggregation Control, Stereochemical Integrity and Ligation Strategy; for a solid-state, thin-film or bulk-materials system name that system's equivalents instead -- phase stability, film conformality, interfacial adhesion, defect control -- and never carry over a category the system has no instance of.\n"
+                "4. Critical Scientific Judgment: An explicit judgment paragraph balancing strengths against the specific risks of this chemistry -- epimerization or racemization where there are stereocentres, parasitic CVD, phase reconstruction or dissolution where there are not -- and the failure modes that follow from them."
             )
         },
         critic_rubrics={
             "generate": (
-                "Reject drafts that omit mandatory chemistry/materials rigor pillars: specific state-of-the-art reagents/additives, "
-                "exact fragmentation points or synthetic routes, epimerization controls, stereochemical integrity, a structured Evaluation Table, "
-                "and an explicit Critical Scientific Judgment section evaluating chemical risks."
+                "Reject drafts that omit mandatory chemistry/materials rigor pillars: specific state-of-the-art reagents, precursors or additives, "
+                "the synthetic or deposition route, the controls on the side reactions this system can undergo, a structured Evaluation Table whose five categories "
+                "are properties the proposed system has, and an explicit Critical Scientific Judgment section evaluating chemical risks. "
+                "Reject as a rigor failure, not accept as the pillar it imitates, any construct applied outside its domain: epimerization controls or "
+                "stereochemical integrity claimed for a system with no stereocentre, a ligation strategy for one with nothing being joined, "
+                "fragmentation points where no species is being fragmented, or a biophysical risk in a system with no biology in it."
             )
         },
         stage_checklists=_build_default_stage_checklists(
