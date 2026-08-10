@@ -1180,6 +1180,55 @@ def test_an_evidence_bullet_that_is_only_an_id_says_so():
     assert _invented_ids(record, candidate, None) == ["stmt5"]
 
 
+def test_a_papers_name_is_not_demoted_when_it_is_folded_into_the_series():
+    """A live motivation listed two cited papers as "Improvement of the Cycling
+    Performance and Thermal Stability of Lithium-Ion Cells by Double-Layer Coating of
+    Cathode Materials with Al2O3 Nanoparticles and Conductive Polymer [13], and
+    conductive Polymer Frameworks in Silicon Anodes for Advanced Lithium-Ion Batteries
+    [14]" -- the second paper's name lowercased at its first word and nowhere else,
+    which reads as a transcription slip rather than as a title. Folding the capital is
+    right for a stated finding, which is a sentence; a name is not one."""
+    from coscientist.models import EvidenceClaim, EvidencePacket, SourceRecord
+    from coscientist.narrative import _cited_evidence, _motivation
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="src_1",
+                url="https://example.org/double-layer",
+                title="Improvement of the Cycling Performance by Double-Layer Coating",
+                verification_status="discovered_unverified",
+            ),
+            SourceRecord(
+                id="src_2",
+                url="https://example.org/frameworks",
+                title="Conductive Polymer Frameworks in Silicon Anodes",
+                verification_status="discovered_unverified",
+            ),
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_1",
+                source_id="src_1",
+                claim="Coating uniformity varies with precursor dose",
+            )
+        ],
+    )
+    candidate = _candidate("cand_a")
+    candidate.evidence_ids = ["src_1", "src_2", "claim_1"]
+
+    motivation = _motivation(
+        {"Core idea": "A coating helps."}, _cited_evidence(record, candidate)
+    )
+
+    assert "Conductive Polymer Frameworks in Silicon Anodes" in motivation
+    assert "conductive Polymer Frameworks" not in motivation
+    # The claim beside them is a sentence and is folded in as one.
+    assert "coating uniformity varies with precursor dose" in motivation
+
+
 def test_an_idea_citing_sources_is_not_told_it_cites_no_evidence():
     """ "No finding in this report's evidence is cited for this idea." was printed
     under two live ideas that cite a source and a neutral claim apiece, every id of

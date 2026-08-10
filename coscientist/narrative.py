@@ -3781,13 +3781,21 @@ def _swallows_a_conjunction(text: str) -> bool:
     return "," in stripped or " — " in stripped
 
 
-def _series(items: Sequence[str]) -> str:
+def _series(items: Sequence[str], *, named: Container[str] = frozenset()) -> str:
     """One series, in the separator its own conjuncts allow."""
     if len(items) == 1:
         return items[0]
     # Each item was written as its own sentence, so every one after the first opens
-    # with a capital in the middle of a clause unless it is folded in.
-    folded = list(items[:1]) + [_spliced(item) for item in items[1:]]
+    # with a capital in the middle of a clause unless it is folded in. A document's
+    # name is not a sentence and keeps its own capital: a live motivation listed two
+    # papers as "Improvement of the Cycling Performance and Thermal Stability of
+    # Lithium-Ion Cells by Double-Layer Coating of Cathode Materials with Al2O3
+    # Nanoparticles and Conductive Polymer [13], and conductive Polymer Frameworks in
+    # Silicon Anodes for Advanced Lithium-Ion Batteries [14]" -- the second paper's
+    # name demoted at its first word only, which reads as a transcription slip.
+    folded = list(items[:1]) + [
+        item if item in named else _spliced(item) for item in items[1:]
+    ]
     # Semicolons are for a series whose members already contain commas. Applied to a
     # two-item series of clean clauses -- which is most of them -- "; and" is simply
     # wrong, and it read as though an item had gone missing between them.
@@ -3810,10 +3818,17 @@ def _names(items: Sequence[str]) -> str:
     return ", ".join(items[:-1]) + ", and " + items[-1]
 
 
-def _join(items: Sequence[str], *, fallback: str) -> str:
+def _folded_for_series(item: object) -> str:
+    """One item of a payload list as ``_join`` will hand it to the series."""
+    return " ".join(str(item).split()).rstrip(".")
+
+
+def _join(items: Sequence[str], *, fallback: str, named: Iterable[str] = ()) -> str:
     """Fold a payload list into prose; the reference reports carry no bare stubs."""
+    # Cleaned the same way the items are, because that is the form the series sees.
+    kept = {_folded_for_series(item) for item in named}
     cleaned = [
-        " ".join(str(item).split()).rstrip(".")
+        _folded_for_series(item)
         for item in items
         if str(item).strip()
         and str(item).strip().lower() not in _STUB_VALUES
@@ -3834,7 +3849,7 @@ def _join(items: Sequence[str], *, fallback: str) -> str:
             groups[-1].append(item)
         else:
             groups.extend(([item], []))
-    return " ".join(_sentence(_series(group)) for group in groups if group)
+    return " ".join(_sentence(_series(group, named=kept)) for group in groups if group)
 
 
 def _review_answer(review: Any) -> str:
@@ -4671,7 +4686,7 @@ def _motivation(facts: dict[str, str], cited: _CitedEvidence) -> str:
         stated.append(
             ("What it cites " if cited.supports else "What this idea cites ")
             + "with no direction recorded either way: "
-            + _join(cited.undirected, fallback="none.")
+            + _join(cited.undirected, fallback="none.", named=cited.titled)
         )
     if not stated:
         stated.append(
@@ -5966,6 +5981,9 @@ class _CitedEvidence:
     undirected: list[str] = field(default_factory=list)
     """Cited records with no direction on file: sources, leads, and neutral claims."""
 
+    titled: set[str] = field(default_factory=set)
+    """Which of the above are names of documents, which a series keeps capitalised."""
+
     def __bool__(self) -> bool:
         return bool(self.supports or self.contradicts or self.undirected)
 
@@ -6009,6 +6027,8 @@ def _cited_evidence(record: ResearchRecord, candidate: Candidate) -> _CitedEvide
             "contradicts": grouped.contradicts,
         }.get(entry.relation, grouped.undirected)
         bucket.append(stated)
+        if entry.titled:
+            grouped.titled.add(stated)
     return grouped
 
 
@@ -6044,6 +6064,12 @@ class _EvidenceRecord:
     Only a claim carries one, and only a claim the extraction stage judged: the
     default there is ``neutral``, which is not the same statement as "argues for the
     idea citing it" and was being read as one.
+    """
+    titled: bool = False
+    """Whether ``text`` is the name of a document rather than something it states.
+
+    A name keeps its capital wherever a stated finding would be folded into the
+    sentence around it.
     """
 
 
@@ -6117,6 +6143,7 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
             or source.url,
             source.verification_status,
             url=source.url,
+            titled=True,
         )
     for lead in record.discovery.source_leads if record.discovery else []:
         index[lead.id] = _EvidenceRecord(
@@ -6125,6 +6152,7 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
             or lead.canonical_url,
             lead.verification_status,
             url=lead.canonical_url,
+            titled=True,
         )
     for narrative in record.discovery.narratives if record.discovery else []:
         for statement in narrative.statements:
