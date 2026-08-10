@@ -808,6 +808,48 @@ def test_a_list_holding_a_checked_entry_does_not_say_none_of_them_was_checked():
     )
 
 
+def test_the_reference_head_claims_only_the_marks_the_entries_carry():
+    """ "Which is which is marked on the entries themselves" stood over a list where
+    ten of twenty-two entries carried no mark at all -- the ten that had been
+    retrieved and checked, which say nothing precisely because a mark against every
+    entry is not a mark. A reader taking the sentence at its word reads an unmarked
+    entry as one the sentence forgot."""
+    from coscientist.dossier import _entry_standing, _reference_lines
+    from coscientist.narrative import (
+        Citation,
+        ResearchRecord,
+        _cited_reference_standing,
+    )
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.citations = CitationRegistry(
+        [
+            SourceLead(
+                canonical_url=f"https://x/{n}",
+                title=f"Lead {n}",
+                verification_status="verified" if n < 2 else "inaccessible",
+            )
+            for n in range(3)
+        ]
+    )
+    for n in range(3):
+        record.citations.number(f"https://x/{n}")
+    checked = Citation(
+        number=1, title="Lead 0", url="https://x/0", verification_status="verified"
+    )
+
+    said = _cited_reference_standing(record)
+
+    # The entry the sentence is about carries nothing, and the sentence says so.
+    assert _entry_standing(checked) == ""
+    assert "with no mark on it was retrieved and checked" in said
+    # And the marks it promises for the rest are on the rest.
+    entries = record.citations.references()
+    printed = _reference_lines(entries)
+    assert sum(bool(_entry_standing(entry)) for entry in entries) == 1
+    assert any("Could not be retrieved" in line for line in printed)
+
+
 def test_a_list_where_nothing_was_checked_keeps_the_blanket_sentence():
     from coscientist.dossier import _uniform_reference_standing
     from coscientist.narrative import ResearchRecord

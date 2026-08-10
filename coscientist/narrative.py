@@ -9890,9 +9890,10 @@ def _cited_entry_standings(
 # is in doubt and names no entry of this list at all. The mark is on the entries below,
 # where a reader looking one up will already be.
 _STANDING_IS_MARKED = (
-    " Which is which is marked on the entries themselves. A qualifier beside a marker "
-    "in the running text is printed only while the page is not already dense with "
-    "them, so the entry is the record and the marker is not."
+    " An entry that falls short of that says where it stopped; one with no mark on it "
+    "was retrieved and checked. A qualifier beside a marker in the running text is "
+    "printed only while the page is not already dense with them, so the entry is the "
+    "record and the marker is not."
 )
 
 
@@ -10058,8 +10059,8 @@ def _reference_standing(record: ResearchRecord) -> str:
         + reconciled
         # Only the cited sources are listed anywhere in this report, so pointing at
         # a per-source record for all of them pointed at a list that does not exist.
-        + " Which is which is marked on each entry under References, which lists the "
-        "cited sources and not the rest of the corpus."
+        + " An entry that falls short says where it stopped, under References, which "
+        "lists the cited sources and not the rest of the corpus."
     )
 
 
