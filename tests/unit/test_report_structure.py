@@ -5275,6 +5275,71 @@ def test_a_governance_finding_names_the_evidence_it_cites():
     )
 
 
+def test_two_records_cited_side_by_side_are_given_their_standing_once():
+    """A live parenthesis read "(the unverified claim drawn from Identification of the
+    dual roles of Al2O3 coatings on NMC811-cathodes via theory and experiment, the
+    unverified claim drawn from Tailoring Performance of the LiNi0.8Mn0.1Co0.1O2
+    Cathode ...)". The name of a claim runs to eight words before it reaches the
+    title, and a specialist cites two of them in one bracket often enough that the
+    reader is told twice over what standing to give what follows."""
+    from coscientist.models import (
+        Candidate,
+        CandidatePopulation,
+        EvidenceClaim,
+        EvidencePacket,
+        SourceRecord,
+    )
+    from coscientist.narrative import ResearchRecord, _name_ids_in_prose
+
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id=f"source_{index}",
+                url=f"https://example.org/{index}",
+                title=title,
+                verification_status="discovered_unverified",
+            )
+            for index, title in enumerate(("Dual Roles of Al2O3", "Tailoring NMC811"))
+        ],
+        claims=[
+            EvidenceClaim(
+                id=f"claim_{index}",
+                claim=f"Finding {index}.",
+                source_id=f"source_{index}",
+                verification_status="discovered_unverified",
+            )
+            for index in range(2)
+        ],
+    )
+    record.population = CandidatePopulation(
+        candidates=[
+            Candidate(
+                id="cand_1",
+                title="An Alumina Coating",
+                claim="A coating extends cycle life.",
+                rationale="ALD scavenges HF (claim_0, claim_1).",
+                mechanism_model="The barrier holds, per source_0 and source_1.",
+                validation_protocol="Coin cells against an uncoated control.",
+                falsifier="No difference at ten cells per arm.",
+            )
+        ]
+    )
+
+    _name_ids_in_prose(record)
+
+    candidate = record.population.candidates[0]
+    assert candidate.rationale == (
+        "ALD scavenges HF (the unverified claims drawn from Dual Roles of Al2O3 and "
+        "Tailoring NMC811)."
+    )
+    assert candidate.mechanism_model == (
+        "The barrier holds, per the unverified sources Dual Roles of Al2O3 and "
+        "Tailoring NMC811."
+    )
+
+
 def test_naming_an_id_does_not_take_the_quotes_off_the_words_around_it():
     """The pass that names ids swept every apostrophe-and-space out of any field that
     held one, to clear the quotes it had orphaned. A live mechanism read "This

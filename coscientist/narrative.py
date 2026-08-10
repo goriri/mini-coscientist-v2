@@ -2268,6 +2268,27 @@ def _double_named(match: re.Match[str]) -> str:
     )
 
 
+# Records a specialist cited side by side, which it writes as "(claim_2_1, claim_3_4)"
+# at least as often as it writes them into a clause. The name of a claim runs to eight
+# words before it reaches the title, so naming each one separately said the same eight
+# twice: "(the unverified claim drawn from Identification of the dual roles of Al2O3
+# coatings on NMC811-cathodes via theory and experiment, the unverified claim drawn
+# from Tailoring Performance of the LiNi0.8Mn0.1Co0.1O2 Cathode by Al2O3 and MoO3
+# artificial cathode electrolyte interphase (CEI) layers ...)" is one live parenthesis,
+# in which the reader is told twice over what standing to give what follows.
+_RECORD_ID_RUN = re.compile(
+    rf"(?:{_RECORD_ID.pattern})(?:(?:,? and |, )(?:{_RECORD_ID.pattern}))+",
+    re.IGNORECASE,
+)
+# What a name has in front of the title, so a run of them can be said once. Only these
+# two kinds: an idea and a finding are named by other shapes, and a run mixing kinds is
+# left to be named one by one rather than collapsed into a plural that fits neither.
+_NAMED_RECORD = re.compile(
+    r"\Athe ((?:retracted |unretrieved |unverified )?)(claim drawn from|source) (.+)\Z",
+    re.DOTALL,
+)
+
+
 # The generator names its own strategy in prose, and the debate agents quote that name
 # back verbatim. It is a snake_case enum, so "its generation strategy
 # (\"competing_explanation\")" reached a transcript in a live report.
@@ -2544,6 +2565,26 @@ def _name_ids_in_prose(record: ResearchRecord) -> None:
         )
         return name[:1].upper() + name[1:] if opens else name
 
+    def _named_run(match: re.Match[str]) -> str:
+        """A list of ids of one kind, named once and listed by title."""
+        ids = _RECORD_ID.findall(match.group(0))
+        parts = [_NAMED_RECORD.match(folded.get(item.lower(), "")) for item in ids]
+        # Anything the run cannot place, or a run whose records are not all of one
+        # kind and one standing, is left for the id-by-id pass below: a plural drawn
+        # over a mixture would say of every record what is true of one of them.
+        if not all(parts) or len({(part[1], part[2]) for part in parts}) != 1:
+            return match.group(0)
+        if _ABOUT_THE_ID.search(_sentence_around(match.string, match.start())):
+            return match.group(0)
+        standing, kind = parts[0][1], parts[0][2]
+        titles = _joined_titles([part[3] for part in parts])
+        plural = "sources" if kind == "source" else "claims drawn from"
+        named = f"the {standing}{plural} {titles}"
+        opens = match.start() == 0 or match.string[: match.start()].rstrip().endswith(
+            (".", "!", "?", ":")
+        )
+        return named[:1].upper() + named[1:] if opens else named
+
     def replace_text(text: str) -> str:
         if _RECORD_ID.search(text):
             # A quote around the id would be orphaned by the substitution, and it is
@@ -2554,6 +2595,8 @@ def _name_ids_in_prose(record: ResearchRecord) -> None:
             # closing quotes eaten in one sentence, in a field that never held an id
             # inside quotation marks at all.
             text = _QUOTED_RECORD_ID.sub(r"\1", text)
+            # Runs first, because a run is only visible while the ids are still ids.
+            text = _RECORD_ID_RUN.sub(_named_run, text)
             text = _RECORD_ID.sub(_named, text)
             text = _DOUBLE_NAMED_SOURCE.sub(_double_named, text)
         # A field holding nothing but the enum is the enum, not prose about it, and
