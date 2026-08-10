@@ -3973,9 +3973,27 @@ def _spliced(text: str) -> str:
         and (head[1:].islower() or not head[1:])
         and head.strip(",;:").lower() not in _EPONYMS
         and head.partition("-")[0] not in _SYMBOL_PREFIXES
+        and not _DESIGNATED.match(cleaned)
     ):
         head = head.lower()
     return head + separator + tail
+
+
+# A word a bare label follows is not a word the sentence merely capitalised, it is
+# the first half of the label. One live idea listed its discriminating predictions as
+# "Group B ... will show higher initial Rct than Group C (uncoated control); group A
+# (ALD on powder) will show better capacity retention than Group B; and capacity
+# retention for Group B will be ..." -- the same designator written two ways inside
+# one clause, at the one place the fold reached.
+#
+# Both halves are required. The nouns here are ordinary English words that open
+# ordinary sentences, and it is the letter or number after them that makes a label:
+# "Sample preparation follows" folds, "Sample 4 was excluded" does not.
+_DESIGNATED = re.compile(
+    r"(?:Arm|Batch|Case|Cell|Class|Cohort|Condition|Experiment|Figure|Group"
+    r"|Panel|Phase|Round|Sample|Series|Site|Stage|Step|Table|Trial|Type)"
+    r" \(?(?:[A-Z]|[IVX]{1,4}|\d{1,3})\b"
+)
 
 
 # A hyphenated compound can open on a chemical symbol, and the test above reads the

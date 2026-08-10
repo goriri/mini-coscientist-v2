@@ -4091,6 +4091,29 @@ def test_a_hyphenated_compound_opening_on_an_element_keeps_the_symbol():
     assert _spliced("As-received powder was used.").startswith("as-received")
 
 
+def test_a_designator_keeps_its_capital_where_the_label_follows_it():
+    """One live idea listed its discriminating predictions as "Group B ... than Group
+    C (uncoated control); group A (ALD on powder) will show better capacity retention
+    than Group B" -- the same designator written two ways inside one clause, at the
+    one place the fold reached."""
+    from coscientist.narrative import _spliced
+
+    assert _spliced("Group A (ALD on powder) will retain more.").startswith("Group A")
+    assert _spliced("Step 1 requires an argon glovebox.").startswith("Step 1")
+    assert _spliced("Phase II trials are planned.").startswith("Phase II")
+
+
+def test_a_designator_that_opens_an_ordinary_sentence_still_folds():
+    """The words are ordinary English, and it is the letter or number after them
+    that makes a label. Sparing them all would leave a capital mid-clause wherever
+    one of them happened to open an item."""
+    from coscientist.narrative import _spliced
+
+    assert _spliced("Sample preparation follows the protocol.").startswith("sample")
+    assert _spliced("Group ALD was coated first.").startswith("group")
+    assert _spliced("Cell assembly happens in a glovebox.").startswith("cell")
+
+
 def test_a_colon_inside_a_name_does_not_take_an_item_out_of_its_series():
     """PEDOT:PSS is a polymer, not a sentence opening a list. Read as punctuation, it
     set its own item apart and the required inputs printed as "It cannot start until
