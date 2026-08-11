@@ -3439,6 +3439,22 @@ def test_a_verdict_matches_the_closing_turn_as_the_reader_was_shown_it(body: str
     assert _verdict_line(match) == "The judge ruled this a win with confidence 0.75."
     assert reason in _verdict_line(match, transcript_above=False)
 
+    # A judge that labels the rationale inside a turn of its own gets no capital put
+    # back, because the label is not the turn's. On a live match "Judgment: this idea
+    # is superior due to its high novelty, mechanistic originality, and practical
+    # feasibility. ..." ran to the end of turn 4 and the verdict under it printed the
+    # same 78 words behind "Rationale: This idea is superior".
+    labelled = SimpleNamespace(
+        **{
+            **vars(match),
+            "debate_turns": [
+                "Turn 4: Comparing the two, this idea has the advantage. "
+                f"Judgment: {reason[:1].lower()}{reason[1:]}"
+            ],
+        }
+    )
+    assert _verdict_line(labelled) == "The judge ruled this a win with confidence 0.75."
+
     lines = body.splitlines()
     for index, line in enumerate(lines):
         if not line.startswith("The judge ruled this"):

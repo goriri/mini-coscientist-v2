@@ -1152,7 +1152,14 @@ def _verdict_line(match, *, transcript_above: bool = True) -> str:
     )
     # Containment, not suffix: a judge that repeats its rationale mid-turn and
     # then closes on a further sentence still printed the paragraph twice.
-    if rationale and rationale in " ".join(tail.split()):
+    #
+    # And case-blind, because giving the label's sentence its capital back only
+    # recovers a rationale the turn is labelled with. A live turn carried it behind
+    # a label of its own -- "... Judgment: this idea is superior due to its high
+    # novelty, mechanistic originality, and practical feasibility. It provides a
+    # clear, testable pathway ..." -- and the verdict under it opened "Rationale:
+    # This idea is superior due to its high novelty", 78 words apart on one letter.
+    if rationale and rationale.casefold() in " ".join(tail.split()).casefold():
         # The judge argues its verdict in the closing turn above, so the verdict
         # says nothing further and the preamble above the ideas says why. Pointing
         # at the paragraph directly overhead was twelve copies of one sentence on
