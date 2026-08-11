@@ -40,6 +40,7 @@ from .evidence import (
     resolve_manifest_locators,
     resolve_packet_locators,
     retain_leads,
+    stated_identifiers,
     sweep_verification,
 )
 from .governance import (
@@ -1308,6 +1309,13 @@ class CoScientistWorkflow:
                         title=source.title,
                         source_type=source.source_type,
                         provider="google_search",
+                        # What the locator states, so a paper the corpus already
+                        # holds under its DOI is recognised as that paper rather
+                        # than added again under its address.
+                        identifiers={
+                            **stated_identifiers(source.url),
+                            **source.identifiers,
+                        },
                         originating_passes=[1],
                         originating_statement_ids=list(source.supports_claim_ids),
                         facets=[facet] if facet else [],
@@ -1471,6 +1479,14 @@ class CoScientistWorkflow:
         showed forty-four leads all marked unverified next to a verification
         stage that had run, and a reader had no way to tell which sources the
         run could actually stand on.
+
+        Retrieval is also where a lead learns its DOI, and a DOI is what makes
+        two leads one document, so the corpus is re-merged before it is handed
+        back. Left as written, two rows for one paper stood in the panel until
+        the next merge folded them -- and the next merge is the gap search a
+        researcher asks for at this gate, so a live run answered "search for
+        long-term safety" by reporting the corpus had gone from 88 leads to 85.
+        Nothing had been removed. The count had been wrong when they read it.
         """
         updated = manifest.model_copy(deep=True)
         by_url = {source.url: source for packet in packets for source in packet.sources}
@@ -1500,6 +1516,10 @@ class CoScientistWorkflow:
                     [*lead.claim_relations, *relations.get(lead.canonical_url, [])]
                 )
             )
+        updated.source_leads = merge_leads([], updated.source_leads)
+        updated.verification_handoff_source_ids = [
+            lead.id for lead in updated.source_leads
+        ]
         return updated
 
     async def _search_grounded_discovery(
@@ -1654,6 +1674,13 @@ class CoScientistWorkflow:
                         title=source.title,
                         source_type=source.source_type,
                         provider="google_search",
+                        # What the locator states, so a paper the corpus already
+                        # holds under its DOI is recognised as that paper rather
+                        # than added again under its address.
+                        identifiers={
+                            **stated_identifiers(source.url),
+                            **source.identifiers,
+                        },
                         originating_passes=[1],
                         originating_statement_ids=list(source.supports_claim_ids),
                         facets=[facet] if facet else [],

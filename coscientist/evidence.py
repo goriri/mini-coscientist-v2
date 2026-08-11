@@ -599,6 +599,14 @@ async def resolve_manifest_locators(
         replacement = followed.get(lead.canonical_url)
         if replacement:
             lead.canonical_url = replacement
+            # And what the resolved link says the document is. Without this the
+            # merge below reads the new address off one copy of a paper and a
+            # DOI off the other, calls them two documents, and the panel counts
+            # the paper twice.
+            lead.identifiers = {
+                **stated_identifiers(replacement),
+                **lead.identifiers,
+            }
     updated.source_leads = merge_leads([], updated.source_leads)
     updated.verification_handoff_source_ids = [lead.id for lead in updated.source_leads]
     return updated
@@ -1176,9 +1184,7 @@ def _source_leads(
                 by_url[url].originating_passes.append(pass_number)
             continue
         host = urlsplit(url).hostname or ""
-        identifiers = {}
-        if match := _DOI_RE.search(url):
-            identifiers["doi"] = match.group(0).rstrip(".").lower()
+        identifiers = stated_identifiers(url)
         source_type = (
             "primary_or_authoritative"
             if identifiers
@@ -1398,6 +1404,20 @@ def normalize_report(
         narrative.summary or report
     )
     return narrative
+
+
+def stated_identifiers(url: str) -> dict[str, str]:
+    """The identifiers a locator states outright, read off the locator itself.
+
+    Discovery reads these when it first writes a lead, and whatever replaces a
+    lead's locator afterwards has to read them again. A redirector resolved to
+    ``https://doi.org/10.1039/d5ta02510a`` carried the URL and not the DOI, so
+    the copy of that paper another pass had found by its DOI stayed a second
+    lead: same document, same address, two rows -- see ``lead_identity``, which
+    matches on the DOI where there is one and on the address where there is not.
+    """
+    match = _DOI_RE.search(url)
+    return {"doi": match.group(0).rstrip(".").lower()} if match else {}
 
 
 def lead_identity(lead: SourceLead) -> str:

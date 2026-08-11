@@ -257,3 +257,54 @@ def test_one_paper_cited_twelve_times_is_one_lead_once_the_links_are_followed():
     assert lead.facets == ["supporting", "contradictory"]
     assert lead.originating_passes == [1, 3]
     assert resolved.verification_handoff_source_ids == [lead.id]
+
+
+def test_a_resolved_redirector_is_the_paper_another_pass_found_by_its_doi():
+    """Following the link has to bring the DOI with it, not just the address.
+
+    Discovery reads a DOI off a locator that states one, so the pass that found
+    this paper at ``doi.org`` recorded it and the pass that found it behind a
+    redirector did not. Resolved to the same address, the two leads still looked
+    like two documents -- one matched on its DOI, the other on the address they
+    now shared -- and the panel counted the paper twice.
+    """
+    manifest = DiscoveryManifest(
+        question="Can a coating extend cycle life?",
+        source_leads=[
+            SourceLead(
+                canonical_url=ARTICLE,
+                title="Interfacial degradation in high-voltage cathodes",
+                identifiers={"doi": "10.1149/2.0011712jes"},
+                facets=["supporting"],
+            ),
+            # A different title, so nothing but the DOI can fold these two.
+            SourceLead(
+                canonical_url=REDIRECT,
+                title="Interfacial degradation | The Electrochemical Society",
+                facets=["methods"],
+            ),
+        ],
+    )
+
+    resolved = _resolved_manifest(_redirects_to(ARTICLE), manifest)
+
+    assert [lead.canonical_url for lead in resolved.source_leads] == [ARTICLE]
+    lead = resolved.source_leads[0]
+    assert lead.facets == ["supporting", "methods"]
+    assert resolved.verification_handoff_source_ids == [lead.id]
+
+
+def test_a_resolved_link_that_states_no_identifier_leaves_the_lead_as_it_was():
+    """Only what the address actually says. A publisher link that carries no DOI
+    must not leave the lead claiming one."""
+    manifest = DiscoveryManifest(
+        question="Can a coating extend cycle life?",
+        source_leads=[SourceLead(canonical_url=REDIRECT, title="Study 1")],
+    )
+
+    resolved = _resolved_manifest(
+        _redirects_to("https://pubs.rsc.org/en/content/articlelanding/2024/ta/x"),
+        manifest,
+    )
+
+    assert resolved.source_leads[0].identifiers == {}

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 
+from coscientist import orchestration
+from coscientist.collaboration import TaskResult
 from coscientist.evidence import (
     EvidenceArtifactStore,
     GeminiDeepResearchTransport,
@@ -11,14 +14,22 @@ from coscientist.evidence import (
     _extract_report,
     build_research_prompt,
     canonicalize_url,
+    merge_leads,
     normalize_report,
 )
 from coscientist.models import (
     EVIDENCE_FACETS,
+    Artifact,
     DeepResearchRun,
     DiscoveryManifest,
+    EvidenceClaim,
+    EvidencePacket,
     ResearchPlan,
     Session,
+    SourceLead,
+    SourceRecord,
+    TaskRecord,
+    TaskState,
 )
 from coscientist.orchestration import _deep_research_enabled
 
@@ -214,9 +225,7 @@ def test_discovery_is_attempted_whenever_vertex_adc_is_reachable(
     monkeypatch: pytest.MonkeyPatch, fake_genai_client: list[_FakeGenaiClient]
 ):
     """No GEMINI_API_KEY must no longer mean "deep_research_unavailable"."""
-    from coscientist import orchestration
     from coscientist.agents import DeterministicProvider
-    from coscientist.models import DiscoveryManifest
 
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     # Deep Research is opt-in because it is billable and uncancellable, so a
@@ -704,3 +713,146 @@ def test_the_extractor_is_told_the_working_language_of_the_run_it_extracts_for(
 
     assert reported_in in seen["prompt"]
     assert ("简体中文" in seen["prompt"]) is (language == "zh-Hans")
+
+
+def test_a_doi_found_by_retrieval_folds_the_two_leads_it_makes_one_document():
+    """The corpus settles before a researcher is shown its size, not after.
+
+    A DOI is what makes two leads one document, and retrieval is where a lead
+    that was found by its address learns one. Left as written, the manifest
+    carried both rows past the evidence gate and the next merge folded them --
+    and the next merge is the gap search a researcher asks for at that gate. So
+    a live run answered "search for long-term safety" by reporting the corpus
+    had shrunk from 88 leads to 85, having removed nothing at all.
+    """
+    flow = orchestration.CoScientistWorkflow("Can a coating improve cycle life?")
+    manifest = DiscoveryManifest(
+        question=flow.session.question,
+        source_leads=[
+            SourceLead(
+                canonical_url="https://doi.org/10.1039/d5ta02510a",
+                title="Atomic layer deposition of TiO2 on NCM83",
+                identifiers={"doi": "10.1039/d5ta02510a"},
+                facets=["supporting"],
+            ),
+            SourceLead(
+                canonical_url="https://pubs.rsc.org/en/content/articlehtml/2024/ta/x",
+                title="Atomic layer deposition of TiO2 on NCM83 - RSC",
+                facets=["methods"],
+            ),
+        ],
+    )
+    packet = EvidencePacket(
+        question=flow.session.question,
+        sources=[
+            SourceRecord(
+                url="https://pubs.rsc.org/en/content/articlehtml/2024/ta/x",
+                title="Atomic layer deposition of TiO2 on NCM83",
+                verification_status="verified",
+                identifiers={"doi": "10.1039/d5ta02510a"},
+            )
+        ],
+    )
+
+    updated = flow._manifest_with_verification(manifest, [packet])
+
+    assert len(updated.source_leads) == 1
+    lead = updated.source_leads[0]
+    # The verified copy is what the reader can stand on, and the facets are why
+    # neither row could simply be dropped.
+    assert lead.verification_status == "verified"
+    assert lead.facets == ["supporting", "methods"]
+    assert updated.verification_handoff_source_ids == [lead.id]
+    # And it stays settled: the gap search at the gate merges this corpus again.
+    assert len(merge_leads(updated.source_leads, [])) == 1
+
+
+def test_a_gap_search_that_returns_a_paper_already_held_adds_no_second_row():
+    """The corpus a revision hands back is never smaller than the one it took.
+
+    A lead built from a gap search carried the address and not the DOI the
+    address states, so the paper the corpus already held under that DOI was
+    added a second time. What makes this the researcher's problem rather than a
+    tidiness one is the merge: the count they were shown at the gate is settled
+    only when the gate is answered, so the number moved under the very request
+    they made to improve it.
+    """
+    flow = orchestration.CoScientistWorkflow("Can a coating improve cycle life?")
+    plan = ResearchPlan(
+        question=flow.session.question,
+        success_criteria=["Cycle life against an uncoated control"],
+    )
+    held = SourceLead(
+        canonical_url="https://pubs.rsc.org/en/content/articlehtml/2024/ta/x",
+        title="Atomic layer deposition of TiO2 on NCM83",
+        identifiers={"doi": "10.1039/d5ta02510a"},
+        facets=["supporting"],
+    )
+    manifest = DiscoveryManifest(question=flow.session.question, source_leads=[held])
+    discovery = Artifact(
+        stage="evidence",
+        agent="supervisor",
+        artifact_type="specialist_output",
+        content="### Evidence Discovery",
+        schema_name="DiscoveryManifest",
+        payload=manifest.model_dump(mode="json"),
+    )
+    # The same paper, reached the other way round: the gap search cites its DOI.
+    packet = EvidencePacket(
+        question=flow.session.question,
+        sources=[
+            SourceRecord(
+                id="src_1",
+                url="https://doi.org/10.1039/d5ta02510a",
+                title="Atomic layer deposition of TiO2 on NCM83",
+            )
+        ],
+        claims=[
+            EvidenceClaim(
+                claim="A 2 nm TiO2 layer held 92% capacity after 500 cycles.",
+                source_id="src_1",
+                relation="supports",
+            )
+        ],
+    )
+    answer = Artifact(
+        stage="evidence",
+        agent="evidence_discovery",
+        artifact_type="specialist_output",
+        content="### Gap search",
+        schema_name="EvidencePacket",
+        payload=packet.model_dump(mode="json"),
+    )
+
+    async def _dispatch(session, specialists, *, feedback="", revision=1):
+        return [
+            TaskResult(
+                task=TaskRecord(
+                    context_id=session.id,
+                    stage="evidence",
+                    agent="evidence_discovery",
+                    idempotency_key=f"{session.id}:gap:{revision}",
+                    state=TaskState.COMPLETED,
+                    output_artifact_id=answer.id,
+                ),
+                artifact=answer,
+            )
+        ]
+
+    flow.task_bus.dispatch_stage = _dispatch
+    updated, _ = asyncio.run(
+        flow._gap_directed_search(
+            plan,
+            manifest,
+            discovery,
+            feedback="Nothing here covers long-term safety. Search for that.",
+            revision=2,
+        )
+    )
+
+    assert len(updated.source_leads) == 1
+    lead = updated.source_leads[0]
+    assert lead.canonical_url == held.canonical_url
+    # Merged rather than ignored: the gap search is what says this paper answers
+    # the researcher's question as well as the one it was found under.
+    assert lead.claim_relations == ["supports"]
