@@ -4904,7 +4904,7 @@ def _protocol_parts(text: str) -> tuple[str, str]:
     return body[:appended], f"{preamble}\n\n{body[appended:]}".strip()
 
 
-def _protocol_steps(text: str) -> list[str]:
+def _protocol_steps(text: str, falsifier: str = "") -> list[str]:
     """The steps of a validation protocol, or one item where it was written as prose.
 
     The numbers have to run consecutively from one before this splits anything: a
@@ -4916,13 +4916,52 @@ def _protocol_steps(text: str) -> list[str]:
     if len(marks) < 2 or [int(mark.group(1)) for mark in marks] != list(
         range(1, len(marks) + 1)
     ):
-        return [step] if (step := _sentence(body, fallback="")) else []
+        steps = [step] if (step := _sentence(body, fallback="")) else []
+        return _protocol_without_its_falsifier(steps, falsifier)
     steps = []
     for index, mark in enumerate(marks):
         end = marks[index + 1].start() if index + 1 < len(marks) else len(body)
         if step := _sentence(body[mark.end() : end], fallback=""):
             steps.append(step)
-    return steps
+    return _protocol_without_its_falsifier(steps, falsifier)
+
+
+def _protocol_without_its_falsifier(steps: list[str], falsifier: str) -> list[str]:
+    """The protocol without a trailing sentence that is the falsifier over again.
+
+    The falsifier is a field of its own, printed under Description as the result that
+    would falsify the idea and pointed at from the go/no-go paragraph. A specialist
+    that closes its protocol on the same sentence puts it on the page twice inside one
+    idea: a live one ended "The falsifier is if the coated and annealed cathodes
+    exhibit lower R_ct and >80% capacity retention after 500 cycles at 1C compared to
+    the uncoated controls." -- the field verbatim behind four words of label, four
+    paragraphs under the line that had already said it.
+
+    Only the field reproduced word for word, and only at the end. A protocol that
+    works towards its falsifier in the middle is describing the experiment, and one
+    that paraphrases it is saying something the field does not.
+    """
+    wanted = " ".join(falsifier.split()).rstrip(".")
+    # A short falsifier can turn up inside a protocol without being a restatement of
+    # it: "the hypothesis is falsified" is four words that any protocol may end on.
+    if not steps or len(wanted.split()) < 8:
+        return steps
+    breaks = [
+        match
+        for match in _SENTENCE_BREAK.finditer(steps[-1])
+        if re.sub(r"^\W+", "", match.group(1).lower()) not in _ABBREVIATIONS
+    ]
+    if not breaks:
+        # A numbered protocol whose whole last step is the restatement, which is the
+        # same defect a step earlier. Never the only step: a protocol reduced to
+        # nothing is worse than one that repeats itself.
+        if len(steps) > 1 and wanted in " ".join(steps[-1].split()):
+            return steps[:-1]
+        return steps
+    if wanted not in " ".join(steps[-1][breaks[-1].end() :].split()):
+        return steps
+    kept = steps[-1][: breaks[-1].end()].rstrip()
+    return [*steps[:-1], kept] if kept else steps[:-1]
 
 
 def _idea_facts(candidate: Candidate) -> dict[str, str]:
@@ -4939,7 +4978,7 @@ def _idea_facts(candidate: Candidate) -> dict[str, str]:
             fallback=_UNSTATED["Alternative explanations"],
         ),
         "Validation protocol": _join(
-            _protocol_steps(candidate.validation_protocol),
+            _protocol_steps(candidate.validation_protocol, candidate.falsifier),
             fallback=_UNSTATED["Validation protocol"],
         ),
         "Falsifier": _sentence(candidate.falsifier, fallback=_UNSTATED["Falsifier"]),
@@ -7058,7 +7097,9 @@ def build_idea_briefs(record: ResearchRecord) -> list[IdeaBrief]:
                     candidate.generation_strategy,
                     candidate.generation_strategy.replace("_", " "),
                 ),
-                validation_protocol=_protocol_steps(candidate.validation_protocol),
+                validation_protocol=_protocol_steps(
+                    candidate.validation_protocol, candidate.falsifier
+                ),
                 mermaid=candidate.workflow_diagram_mermaid.strip(),
                 evidence_notes=_evidence_notes(record, candidate),
                 revised_is_recommended=recommended,

@@ -2667,6 +2667,45 @@ def test_a_rewritten_field_written_as_prose_stays_the_paragraph_it_was():
     assert block[4] == f"**Validation protocol:** {written}"
 
 
+def test_a_protocol_that_closes_on_its_own_falsifier_says_it_once():
+    """The falsifier is a field of its own, and a live protocol closed on the field
+    verbatim behind four words of label: "The falsifier is if the coated and annealed
+    cathodes exhibit lower R_ct and >80% capacity retention after 500 cycles at 1C
+    compared to the uncoated controls." stood four paragraphs under the line that had
+    already said it, inside one idea."""
+    from coscientist.narrative import _protocol_steps
+
+    falsifier = (
+        "the coated and annealed cathodes exhibit lower R_ct and >80% capacity "
+        "retention after 500 cycles at 1C compared to the uncoated controls"
+    )
+    prose = (
+        "Commercial-grade NMC811 powder will be coated with 1-5 nm of Al2O3. A "
+        "minimum of n=5 replicate cells per condition will be tested. The falsifier "
+        f"is if {falsifier}."
+    )
+
+    assert _protocol_steps(prose, falsifier) == [
+        "Commercial-grade NMC811 powder will be coated with 1-5 nm of Al2O3. A "
+        "minimum of n=5 replicate cells per condition will be tested."
+    ]
+    # A numbered protocol whose whole last step is the restatement loses the step.
+    numbered = f"1. Coat the powder. 2. Cycle the cells. 3. It fails if {falsifier}."
+    assert _protocol_steps(numbered, falsifier) == [
+        "Coat the powder.",
+        "Cycle the cells.",
+    ]
+    # Never to nothing: a protocol that is only its falsifier is still the protocol,
+    # and the reader is owed whatever the specialist wrote under that heading.
+    only = f"It fails if {falsifier}."
+    assert _protocol_steps(only, falsifier) == [only]
+    # A paraphrase is not the field, and says something the field does not.
+    assert _protocol_steps(prose, f"{falsifier} at any C-rate") == [prose]
+    # And a falsifier short enough to turn up in a protocol by coincidence.
+    ends = "Coat the powder. The hypothesis is falsified."
+    assert _protocol_steps(ends, "the hypothesis is falsified") == [ends]
+
+
 def test_a_critique_recorded_with_its_remedy_stays_inside_the_sentence():
     """Evolution records what it addressed as "Missing Structured Evaluation Table:
     Added to mechanism_model", and "to address" in front of four of those produced a
