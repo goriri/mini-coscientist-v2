@@ -22,6 +22,12 @@ const chrome =
 const debuggingPort = Number(process.env.CHROME_DEBUGGING_PORT || "9223");
 const profile = await mkdtemp(join(tmpdir(), "coscientist-chrome-"));
 const startServer = process.env.COSCIENTIST_E2E_START_SERVER !== "false";
+// Against a deployment, discovery is eight Deep Research passes -- forty to
+// fifty minutes and twenty-four dollars -- to arrive at a corpus an earlier run
+// of the same question already holds. Naming that run here forks it. The stage
+// is then skipped rather than run, so the evidence assertions below do not fire
+// and the run says so on its way past instead of quietly covering less.
+const seedEvidenceFrom = process.env.COSCIENTIST_E2E_SEED_FROM || "";
 let server = null;
 
 if (startServer) {
@@ -140,6 +146,20 @@ try {
     "Leaving auto must give the evidence gate back and take the note away.",
   );
 
+  // The fork is refused unless the question matches the source run's word for
+  // word, so the launcher gets this one typed into it rather than a paraphrase.
+  if (seedEvidenceFrom) {
+    console.log(`Forking the evidence base of ${seedEvidenceFrom}.`);
+    console.log(
+      "The evidence stage is skipped, so this run does not exercise the " +
+        "evidence gate, the corpus assertions, or the gap-fill revision.",
+    );
+    await cdp.evaluate(`(() => {
+      const field = document.querySelector("#seedEvidenceFrom");
+      field.value = ${JSON.stringify(seedEvidenceFrom)};
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+  }
   await cdp.evaluate(`(() => {
     const input = document.querySelector("#promptInput");
     input.value = "Does a protective coating improve rechargeable battery cycle life compared with an uncoated control?";
@@ -211,10 +231,24 @@ try {
   const launchedWithEvidenceReview = await cdp.evaluate(
     `fetch("/api/research/sessions/${workflowId}").then(r => r.json()).then(w => w.evidence_review)`,
   );
+  // A fork has no evidence stage to stop at, so the gate it would have asked
+  // for is correctly dropped -- and the run has to report the one it kept, not
+  // the one the box was ticked for.
   assert(
-    launchedWithEvidenceReview === true,
-    "The guided launcher must ask for the evidence-base gate.",
+    launchedWithEvidenceReview === !seedEvidenceFrom,
+    seedEvidenceFrom
+      ? "A forked run must drop the gate on a stage it does not run."
+      : "The guided launcher must ask for the evidence-base gate.",
   );
+  if (seedEvidenceFrom) {
+    const seeded = await cdp.evaluate(
+      `fetch("/api/research/sessions/${workflowId}").then(r => r.json()).then(w => w.seeded_evidence_from)`,
+    );
+    assert(
+      seeded === seedEvidenceFrom,
+      `The run reports its evidence came from ${seeded}, not ${seedEvidenceFrom}.`,
+    );
+  }
 
   const structuredPreview = await cdp.evaluate(
     `formatText('### Goal manager\\n\\n{"success_criteria":["A measurable endpoint"],"blocking":false}')`,

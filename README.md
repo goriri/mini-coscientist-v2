@@ -543,7 +543,18 @@ COSCIENTIST_E2E_TIMEOUT_SCALE=150 \
 ```
 
 That run holds real Deep Research passes, takes upwards of an hour, and can
-fail for reasons the change under test had no part in.
+fail for reasons the change under test had no part in. Most of that hour is
+discovery, and an earlier run of the same question already holds the corpus it
+would buy again, so name it:
+
+```bash
+COSCIENTIST_E2E_SEED_FROM=session_… node tests/e2e/web_hitl_flow.mjs
+```
+
+The source run has to have cleared its scope and evidence gates, and its
+question has to match the one the test types word for word. A forked run has no
+evidence stage, so the evidence gate, the corpus assertions, and the gap-fill
+revision go unexercised — the run prints which of them it skipped.
 
 Evaluate live agent behavior:
 
