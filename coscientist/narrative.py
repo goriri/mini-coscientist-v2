@@ -7213,10 +7213,21 @@ def _cited_evidence(record: ResearchRecord, candidate: Candidate) -> _CitedEvide
     # be the opposite of it. On the disconfirming idea of a live run it was, three
     # times over -- the sources printed under Evidence against were the whole of the
     # section headed Supporting Arguments and Evidence forty lines below.
+    #
+    # Keyed twice, because a specialist restating a record does not have to quote it.
+    # The rank-8 idea of a live run printed both of its supporting findings under
+    # Evidence Assessment badged "[Retracted or Unretrievable]" and then printed both
+    # again forty lines below citing [9] -- the second copy carrying nothing the first
+    # had not -- because the specialist had paraphrased its own restatement and the
+    # comparison is of the sentences. The marker is the record, so where both sides
+    # resolve to one the sentence stands above whatever words it stands there in.
     filed: dict[str, str] = {}
-    for heading, _, text, _marker in _evidence_notes(record, candidate):
+    marked: dict[str, str] = {}
+    for heading, _, text, marker in _evidence_notes(record, candidate):
         if text:
             filed.setdefault(_comparable(text), heading)
+        if marker:
+            marked.setdefault(marker, heading)
     above = set(filed)
     grouped = _CitedEvidence()
     seen: set[str] = set()
@@ -7253,9 +7264,12 @@ def _cited_evidence(record: ResearchRecord, candidate: Candidate) -> _CitedEvide
         # Only where there is a number to carry it by. A record the reference list
         # cannot number has nothing standing in for its text, so its text is printed.
         comparable = _comparable(said)
-        if marker and comparable in above:
+        if marker and (comparable in above or marker in marked):
             grouped.restated[stated] = marker
-        if bucket is grouped.supports and filed.get(comparable) == "Evidence against":
+        # The heading the paraphrase was filed under is the direction the specialist
+        # read the record in, and it is worth as much as the one a quotation carries.
+        under = filed.get(comparable) or marked.get(marker, "")
+        if bucket is grouped.supports and under == "Evidence against":
             grouped.contested.add(stated)
     return grouped
 
@@ -7587,10 +7601,18 @@ def _evidence_notes(
                 else ""
             )
             stated = _stated_evidence(text, index, names, prefixes)
+            # Matching the printed sentence against the record's own finds the bullet
+            # that quotes its record, and a specialist that paraphrases the record it
+            # cites is left unnumbered. ``cited`` resolved the same record off the ids
+            # in the raw statement two lines up and was spent on the badge alone, so
+            # the fallback costs a lookup this function has already done.
+            #
             # Unannotated: a qualifier beside every restated bullet would spend the
             # ceiling that keeps the annotated markers rare, and the badge already on
             # the bullet says what this run thinks of the record behind it.
-            url = located.get(_comparable(stated))
+            url = located.get(_comparable(stated)) or next(
+                (entry.url for entry in cited if entry.url), ""
+            )
             marker = record.citations.marker([url], annotate=False) if url else ""
             notes.append((heading, badge, stated, marker))
     return notes

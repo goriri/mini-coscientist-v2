@@ -1982,6 +1982,76 @@ def test_a_finding_the_idea_already_restated_above_is_carried_by_its_number():
     )
 
 
+def test_a_finding_restated_in_the_specialists_own_words_is_carried_the_same_way():
+    """The match was of sentences, and a specialist need not quote to restate.
+
+    The rank-8 idea of a live run printed both of its supporting findings under
+    Evidence Assessment badged "[Retracted or Unretrievable]" and printed both again
+    forty lines below citing [9], the second copy carrying nothing the first had not.
+    The specialist had paraphrased, so the two sentences did not compare equal and
+    neither was recognised as the other. Both sides resolve to a record, and that is
+    what the two copies have in common.
+    """
+    from coscientist.models import (
+        EvidenceClaim,
+        EvidencePacket,
+        SourceLead,
+        SourceRecord,
+    )
+    from coscientist.narrative import CitationRegistry, _cited_evidence, _motivation
+
+    recorded = "An ultrathin AlPO4 coating holds 94% of capacity after 100 cycles"
+    fresh = "Coating uniformity varies with precursor dose"
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.evidence = EvidencePacket(
+        question="Can a coating help?",
+        sources=[
+            SourceRecord(
+                id="src_1",
+                url="https://example.org/alpo4",
+                title="Ultrathin AlPO4 coatings",
+                verification_status="verified",
+            ),
+            SourceRecord(
+                id="src_2",
+                url="https://example.org/dose",
+                title="Precursor dose and uniformity",
+                verification_status="verified",
+            ),
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_1", source_id="src_1", claim=recorded, relation="supports"
+            ),
+            EvidenceClaim(
+                id="claim_2", source_id="src_2", claim=fresh, relation="supports"
+            ),
+        ],
+    )
+    record.citations = CitationRegistry(
+        [
+            SourceLead(canonical_url="https://example.org/alpo4", title="AlPO4"),
+            SourceLead(canonical_url="https://example.org/dose", title="Dose"),
+        ]
+    )
+    candidate = _candidate("cand_a")
+    candidate.evidence_ids = ["claim_1", "claim_2"]
+    # Its own words, and the id it took them from. Nothing here is a substring of the
+    # record's text, which is all the comparison of sentences had to work with.
+    candidate.evidence_for = ["Capacity holds up out to 100 cycles [claim_1]."]
+
+    cited = _cited_evidence(record, candidate)
+    motivation = _motivation({"Core idea": "A coating helps."}, cited)
+
+    assert list(cited.restated) == [f"{recorded} [1]."]
+    assert recorded not in motivation
+    assert motivation.startswith(
+        "The findings this idea cites that the evidence stage recorded as arguing for "
+        "the research question: Coating uniformity varies with precursor dose [2], and "
+        "the statement printed above under Evidence Assessment citing [1]."
+    )
+
+
 def test_a_finding_printed_nowhere_above_is_still_printed_in_full():
     from coscientist.models import EvidenceClaim, EvidencePacket, SourceRecord
     from coscientist.narrative import _cited_evidence, _motivation
