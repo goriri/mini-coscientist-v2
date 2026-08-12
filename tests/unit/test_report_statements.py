@@ -477,7 +477,7 @@ def test_a_bottom_the_evidence_review_shares_is_not_called_the_lowest_of_them():
 
     assert lines[-1] == (
         "Nothing scored below the evidence and correctness review, at 2 of five, and "
-        "the Novelty and Feasibility reviews are level with it."
+        "the novelty and feasibility reviews are level with it."
     )
     assert COHERENCE_EVIDENCE_NOTE in notes
 
@@ -485,7 +485,35 @@ def test_a_bottom_the_evidence_review_shares_is_not_called_the_lowest_of_them():
     pair, _ = _coherence(
         [_review("Correctness", 2), _review("Impact", 2), _review("Novelty", 5)], {}
     )
-    assert "the Impact review is level with it" in pair[-1]
+    assert "the impact review is level with it" in pair[-1]
+
+
+def test_a_review_named_in_prose_is_named_in_lower_case():
+    """A section is a heading everywhere else and a noun here.
+
+    Passed raw, it kept the capital it carries as a heading, and the sentence
+    turned over mid-way: "the evidence and correctness review, at 2 of five,
+    and the Feasibility review is level with it" -- one clause lower case, the
+    next not, both naming a review, both inside one sentence. Six sibling
+    sentences already lower-case it; these were the two that did not.
+    """
+    level, _ = _coherence(
+        [_review("Correctness", 2), _review("Feasibility", 2), _review("Impact", 5)], {}
+    )
+    assert "the feasibility review is level with it" in level[-1]
+    assert "Feasibility" not in level[-1]
+
+    # The other site: a review that raised an objection and never answered it.
+    # No live report has reached it -- every run so far either answered its
+    # objections or raised none -- so it takes a fixture rather than a report.
+    unanswered = dataclasses.replace(
+        _review("Feasibility", 3),
+        objections=["The 500-cycle endpoint needs a year of testing."],
+    )
+    silent, _ = _coherence([_review("Correctness", 4), unanswered], {})
+    named = next(line for line in silent if "nobody answered" in line)
+    assert "the feasibility review." in named
+    assert "Feasibility" not in named
 
 
 # --- a review nobody wrote is not a judgement of the idea it sits under -------

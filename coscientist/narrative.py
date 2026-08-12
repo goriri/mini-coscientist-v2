@@ -6410,7 +6410,9 @@ def _coherence(
             f"{_opening(len(silent), 'review')} raised "
             f"{_plural(objections, 'objection')} and recorded no response to "
             + ("it" if objections == 1 else "any of them")
-            + f" — the {_joined_titles([review.section for review in silent])} "
+            + " — the "
+            + _joined_titles([review.section.lower() for review in silent])
+            + " "
             + ("review" if len(silent) == 1 else "reviews")
             + ". An objection nobody answered is not a refuted one, and "
             + ("it still applies" if objections == 1 else "each still applies")
@@ -6446,7 +6448,18 @@ def _coherence(
         # position: three reviews of a live idea scored two, the same chapter's
         # conclusion said so, and this sentence picked whichever of the three came
         # first and called it the lowest.
-        level = [review.section for review in bottom if review.section != "Correctness"]
+        # Lower case, as the six other sentences that name a review in prose
+        # already do. Passed raw, the section keeps the capital it carries as a
+        # heading and the sentence reads "the evidence and correctness review,
+        # at 2 of five, and the Feasibility review is level with it" -- one
+        # clause lower case, the next not, inside one sentence. ``_joined_titles``
+        # is left alone: every other caller hands it idea titles, which keep
+        # their capitals.
+        level = [
+            review.section.lower()
+            for review in bottom
+            if review.section != "Correctness"
+        ]
         lines.append(
             f"The lowest of them is the evidence and correctness review, at {floor} "
             "of five."
