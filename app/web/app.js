@@ -2234,6 +2234,14 @@ async function newInquiry() {
   setAttention(false);
   state.notifiedGateKey = null;
   state.operationStartedAt = null;
+  // A fork belongs to the question it was typed under. The id stayed in the
+  // field across New inquiry, so the next question -- a different one, which is
+  // what a new inquiry is -- was posted as a fork of a corpus searched against
+  // the old one. The server refuses that, correctly, and the launcher showed a
+  // failure with no visible cause: the field it came from is in a panel that
+  // was closed. It is cleared with the rest of the last run.
+  elements.seedEvidenceFrom.value = "";
+  syncEvidenceReviewControl();
   if (state.mode === "conversation") {
     try {
       await createSession();

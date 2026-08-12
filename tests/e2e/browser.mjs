@@ -92,18 +92,38 @@ export class Cdp {
   }
 }
 
+// Past this, say what is being waited on. Scaled by 150 for a deployment, a
+// thirty-second wait is a seventy-five minute one, and a production run spent
+// forty of those minutes printing nothing at all -- indistinguishable, from
+// outside, from a harness that had died. Which wait it was sitting in is the
+// one fact that would have named the fault, and it was the one fact the run did
+// not report.
+const NARRATE_AFTER_MILLISECONDS = 20000;
+
 export async function waitFor(cdp, expression, message, timeout = 15000) {
   timeout *= timeoutScale;
   const started = Date.now();
   let lastFailure = null;
+  let narrated = false;
   while (Date.now() - started < timeout) {
     try {
-      if (await cdp.evaluate(expression)) return;
+      if (await cdp.evaluate(expression)) {
+        if (narrated) {
+          const held = Math.round((Date.now() - started) / 1000);
+          console.log(`  … done after ${held}s — ${message}`);
+        }
+        return;
+      }
     } catch (error) {
       // A single unanswered call is a hiccup to retry, not a verdict; the
       // deadline above is what ends the wait either way. The last one is kept
       // so a wait that only ever failed says why.
       lastFailure = error;
+    }
+    if (!narrated && Date.now() - started > NARRATE_AFTER_MILLISECONDS) {
+      narrated = true;
+      const budget = Math.round(timeout / 1000);
+      console.log(`  … waiting up to ${budget}s — ${message}`);
     }
     await delay(100);
   }

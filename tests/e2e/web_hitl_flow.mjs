@@ -495,15 +495,23 @@ try {
       ))
     ) {
       rankChecked = true;
-      const rankingPresentation = await cdp.evaluate(`(() => ({
-        rankingRows: document.querySelectorAll('[data-presentation-stage="rank"] .ranking-table > div').length,
-        candidateCards: document.querySelectorAll('[data-presentation-stage="rank"] .candidate-card').length,
-        shortlistCards: document.querySelectorAll('[data-presentation-stage="rank"] .candidate-card.shortlisted').length,
-        technicalClosed: !document.querySelector('[data-presentation-stage="rank"] .technical-details').open,
-        rawJsonVisible: document.querySelector('[data-presentation-stage="rank"] .message-copy pre:not([hidden])') !== null,
-        briefing: document.querySelector('[data-presentation-stage="rank"] .tournament-briefing')?.textContent.trim() || "",
-        briefingSourced: !!document.querySelector('[data-presentation-stage="rank"] .briefing-source'),
-      }))()`);
+      // The newest panel, not every panel bearing the stage. A revised draft
+      // leaves the version it replaced in the transcript, so a stage that was
+      // sent back is on screen twice -- and counting rows across the document
+      // then reported sixteen candidates in a tournament of eight. Which copy
+      // is being asserted on matters: it is the one the gate is asking about.
+      const rankingPresentation = await cdp.evaluate(`(() => {
+        const panel = [...document.querySelectorAll('[data-presentation-stage="rank"]')].pop();
+        return {
+          rankingRows: panel.querySelectorAll('.ranking-table > div').length,
+          candidateCards: panel.querySelectorAll('.candidate-card').length,
+          shortlistCards: panel.querySelectorAll('.candidate-card.shortlisted').length,
+          technicalClosed: !panel.querySelector('.technical-details').open,
+          rawJsonVisible: panel.querySelector('.message-copy pre:not([hidden])') !== null,
+          briefing: panel.querySelector('.tournament-briefing')?.textContent.trim() || "",
+          briefingSourced: !!panel.querySelector('.briefing-source'),
+        };
+      })()`);
       assert(
         rankingPresentation.rankingRows === 8,
         "Rank must show all candidates.",
@@ -552,18 +560,28 @@ try {
   }
   // A loop that can stop on its own can also stop on the first pass and take
   // the whole gate chapter with it. Milestone approval puts a gate on scope,
-  // evidence, ranking and meta-review at the least.
+  // evidence, ranking and meta-review at the least. A fork inherits an accepted
+  // scope along with the corpus, so the first two of those are behind it before
+  // it starts and three is all there is left to drive.
+  const leastGates = seedEvidenceFrom ? 3 : 4;
   assert(
-    gatesAccepted >= 4,
-    `Only ${gatesAccepted} approval gates were driven; milestone mode has at least four.`,
+    gatesAccepted >= leastGates,
+    `Only ${gatesAccepted} approval gates were driven; this run has at least ${leastGates}.`,
   );
   assert(
     rankChecked,
     "The tournament was never presented, so its table was never checked.",
   );
+  // A forked run has no evidence stage to stop on -- that is what forking is --
+  // so the gate it never reaches cannot be the thing that fails it. Stated as an
+  // equality rather than a skip so the unforked run still has to reach the gate,
+  // and so a fork that somehow ran discovery anyway is caught rather than
+  // quietly welcomed.
   assert(
-    evidenceChecked,
-    "The run never stopped on its evidence base, which the launcher asked it to.",
+    evidenceChecked === !seedEvidenceFrom,
+    seedEvidenceFrom
+      ? "The forked run stopped on an evidence base it was told to inherit."
+      : "The run never stopped on its evidence base, which the launcher asked it to.",
   );
 
   await waitFor(
@@ -725,6 +743,16 @@ try {
   );
 
   await cdp.evaluate("document.querySelector('#newInquiry').click()");
+  // The next question is a different question, so the run it would be forked
+  // from is the wrong one. Left in the field, that id was posted with it and
+  // the server refused the launch -- from a panel the researcher had closed.
+  const carriedFork = await cdp.evaluate(
+    "document.querySelector('#seedEvidenceFrom').value",
+  );
+  assert(
+    carriedFork === "",
+    `A new inquiry kept the fork of ${carriedFork} from the run before it.`,
+  );
   await cdp.evaluate(`(() => {
     const input = document.querySelector("#promptInput");
     input.value = "Can electrolyte concentration change dendrite formation?";
