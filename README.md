@@ -507,6 +507,44 @@ agents-cli lint
 uv run pytest tests/unit tests/integration
 ```
 
+Drive the workspace the way a researcher drives it. The browser tests start
+their own server, so they need a Chromium and nothing else — no credentials, no
+deployment, and no model calls. The harness sets `INTEGRATION_TEST=TRUE` and
+`COSCIENTIST_DEEP_RESEARCH=off` itself, because a browser test that inherits
+live credentials bills a real research pass:
+
+```bash
+export CHROME_BIN=/path/to/chromium
+
+# Scope through dossier, every approval gate on the way.
+node tests/e2e/web_hitl_flow.mjs
+
+# Three fatal flaws answered one at a time, on one card that survives.
+node tests/e2e/web_governance_card.mjs
+
+# Desktop and phone screenshots into /tmp/coscientist-shots.
+node tests/e2e/web_screenshots.mjs
+```
+
+The first two finish in well under a minute between them, which puts them in
+the same loop as `pytest` rather than in a pre-deploy checklist. Both own a
+port pair and refuse to start when either is taken, so they can run at once;
+the screenshot script takes no such care and shares a debugging port with the
+governance card.
+
+Pointing them at a deployment is the last gate before a release, not the
+iteration loop:
+
+```bash
+COSCIENTIST_E2E_URL=https://<service>.run.app \
+COSCIENTIST_E2E_START_SERVER=false \
+COSCIENTIST_E2E_TIMEOUT_SCALE=150 \
+  node tests/e2e/web_hitl_flow.mjs
+```
+
+That run holds real Deep Research passes, takes upwards of an hour, and can
+fail for reasons the change under test had no part in.
+
 Evaluate live agent behavior:
 
 ```bash
