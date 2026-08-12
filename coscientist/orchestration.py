@@ -1984,9 +1984,24 @@ class CoScientistWorkflow:
                 (item for item in inputs if item.schema_name == "DiscoveryManifest"),
                 None,
             )
+            # The newest packet, not the first one listed. Verification runs in
+            # batches of twelve leads and appends a packet per batch before
+            # appending the corpus that merges them, so a forward scan reads
+            # batch one -- twelve leads of sixty-four -- and refuses a gate that
+            # the panel beside it reports as met. A live run stopped on "0 of 8
+            # weighted verified sources" while its own evidence page read
+            # "Twenty-six usable sources across seven facets". Everything else
+            # downstream reads the newest packet; the merge supersedes the
+            # batches, and preferring a standing one says which is newest even
+            # where the inputs are not in the order they were appended.
+            packets = [
+                item
+                for item in reversed(inputs)
+                if item.schema_name == "EvidencePacket"
+            ]
             packet_artifact = next(
-                (item for item in inputs if item.schema_name == "EvidencePacket"),
-                None,
+                (item for item in packets if item.status != ArtifactStatus.SUPERSEDED),
+                packets[0] if packets else None,
             )
             manifest = (
                 DiscoveryManifest.model_validate(manifest_artifact.payload)

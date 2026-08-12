@@ -14,7 +14,17 @@ from app import research_api
 from app.research_api import CreateResearchSession, create_research_session
 from coscientist.cli import main as cli_main
 from coscientist.ledger import ResearchLedger
-from coscientist.models import ApprovalProfile, Session
+from coscientist.models import (
+    ApprovalProfile,
+    Artifact,
+    ArtifactStatus,
+    DiscoveryManifest,
+    EvidenceClaim,
+    EvidencePacket,
+    Session,
+    SourceLead,
+    SourceRecord,
+)
 from coscientist.orchestration import CoScientistWorkflow
 
 QUESTION = "Can a protective coating improve battery cycle life?"
@@ -94,6 +104,105 @@ def test_an_unattended_run_does_not_record_a_gate_it_will_never_stop_at():
     )
 
     assert flow.session.evidence_review is False
+
+
+def _batched_evidence_draft(flow: CoScientistWorkflow) -> Artifact:
+    """The artifacts a batched verification leaves behind, in the order it leaves them.
+
+    Leads go out twelve at a time; each batch answers with its own packet, and
+    the corpus that merges them is appended last and supersedes them. All of it
+    is listed on the draft the researcher is shown.
+    """
+    facets = (
+        "supporting",
+        "contradictory",
+        "negative_null",
+        "replication",
+        "methods",
+        "safety_governance",
+        "corrections_retractions",
+        "supporting",
+    )
+    merged = EvidencePacket(
+        question=QUESTION,
+        sources=[
+            SourceRecord(
+                id=f"src_{index}",
+                url=f"https://doi.org/10.1000/{index}",
+                title=f"Paper {index}",
+                source_type="primary_study",
+                verification_status="verified",
+                facet=facet,
+            )
+            for index, facet in enumerate(facets, start=1)
+        ],
+        claims=[
+            EvidenceClaim(
+                id="claim_2",
+                claim="Thick coatings showed no benefit.",
+                source_id="src_2",
+                relation="contradicts",
+                verification_status="verified",
+            )
+        ],
+    )
+    # The first batch of a real run is a twelfth of the corpus, and nothing says
+    # the twelve it happens to hold were reachable that day.
+    thin = EvidencePacket(question=QUESTION, sources=[], claims=[])
+    manifest = DiscoveryManifest(
+        question=QUESTION,
+        discovery_angles=["supporting", "contradictory"],
+        source_leads=[
+            SourceLead(canonical_url=source.url, title=source.title)
+            for source in merged.sources
+        ],
+    )
+
+    def _artifact(schema: str, payload, status: ArtifactStatus) -> Artifact:
+        item = Artifact(
+            stage="evidence",
+            agent="source_verification",
+            artifact_type="specialist_output",
+            content="",
+            schema_name=schema,
+            payload=payload.model_dump(mode="json"),
+            status=status,
+        )
+        flow.session.artifacts.append(item)
+        return item
+
+    discovery = _artifact("DiscoveryManifest", manifest, ArtifactStatus.DRAFT)
+    batch = _artifact("EvidencePacket", thin, ArtifactStatus.SUPERSEDED)
+    corpus = _artifact("EvidencePacket", merged, ArtifactStatus.DRAFT)
+    draft = Artifact(
+        stage="evidence",
+        agent="supervisor",
+        content="Discovery and verification.",
+        input_artifact_ids=[discovery.id, batch.id, corpus.id],
+    )
+    flow.session.artifacts.append(draft)
+    return draft
+
+
+def test_the_gate_measures_the_merged_corpus_and_not_the_first_batch():
+    """A gate that reads a twelfth of the corpus can only ever refuse.
+
+    Verification is batched, and the draft lists every batch's packet ahead of
+    the merge of them. Taking the first one listed meant a live run stopped on
+    "0 of 8 weighted verified sources ... 0 of 4 required evidence facets" while
+    the evidence page beside it, reading the merge, said "Twenty-six usable
+    sources across seven facets -- the evidence floor is met". One corpus, two
+    counts, and no way past the gate but the exploratory escape hatch.
+    """
+    flow = _at_evidence(
+        approval_profile=ApprovalProfile.MILESTONE, evidence_review=True
+    )
+    draft = _batched_evidence_draft(flow)
+
+    flow.accept(draft, actor="test_researcher")
+
+    assert flow.stage == "generate"
+    assert flow.session.status == "active"
 
 
 def test_a_session_saved_before_the_gate_existed_loads_as_a_run_without_it():
