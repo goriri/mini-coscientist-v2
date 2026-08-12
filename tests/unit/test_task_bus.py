@@ -6,9 +6,9 @@ no stage asked for more than the bound allowed -- so the code that waits was
 never once executed, and the defect it carried never surfaced.
 
 Offline specialists answer without awaiting anything, so each one runs to
-completion before the next is scheduled and nothing ever waits either. Both
-tests here therefore make the specialists yield: without that they exercise the
-uncontended path, which is the path that always worked.
+completion before the next is scheduled and nothing ever waits either. The two
+contention tests therefore make the specialists yield: without that they
+exercise the uncontended path, which is the path that always worked.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from coscientist.models import (
     CandidatePopulation,
     Session,
 )
+from coscientist.orchestration import CoScientistWorkflow
 
 # The reflect stage runs five reviewers, which is the widest fan-out available
 # offline; the bound is lowered to two so the waiting path is actually taken.
@@ -117,3 +118,22 @@ def test_the_fan_out_never_exceeds_the_bound():
     asyncio.run(bus.dispatch_stage(_session(), REVIEWERS))
 
     assert live[1] == BOUND
+
+
+def test_the_session_budget_sets_the_bound():
+    """The bound is a configured number, not a constant.
+
+    ``ResearchBudget.max_concurrency`` was carried on every session and read by
+    nothing: the workflow built its bus without passing it, so the constructor
+    default of four stood however the session was configured. A deployment
+    whose specialists self-call over HTTP against a single vCPU could lower the
+    setting to one and watch four go out anyway.
+    """
+    session = _session()
+    session.budget.max_concurrency = BOUND
+
+    flow = CoScientistWorkflow(
+        session.question, DeterministicProvider(), session=session
+    )
+
+    assert flow.task_bus.max_concurrency == BOUND

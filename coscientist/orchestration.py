@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import httpx
@@ -275,7 +276,14 @@ class CoScientistWorkflow:
         # session that answers the question, so the answer is applied here
         # rather than left to every call site to remember.
         bind_provider_model(self.provider, self.session.model)
-        self.task_bus = LocalA2ATaskBus(SPECIALISTS, self.provider)
+        # The budget carried a concurrency bound that nothing read, so the bus
+        # kept its own default of four however the session was configured and
+        # raising the setting changed nothing about how a stage fanned out.
+        self.task_bus = LocalA2ATaskBus(
+            SPECIALISTS,
+            self.provider,
+            max_concurrency=self.session.budget.max_concurrency,
+        )
         if session is None:
             event = self._event(
                 "session_created",
@@ -490,6 +498,7 @@ class CoScientistWorkflow:
         stage = self.stage
         if stage == "evidence":
             return await self._preview_evidence(feedback)
+        started = time.monotonic()
         if stage == "generate":
             if self.session.workflow_version == 1:
                 definitions = tuple(
@@ -555,6 +564,12 @@ class CoScientistWorkflow:
             payload={
                 "artifact_id": draft.id,
                 "task_ids": [result.task.id for result in results],
+                # Which stage a run spends its hour in was answerable only by
+                # subtracting neighbouring rows out of ``audit_events`` by hand,
+                # and that reads the gap between two stages rather than the work
+                # inside one -- a run parked at a gate overnight looks like a
+                # stage that took all night.
+                "seconds": round(time.monotonic() - started, 3),
             },
         )
         self._persist(event)
@@ -655,6 +670,7 @@ class CoScientistWorkflow:
 
     async def _preview_evidence(self, feedback: str = "") -> Artifact:
         """Run discovery first, then hand discovered leads to verification."""
+        started = time.monotonic()
         earlier = [
             item
             for item in self.session.artifacts
@@ -884,6 +900,12 @@ class CoScientistWorkflow:
                     "artifact_id": draft.id,
                     "passes": len(manifest.runs),
                     "convergence_reason": manifest.convergence_reason,
+                    # This stage is resumed rather than run once: a poll that
+                    # raises ``EvidenceStillRunning`` never reaches here, and a
+                    # worker that dies hands the lease on and starts the sweep
+                    # again. So this is the last attempt's own time, not the
+                    # forty to fifty minutes the stage costs end to end.
+                    "seconds": round(time.monotonic() - started, 3),
                 },
             )
         )

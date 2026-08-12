@@ -108,6 +108,23 @@ def test_only_discovery_card_has_google_search():
     assert len(flow.agent_cards) == 17
 
 
+def test_a_drafted_stage_records_how_long_its_specialists_took():
+    """Timing a run meant subtracting neighbouring rows out of ``audit_events``.
+
+    That measures the gap between two stages rather than the work inside one, so
+    a run left at an approval gate overnight was indistinguishable from a stage
+    that ran all night, and "which stage is slow" could not be answered from the
+    trail the run already writes.
+    """
+    flow = CoScientistWorkflow("Can a coating improve cycle life?")
+    flow.preview()
+
+    drafted = next(
+        event for event in flow.session.events if event.event_type == "stage_drafted"
+    )
+    assert drafted.payload["seconds"] >= 0
+
+
 def test_stopped_session_cannot_advance():
     flow = CoScientistWorkflow("A research question")
     flow.preview()
