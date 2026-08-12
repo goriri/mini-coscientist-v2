@@ -6200,6 +6200,59 @@ def test_a_unit_is_set_against_its_prefix_and_not_parted_from_it():
     assert _joined_units("the 3 m long cable") == "the 3 m long cable"
 
 
+def test_one_threshold_window_and_rate_are_written_one_way_across_the_report():
+    """Eight specialists draft eight ideas and none of them sees the others.
+
+    So one live report wrote ">=90% of uncoated control" as an acceptance criterion in
+    one idea and "≥90% of the uncoated control" as the same criterion in another, wrote
+    one 2.8-4.3 V window spaced, tight and en dashed on one page, and wrote one rate as
+    "1C" in a description and "1 C" in the validation protocol below it. No prompt can
+    settle that, because fanning the ideas out is what keeps the specialists apart.
+    """
+    from coscientist.dossier import _settled_notation
+
+    assert _settled_notation("retention >= 90% and drift <=5%") == (
+        "retention ≥90% and drift ≤5%"
+    )
+    assert _settled_notation("the 2.8 - 4.3 V window") == "the 2.8-4.3 V window"
+    # A spaced en dash closes up to an en dash. The tight en dash range is a form both
+    # reference reports use heavily, so the spacing is what this settles, not the dash.
+    dashed = "the 2.8 \u2013 4.3 V window"
+    assert _settled_notation(dashed) == "the 2.8\u20134.3 V window"
+    assert _settled_notation("cycle at 1C and 0.5C, 25°C, for 100ms") == (
+        "cycle at 1 C and 0.5 C, 25 °C, for 100 ms"
+    )
+
+
+def test_the_notation_pass_stays_out_of_formulae_labels_and_links():
+    """Every rule here reads a digit against a letter, and so does the chemistry.
+
+    The cathode this run is about is written "LiNi0.8Mn0.1Co0.1O2", the cell "NMC811",
+    and the ISSN inside an MDPI link is a digit-hyphen-digit that is not a range. A
+    figure panel is the one that shares its shape with a unit: "Fig. 1C" is a label and
+    "1C" three words later is a rate.
+    """
+    from coscientist.dossier import _settled_notation
+
+    for left in ("LiNi0.8Mn0.1Co0.1O2 coated cells", "the NMC811 baseline"):
+        assert _settled_notation(left) == left
+    link = "See https://www.mdpi.com/2313-0105/11/6/209 for the 2.8 - 4.3 window"
+    assert _settled_notation(link) == (
+        "See https://www.mdpi.com/2313-0105/11/6/209 for the 2.8-4.3 window"
+    )
+    assert _settled_notation("Figure 1C plots retention at 1C") == (
+        "Figure 1C plots retention at 1 C"
+    )
+    # Fenced code is a thing to retype, not a thing to read.
+    fenced = "prose at >=90%\n\n```bash\ntest 1 -ge 2 && echo '>= 90'\n```\n"
+    assert _settled_notation(fenced) == (
+        "prose at ≥90%\n\n```bash\ntest 1 -ge 2 && echo '>= 90'\n```\n"
+    )
+    assert _settled_notation("run `pytest --cov >= 90` first") == (
+        "run `pytest --cov >= 90` first"
+    )
+
+
 def test_the_integrity_lead_in_agrees_with_the_number_of_ideas_it_covers(
     rich_session: Session,
 ):

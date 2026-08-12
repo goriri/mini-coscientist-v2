@@ -2966,9 +2966,15 @@ def compile_dossier(session: Session) -> str:
         )
     lines += _advisory_appendix(advisories)
     lines += _provenance_appendix(record)
+    # After ``_joined_units``, which closes the gap inside a unit -- "40 µ L" -- so the
+    # notation pass reads the unit whole rather than a prefix and a stray letter.
     report = _em_dashed(
-        _joined_units(
-            _densely_numbered(_without_math_markup("\n".join(lines).rstrip() + "\n"))
+        _settled_notation(
+            _joined_units(
+                _densely_numbered(
+                    _without_math_markup("\n".join(lines).rstrip() + "\n")
+                )
+            )
         )
     )
     # Numbering runs before the contents list, so the index of exhibits it adds
@@ -3267,6 +3273,96 @@ _PARTED_PREFIX = re.compile(r"(?<=\d )([µμ])[ \t]+(?=[A-Za-zΩ]\b)")
 def _joined_units(report: str) -> str:
     """Every unit in the report set as one token, prefix against its measure."""
     return _PARTED_PREFIX.sub(r"\1", report)
+
+
+# Spans a notation pass must not reach into. A URL is the one that bites: the ISSN in
+# "https://www.mdpi.com/2313-0105/11/6/209" is a digit-hyphen-digit that no rule here
+# should read as a range, and a link is not prose. Inline code and an autolink go with
+# it for the same reason the fenced block below does.
+_UNTOUCHED = re.compile(r"`[^`]*`|<[^>\s]+>|https?://\S+|\b10\.\d{4,9}/\S+")
+# What the specialists type where the report means "at least". Both samples write the
+# sign and neither writes the digraph; v18 wrote both, twice for one threshold -- "must
+# be >=90% of uncoated control" against "must be ≥90% of the uncoated control".
+_ASCII_OPERATOR = re.compile(r"[<>]=")
+_OPERATORS = {">=": "≥", "<=": "≤"}
+# Tight after the sign, which is the majority in v18 and the form both samples take.
+_LOOSE_OPERATOR = re.compile(r"([≥≤])[ \t]+(?=[\d.])")
+# Neither sample ever spaces a range, and v18 wrote one 2.8-4.3 V window all three
+# ways on one page. The dash itself is left as typed -- a spaced en dash closes up to
+# an en dash -- because the tight en dash is a form the samples use heavily and this
+# pass is about the spacing, not about picking between two settled forms.
+_SPACED_RANGE = re.compile("(?<=\\d)[ \\t]([-\u2013])[ \\t](?=\\d)")
+# SI puts a space between the measure and the degree sign. v18 split 56 spaced against
+# 15 tight for the same unit.
+_TIGHT_DEGREE = re.compile(r"(?<=\d)(°[CF])\b")
+# Multi-character and unambiguous. A single letter against a digit is as likely to be
+# a figure panel -- "Fig. 1A" -- as a unit, so the one single-letter unit this report
+# needs is taken below, with that in mind. The lookbehind keeps the rule out of the
+# formulae the chemistry is written in: the "1" of "LiNi0.8Mn0.1Co0.1O2" and the "811"
+# of "NMC811" both sit against a letter, and neither is a measure.
+_TIGHT_UNIT = re.compile(
+    r"(?<![A-Za-z0-9.])(\d+(?:\.\d+)?)"
+    r"(ms|ns|µs|μs|min|nm|µm|μm|mm|cm|mAh|mA|mV|mΩ|kΩ|mg|kg|kW|kHz|MHz|GHz|Hz"
+    r"|kPa|MPa|GPa|mol|Wh|wt)\b"
+)
+# The C rate, which is a unit here and a panel label everywhere else. v18 wrote the
+# same rate both ways inside one idea -- "cycle at 1C (2.8-4.3 V)" in the description
+# against "Cycle at 1 C for 500 cycles" in the validation protocol.
+_C_RATE = re.compile(r"(?<![A-Za-z0-9.])(\d+(?:\.\d+)?)C\b")
+_PANEL_CONTEXT = re.compile(
+    r"(?:Fig(?:ure)?s?\.?|Tables?|Panels?|Schemes?)[ \t]+$", re.I
+)
+
+
+def _spaced_rate(match: re.Match[str]) -> str:
+    """A rate takes the space; a figure panel keeps its label."""
+    if _PANEL_CONTEXT.search(match.string[: match.start()]):
+        return match.group(0)
+    return f"{match.group(1)} C"
+
+
+def _settled_span(text: str) -> str:
+    """Every rule of the pass, over a stretch of prose and nothing else."""
+    text = _ASCII_OPERATOR.sub(lambda hit: _OPERATORS[hit.group(0)], text)
+    text = _LOOSE_OPERATOR.sub(r"\1", text)
+    text = _SPACED_RANGE.sub(r"\1", text)
+    text = _TIGHT_DEGREE.sub(r" \1", text)
+    text = _TIGHT_UNIT.sub(r"\1 \2", text)
+    return _C_RATE.sub(_spaced_rate, text)
+
+
+def _settled_notation(report: str) -> str:
+    """One notation per quantity, where eight specialists wrote three.
+
+    Each idea is drafted by a different specialist and each of them types the same
+    threshold, window and rate its own way. On one live report ``>=`` stood against
+    ``≥`` for one acceptance criterion, "2.8 - 4.3" against "2.8-4.3" for one voltage
+    window, and "1C" against "1 C" for one rate inside a single idea. No prompt can
+    settle that -- the whole point of fanning the ideas out is that the specialists do
+    not see each other -- so it is settled here, where the document is one document.
+
+    Fenced code is left alone, where ``>=`` is a comparison a reader may need to
+    retype, and so is anything the reader is meant to follow rather than read.
+    """
+    out: list[str] = []
+    fenced = False
+    for line in report.split("\n"):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            out.append(line)
+            continue
+        if fenced:
+            out.append(line)
+            continue
+        pieces: list[str] = []
+        last = 0
+        for hit in _UNTOUCHED.finditer(line):
+            pieces.append(_settled_span(line[last : hit.start()]))
+            pieces.append(hit.group(0))
+            last = hit.end()
+        pieces.append(_settled_span(line[last:]))
+        out.append("".join(pieces))
+    return "\n".join(out)
 
 
 def _em_dashed(report: str) -> str:
