@@ -205,6 +205,37 @@ def test_the_gate_measures_the_merged_corpus_and_not_the_first_batch():
     assert flow.session.status == "active"
 
 
+def test_a_refused_gate_can_be_asked_again_and_the_refusal_withdrawn():
+    """A run refused at the gate had two ways out, and both cost it something.
+
+    ``accept_exploratory_evidence`` waives the floor and marks every downstream
+    output as resting on unverified literature; ``retry_evidence`` supersedes
+    the draft and buys another discovery wave. Neither is what a researcher
+    looking at a corpus that does clear the floor is asking for, and until the
+    miscount above was found that was the only way to arrive here. Asking again
+    is safe because the floor is re-measured: a corpus still short is refused
+    just as it was the first time.
+    """
+    flow = _at_evidence(
+        approval_profile=ApprovalProfile.MILESTONE, evidence_review=True
+    )
+    thin = flow.preview()
+    with pytest.raises(ValueError, match="does not meet the floor"):
+        flow.accept(thin, actor="test_researcher")
+    assert flow.session.status == "evidence_required"
+
+    # Asking again over the same thin corpus is refused again, not waved past.
+    with pytest.raises(ValueError, match="does not meet the floor"):
+        flow.accept(thin, actor="test_researcher")
+
+    draft = _batched_evidence_draft(flow)
+    flow.accept(draft, actor="test_researcher")
+
+    assert flow.stage == "generate"
+    assert flow.session.status == "active"
+    assert flow.session.exploratory_evidence_accepted is False
+
+
 def test_a_session_saved_before_the_gate_existed_loads_as_a_run_without_it():
     saved = Session(question="Can a coating help?").to_dict()
     del saved["evidence_review"]

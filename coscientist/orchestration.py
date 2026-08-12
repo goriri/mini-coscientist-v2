@@ -1948,7 +1948,17 @@ class CoScientistWorkflow:
         actor: str = "researcher",
         automatic: bool | None = None,
     ) -> None:
-        if self.done or self.session.status != "active":
+        # ``evidence_required`` is a finding about the corpus, not a lock on the
+        # session. The gate below re-measures the floor and refuses again where
+        # the corpus is still short, so the status adds no safety by also
+        # barring the door -- and barring it left a run whose floor was met but
+        # miscounted with nowhere to go: the only ways out of that status waive
+        # the floor or re-run discovery, and neither is what a researcher
+        # looking at a corpus that does clear it is asking for.
+        retryable = (
+            self.session.status == "evidence_required" and artifact.stage == "evidence"
+        )
+        if self.done or (self.session.status != "active" and not retryable):
             raise ValueError("The session cannot accept another stage.")
         pending = self.pending_draft
         if pending is None or artifact.id != pending.id:
@@ -2027,7 +2037,12 @@ class CoScientistWorkflow:
                 if packet
                 else EvidenceFloor(shortfalls=["No verification packet was produced."])
             )
-            if not (manifest_ok and floor.met):
+            if manifest_ok and floor.met:
+                # Entered from ``evidence_required``, this is the refusal being
+                # withdrawn, and the status has to go with it or the run is
+                # still parked on a finding that no longer holds.
+                self.session.status = "active"
+            else:
                 self.session.status = "evidence_required"
                 self._persist(
                     self._event(
