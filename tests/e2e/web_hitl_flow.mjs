@@ -893,6 +893,39 @@ try {
   );
   await cdp.evaluate("document.querySelector('#closeHistory').click()");
 
+  // The poll backs off while the run says nothing new, so what the run says has
+  // to move whenever the run does. Against this server every stage lands inside
+  // one poll, which is the case the backoff must stay out of: a local run that
+  // slowed itself down would be the fix costing more than the defect.
+  const polling = await cdp.evaluate(`(() => {
+    const held = {
+      updated_at: "2026-08-12T00:00:00Z",
+      stage: "evidence",
+      status: "active",
+      operation: { status: "running" },
+      task_summary: { total: 8, completed: 3, failed: 0 },
+      evidence_progress: { verified: 12 },
+      pending_draft: null,
+    };
+    const moved = structuredClone(held);
+    moved.task_summary.completed = 4;
+    return {
+      fast: POLL_FAST,
+      slow: POLL_SLOW,
+      wait: state.pollWait,
+      stillHeld: pollSignature(held) === pollSignature(structuredClone(held)),
+      noticesATaskLanding: pollSignature(held) !== pollSignature(moved),
+    };
+  })()`);
+  assert(
+    polling.stillHeld && polling.noticesATaskLanding,
+    "The poll must hold its rate on a run that has not moved and drop it on one that has.",
+  );
+  assert(
+    polling.slow > polling.fast && polling.wait === polling.fast,
+    `A run whose stages all landed must still be polled at ${polling.fast}ms, not ${polling.wait}ms.`,
+  );
+
   await cdp
     .call("Page.captureScreenshot", {
       format: "png",
@@ -925,6 +958,7 @@ try {
         workflowId,
         secondWorkflowId,
         desktopLayout,
+        polling,
         scrollMetrics,
         mobileLayout,
         mobileHistory,

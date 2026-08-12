@@ -36,6 +36,35 @@ const NOTIFY_KEY = "coscientist.stageAlerts";
 // tab they switched to, and a notification is an interruption rather than a
 // recall. Deep Research and the tournament both run far longer than this.
 const LONG_STAGE_MILLISECONDS = 30000;
+// How often the run is asked what it is doing. The fast rate is the one worth
+// having while something is landing -- a task finishing, a batch of leads coming
+// back -- and it was the only rate there was: a flat 1.4 seconds for as long as
+// the operation ran, which over one forty-five minute discovery stage is close
+// to two thousand requests asking a question whose answer had not changed. The
+// deployment runs one vCPU at a concurrency of eight and its specialists call it
+// back over HTTP, so those polls are not free -- they take slots from the work
+// they are asking about. Backing off to the slow rate while the answer holds
+// still cuts that by an order of magnitude, and the cost of it is that the gate
+// at the end of a silent stretch is noticed up to twelve seconds late.
+const POLL_FAST = 1400;
+const POLL_SLOW = 12000;
+
+// What "the answer changed" means. Not ``updated_at`` alone: that moves when the
+// stage does, and a stage is exactly the thing that stands still for the best
+// part of an hour. The task tally moves as each specialist reports and the
+// evidence progress moves as each batch of leads is verified, so between them a
+// run that is getting somewhere says so.
+function pollSignature(workflow) {
+  return JSON.stringify([
+    workflow.updated_at,
+    workflow.stage,
+    workflow.status,
+    workflow.operation?.status,
+    workflow.task_summary,
+    workflow.evidence_progress,
+    workflow.pending_draft?.id ?? null,
+  ]);
+}
 
 const state = {
   userId: localStorage.getItem("coscientist.userId") || crypto.randomUUID(),
@@ -47,6 +76,8 @@ const state = {
   autoFollow: true,
   lastDraftId: null,
   pollTimer: null,
+  pollWait: POLL_FAST,
+  pollSignature: null,
   viewingStage: null,
   recentSessions: loadSessionHistory(),
   notifyStageAlerts: localStorage.getItem(NOTIFY_KEY) !== "off",
@@ -1670,7 +1701,15 @@ function stopWorkflowPolling() {
   state.pollTimer = null;
 }
 
-function pollWorkflow(wait = 1400) {
+// Back to the fast rate, for a run the researcher has just arrived at: whatever
+// the last one was backing off from is not this one's business.
+function resetWorkflowPolling() {
+  state.pollWait = POLL_FAST;
+  state.pollSignature = null;
+}
+
+function pollWorkflow(wait) {
+  const delay = wait ?? state.pollWait;
   stopWorkflowPolling();
   state.pollTimer = window.setTimeout(async () => {
     if (!state.workflowId) return;
@@ -1678,6 +1717,15 @@ function pollWorkflow(wait = 1400) {
       const workflow = await researchApi(
         `/sessions/${encodeURIComponent(state.workflowId)}`,
       );
+      // Straight back to the fast rate rather than stepped down, because what a
+      // researcher is waiting on arrives all at once and the poll after it is
+      // the one that matters.
+      const signature = pollSignature(workflow);
+      state.pollWait =
+        signature === state.pollSignature
+          ? Math.min(Math.round(delay * 1.4), POLL_SLOW)
+          : POLL_FAST;
+      state.pollSignature = signature;
       renderWorkflow(workflow);
     } catch {
       // Only renderWorkflow re-arms this timer, so a single dropped poll used
@@ -1688,9 +1736,9 @@ function pollWorkflow(wait = 1400) {
       // so a service that is genuinely down is not hammered, and say
       // "reconnecting" rather than reporting a dead run.
       setConnection("error", "Reconnecting to workflow progress");
-      pollWorkflow(Math.min(wait * 2, 15000));
+      pollWorkflow(Math.min(delay * 2, 15000));
     }
-  }, wait);
+  }, delay);
 }
 
 function clearWorkflowDisplay() {
@@ -1963,6 +2011,7 @@ function syncEvidenceReviewControl() {
 async function openResearchSession(sessionId, { restore = false } = {}) {
   if (state.busy) return;
   stopWorkflowPolling();
+  resetWorkflowPolling();
   state.viewingStage = null;
   setPreviewMode(false);
   clearWorkflowDisplay();
@@ -2170,6 +2219,7 @@ function resizeInput() {
 async function newInquiry() {
   if (state.busy) return;
   stopWorkflowPolling();
+  resetWorkflowPolling();
   state.sessionId = null;
   state.workflowId = null;
   state.workflow = null;
