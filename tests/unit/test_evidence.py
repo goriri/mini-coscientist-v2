@@ -856,3 +856,111 @@ def test_a_gap_search_that_returns_a_paper_already_held_adds_no_second_row():
     # Merged rather than ignored: the gap search is what says this paper answers
     # the researcher's question as well as the one it was found under.
     assert lead.claim_relations == ["supports"]
+
+
+def _cited_payload(text: str, annotations: list[dict]) -> dict:
+    return {
+        "output_text": text,
+        "steps": [
+            {
+                "type": "model_output",
+                "content": [{"type": "text", "text": text, "annotations": annotations}],
+            }
+        ],
+    }
+
+
+CITED_REPORT = "Coatings help [cite: 9]. Onset is early [cite: 2, 4].\n"
+FIRST = "https://pubmed.ncbi.nlm.nih.gov/1/"
+SECOND = "https://pubmed.ncbi.nlm.nih.gov/2/"
+
+
+def _renumbering_payload() -> tuple[dict, list[str]]:
+    """A pass whose own numbering agrees with nothing.
+
+    ``[cite: 9]`` is the ninth entry of a source list the provider keeps to
+    itself and never returns; the second span names two documents under two
+    numbers that are not two of anything the caller holds. Both were resolved
+    against the URL list by position, which on the live report measured here
+    disagreed with the annotations on a hundred and seventeen of a hundred and
+    twenty-nine spans.
+    """
+    first = CITED_REPORT.index("[cite: 9]")
+    second = CITED_REPORT.index("[cite: 2, 4]")
+    payload = _cited_payload(
+        CITED_REPORT,
+        [
+            {
+                "type": "url_citation",
+                "url": SECOND,
+                "title": "Onset",
+                "start_index": first,
+                "end_index": first + len("[cite: 9]"),
+            },
+            {
+                "type": "url_citation",
+                "url": FIRST,
+                "title": "Coatings",
+                "start_index": second,
+                "end_index": second + len("[cite: 2, 4]"),
+            },
+        ],
+    )
+    return payload, [SECOND, FIRST]
+
+
+def test_a_markers_number_is_rewritten_onto_the_list_it_is_resolved_against():
+    payload, cited = _renumbering_payload()
+    seen = {}
+
+    normalize_report(
+        question="Q",
+        report=extract_report(payload),
+        pass_number=1,
+        normalizer=lambda prompt: seen.setdefault("prompt", prompt) and "{}",
+        citation_urls=cited,
+        payload=payload,
+    )
+
+    # Not [cite: 9] and [cite: 2, 4]: the first span names the first entry of the
+    # list beneath the report and the second names the second.
+    assert "Coatings help [cite: 1]." in seen["prompt"]
+    assert "Onset is early [cite: 2]." in seen["prompt"]
+    assert f"[1] {SECOND}" in seen["prompt"]
+    assert f"[2] {FIRST}" in seen["prompt"]
+
+
+def test_the_fallback_reads_a_marker_as_the_source_the_annotation_named():
+    """No normalizer, so the paragraph scanner is what attaches the sources."""
+    payload, cited = _renumbering_payload()
+
+    narrative = normalize_report(
+        question="Q",
+        report=extract_report(payload),
+        pass_number=1,
+        citation_urls=cited,
+        payload=payload,
+    )
+
+    ((statement,),) = (narrative.statements,)
+    assert sorted(statement.source_urls) == sorted([FIRST, SECOND])
+
+
+def test_a_report_with_no_annotations_keeps_the_prose_it_arrived_with():
+    """The rewrite has nothing to say about a payload it can read no report out
+    of, and what it must not do is hand back the empty string it made of it. The
+    report reaching here was assembled by the caller and may have come from
+    somewhere this rewrite cannot follow."""
+    report = "Coatings help. See https://pubmed.ncbi.nlm.nih.gov/1/"
+
+    narrative = normalize_report(
+        question="Q",
+        report=report,
+        pass_number=1,
+        citation_urls=[FIRST],
+        payload={"status": "completed"},
+    )
+
+    ((statement,),) = (narrative.statements,)
+    assert statement.source_urls == [FIRST]
+    assert "Coatings help." in narrative.summary

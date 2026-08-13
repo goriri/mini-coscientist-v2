@@ -9,7 +9,7 @@ import logging
 import os
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -126,8 +126,11 @@ _LIST_MARKER_RE = re.compile(r"^[\s\-*#>]*(?:\d+[.)])?\s*")
 _REDIRECTOR_HOST = "vertexaisearch.cloud.google.com"
 """The grounding redirector, which a report prints as a link's title when it has
 none. It is never the name of a document."""
-# A citation marker, as a Deep Research report writes one: [7], or [2, 5, 9].
-_CITATION_MARKER_RE = re.compile(r"\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\]")
+# A citation marker, as a Deep Research report writes one: [7], [2, 5, 9], or
+# -- the spelling every live pass measured here actually used -- [cite: 2, 5].
+# Without the prefix this matched none of them, so the marker path below found
+# nothing in a report that cited forty papers.
+_CITATION_MARKER_RE = re.compile(r"\[(?:cite:\s*)?(\d{1,3}(?:\s*,\s*\d{1,3})*)\]")
 _FACET_KEYWORDS = {
     "supporting": (
         "support",
@@ -1296,6 +1299,144 @@ def _report_summary(text: str) -> tuple[str, bool]:
     return head.rstrip(), True
 
 
+# What a pass writes where it cites: ``[cite: 1, 4, 11]``, numbered against that
+# pass's own source list. The annotations say which document each span meant;
+# the numbers inside cannot be matched to them one for one, because the provider
+# returns a different count of each on most spans.
+CITE_SPAN = re.compile(r"[ \t]*\[cite:[^\]\n]{0,120}\]")
+
+
+def annotated_part(payload: dict) -> dict[str, Any]:
+    """The content part holding the report, if it carries its own citations.
+
+    Deep Research returns one model-output step whose single part is the whole
+    report, with a ``url_citation`` annotation per cited span indexed into that
+    part's own text. Taking the longest such part rather than the first keeps
+    the indices and the text they index the same string, which is the one thing
+    the rewrite below cannot get wrong and recover from.
+    """
+    best: dict[str, Any] = {}
+    stack: list[Any] = [payload]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, dict):
+            text, annotations = value.get("text"), value.get("annotations")
+            if (
+                isinstance(text, str)
+                and isinstance(annotations, list)
+                and annotations
+                and len(text) > len(best.get("text", ""))
+            ):
+                best = value
+            stack.extend(value.values())
+        elif isinstance(value, list):
+            stack.extend(value)
+    return best
+
+
+def citation_spans(
+    annotations: Sequence[Any], length: int
+) -> list[tuple[int, int, list[Any]]]:
+    """Citation spans in reading order, grouped, with nesting dropped.
+
+    Several annotations share one span -- a span reading ``[cite: 1, 4]`` names
+    two documents -- so they are grouped before anything is rewritten. A span
+    that starts inside the one before it is skipped rather than rewritten, since
+    replacing both would cut the text at overlapping offsets and corrupt the
+    report between them.
+    """
+    grouped: dict[tuple[int, int], list[Any]] = {}
+    for annotation in annotations:
+        if not isinstance(annotation, dict):
+            continue
+        start, end = annotation.get("start_index"), annotation.get("end_index")
+        if not isinstance(start, int) or not isinstance(end, int):
+            continue
+        if not 0 <= start < end <= length:
+            continue
+        grouped.setdefault((start, end), []).append(annotation)
+    spans: list[tuple[int, int, list[Any]]] = []
+    reached = 0
+    for (start, end), group in sorted(grouped.items()):
+        if start < reached:
+            continue
+        spans.append((start, end, group))
+        reached = end
+    return spans
+
+
+def renumber_report(
+    payload: dict, token_of: Callable[[dict], str], *, prefix: str = ""
+) -> str:
+    """One pass's report with its own citation numbers replaced by the run's.
+
+    A pass numbers its citations against the source list it built for itself, so
+    ``[cite: 4]`` in the third pass and ``[cite: 4]`` in the fourth are different
+    papers and neither is the report's reference 4. The numbers are therefore
+    unusable and the annotations beside them are not: each span carries the
+    title and URL of every document it cites, and those resolve to the run's own
+    leads.
+
+    A span whose documents were all cut by the retention ceiling is removed
+    rather than left standing, which is what the report did with every marker in
+    every pass before this existed. Spans the payload records no annotation for
+    go the same way, as each is passed.
+    """
+    part = annotated_part(payload)
+    text = part.get("text") or ""
+    if not text:
+        return CITE_SPAN.sub("", extract_report(payload)).strip()
+    pieces: list[str] = []
+    written = 0
+    for start, end, group in citation_spans(part.get("annotations") or [], len(text)):
+        tokens: list[str] = []
+        for annotation in group:
+            token = token_of(annotation)
+            if token and token not in tokens:
+                tokens.append(token)
+        # Unannotated markers are struck from the text as it is passed, not from
+        # the joined result: with a "cite: " prefix a rewritten marker is itself
+        # a citation span, and a sweep at the end takes back every number this
+        # just resolved. The space in front of a struck span goes with it --
+        # left behind, the sentence it closed reads "Onset is early ." on the
+        # page.
+        before = CITE_SPAN.sub("", text[written:start])
+        pieces.append(before if tokens else before.rstrip(" \t"))
+        if tokens:
+            pieces.append("[" + prefix + ", ".join(tokens) + "]")
+        written = end
+    pieces.append(CITE_SPAN.sub("", text[written:]))
+    return "".join(pieces).strip()
+
+
+def renumber_against(payload: dict, cited: Sequence[str]) -> str:
+    """The report with every marker renumbered onto ``cited``'s own ordering.
+
+    The marker a pass writes is an index into a source list it keeps to itself.
+    ``cited`` is a different list -- the URLs the provider annotated, deduped in
+    order of first use -- and it is the list every reader of this report
+    downstream is given. Rewriting the markers is what makes the two agree.
+
+    The ``cite:`` spelling is kept rather than reduced to a bare ``[3]``, because
+    the report prose ends up on the page and the renderer strikes exactly this
+    form. A bare number would survive to the reader as a reference into a list
+    the dossier does not have.
+    """
+    order = {url: index for index, url in enumerate(cited, start=1)}
+
+    def number(annotation: dict) -> str:
+        raw = annotation.get("url") or annotation.get("uri") or ""
+        if not isinstance(raw, str) or not raw:
+            return ""
+        try:
+            position = order.get(canonicalize_url(raw))
+        except ValueError:
+            return ""
+        return str(position) if position else ""
+
+    return renumber_report(payload, number, prefix="cite: ")
+
+
 def _fallback_narrative(
     question: str,
     report: str,
@@ -1313,8 +1454,10 @@ def _fallback_narrative(
                 continue
         # A report that cites by marker spells out no URL at all, so without
         # this the fallback returns nothing from a pass that cited forty papers.
-        # The marker is resolved positionally against the provider's own list,
-        # which is the order the provider numbered them in.
+        # The marker indexes ``cited`` because ``normalize_report`` renumbered it
+        # onto that list first, from the annotations. Read straight off the pass,
+        # a marker indexes a source list the pass never returned and resolving
+        # it here attaches whichever document happens to sit at that position.
         for marker in _CITATION_MARKER_RE.findall(paragraph):
             for number in marker.split(","):
                 index = int(number) - 1
@@ -1361,6 +1504,7 @@ def normalize_report(
     normalizer: Callable[[str], str] | None = None,
     citation_urls: list[str] | None = None,
     language: str = DEFAULT_LANGUAGE,
+    payload: dict | None = None,
 ) -> DiscoveryNarrative:
     """Normalize a report, accepting only citations the provider itself returned.
 
@@ -1370,6 +1514,16 @@ def normalize_report(
     below -- which exists to stop a normalizer inventing a source -- was reading
     the report text as the whole of what the provider said. On a live wave that
     threw away every statement in all eight passes.
+
+    ``payload`` is the whole interaction, and it is what makes the numbered list
+    below true. A pass numbers its markers against a source list it never
+    returns, so ``[cite: 4]`` was being resolved against the list of URLs in the
+    order the provider happened to annotate them -- a different list, and on the
+    live report measured here a hundred and seventeen of a hundred and twenty-nine
+    spans disagreed with it on how many documents they even named. Every source
+    that resolution attached to a statement was a coin toss, and a wrong source
+    on a statement is worse than none: it goes on to be retrieved, verified and
+    printed as the reference for a finding it has nothing to do with.
     """
     cited = []
     for raw_url in citation_urls or []:
@@ -1378,6 +1532,8 @@ def normalize_report(
         except ValueError:
             continue
     cited = list(dict.fromkeys(cited))
+    if payload:
+        report = renumber_against(payload, cited) or report
     narrative = None
     if normalizer is not None:
         # The numbered list is what makes "copied verbatim" achievable when the
@@ -1403,8 +1559,9 @@ def normalize_report(
             "Do not add facts or URLs. Each statement must contain its originating "
             f"pass {pass_number}, an evidence facet, and only source URLs copied "
             "verbatim from the report or from the numbered source list beneath "
-            "it. Where the report cites a marker such as [3], resolve it against "
-            "that list.\n\n"
+            "it. Where the report cites a marker such as [cite: 3], resolve it "
+            "against that list: the markers have been renumbered onto it, so "
+            "the third entry is what [cite: 3] names.\n\n"
             f"{working_language}\n\n"
             f"Research question: {question}\n\nReport:\n{report[:180000]}"
             f"{sources_block}"
@@ -2116,6 +2273,7 @@ class IterativeEvidenceDiscovery:
                 normalizer=normalizer,
                 citation_urls=citation_urls,
                 language=getattr(session, "language", "") or DEFAULT_LANGUAGE,
+                payload=payload,
             )
             # What the pass was sent to cover, which for the gap-closing pass is
             # nothing in particular: it is planned with no facet because it covers

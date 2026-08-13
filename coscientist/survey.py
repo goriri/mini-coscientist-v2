@@ -16,11 +16,15 @@ in so what comes back is already cited in the report's terms.
 from __future__ import annotations
 
 import logging
-import re
-from collections.abc import Callable, Sequence
-from typing import Any, Protocol
+from collections.abc import Sequence
+from typing import Protocol
 
-from .evidence import EvidenceArtifactStore, canonicalize_url, extract_report
+from .evidence import (
+    CITE_SPAN,
+    EvidenceArtifactStore,
+    canonicalize_url,
+    renumber_report,
+)
 from .models import (
     FACET_PHRASES,
     DiscoveryManifest,
@@ -60,108 +64,6 @@ def fold_title(title: str) -> str:
     spellings of one paper's name got recorded first.
     """
     return " ".join(title.split())[:300].casefold()
-
-
-# What a pass writes where it cites: ``[cite: 1, 4, 11]``, numbered against that
-# pass's own source list. The annotations say which document each span meant;
-# the numbers inside cannot be matched to them one for one, because the provider
-# returns a different count of each on most spans.
-_CITE_SPAN = re.compile(r"[ \t]*\[cite:[^\]\n]{0,120}\]")
-
-
-def _annotated_part(payload: dict) -> dict[str, Any]:
-    """The content part holding the report, if it carries its own citations.
-
-    Deep Research returns one model-output step whose single part is the whole
-    report, with a ``url_citation`` annotation per cited span indexed into that
-    part's own text. Taking the longest such part rather than the first keeps
-    the indices and the text they index the same string, which is the one thing
-    the rewrite below cannot get wrong and recover from.
-    """
-    best: dict[str, Any] = {}
-    stack: list[Any] = [payload]
-    while stack:
-        value = stack.pop()
-        if isinstance(value, dict):
-            text, annotations = value.get("text"), value.get("annotations")
-            if (
-                isinstance(text, str)
-                and isinstance(annotations, list)
-                and annotations
-                and len(text) > len(best.get("text", ""))
-            ):
-                best = value
-            stack.extend(value.values())
-        elif isinstance(value, list):
-            stack.extend(value)
-    return best
-
-
-def _spans(annotations: Sequence[Any], length: int) -> list[tuple[int, int, list[Any]]]:
-    """Citation spans in reading order, grouped, with nesting dropped.
-
-    Several annotations share one span -- a span reading ``[cite: 1, 4]`` names
-    two documents -- so they are grouped before anything is rewritten. A span
-    that starts inside the one before it is skipped rather than rewritten, since
-    replacing both would cut the text at overlapping offsets and corrupt the
-    report between them.
-    """
-    grouped: dict[tuple[int, int], list[Any]] = {}
-    for annotation in annotations:
-        if not isinstance(annotation, dict):
-            continue
-        start, end = annotation.get("start_index"), annotation.get("end_index")
-        if not isinstance(start, int) or not isinstance(end, int):
-            continue
-        if not 0 <= start < end <= length:
-            continue
-        grouped.setdefault((start, end), []).append(annotation)
-    spans: list[tuple[int, int, list[Any]]] = []
-    reached = 0
-    for (start, end), group in sorted(grouped.items()):
-        if start < reached:
-            continue
-        spans.append((start, end, group))
-        reached = end
-    return spans
-
-
-def renumber_report(payload: dict, token_of: Callable[[dict], str]) -> str:
-    """One pass's report with its own citation numbers replaced by the run's.
-
-    A pass numbers its citations against the source list it built for itself, so
-    ``[cite: 4]`` in the third pass and ``[cite: 4]`` in the fourth are different
-    papers and neither is the report's reference 4. The numbers are therefore
-    unusable and the annotations beside them are not: each span carries the
-    title and URL of every document it cites, and those resolve to the run's own
-    leads.
-
-    A span whose documents were all cut by the retention ceiling is removed
-    rather than left standing, which is what the report did with every marker in
-    every pass before this existed. Spans the payload records no annotation for
-    go the same way, at the end.
-    """
-    part = _annotated_part(payload)
-    text = part.get("text") or ""
-    if not text:
-        return _CITE_SPAN.sub("", extract_report(payload)).strip()
-    pieces: list[str] = []
-    written = 0
-    for start, end, group in _spans(part.get("annotations") or [], len(text)):
-        tokens: list[str] = []
-        for annotation in group:
-            token = token_of(annotation)
-            if token and token not in tokens:
-                tokens.append(token)
-        # The space in front of a struck span goes with it. Left behind, the
-        # sentence it closed reads "Onset is early ." on the page.
-        before = text[written:start]
-        pieces.append(before if tokens else before.rstrip(" \t"))
-        if tokens:
-            pieces.append("[" + ", ".join(tokens) + "]")
-        written = end
-    pieces.append(text[written:])
-    return _CITE_SPAN.sub("", "".join(pieces)).strip()
 
 
 class SourceIndex:
@@ -245,7 +147,7 @@ def _pass_sections(
             if payload:
                 report = renumber_report(payload, index.token)
         if not report:
-            report = _CITE_SPAN.sub("", paragraphs.get(run.pass_number, "")).strip()
+            report = CITE_SPAN.sub("", paragraphs.get(run.pass_number, "")).strip()
         if not report:
             continue
         facet = FACET_PHRASES.get(run.facet, "")
