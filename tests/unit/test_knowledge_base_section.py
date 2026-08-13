@@ -119,6 +119,40 @@ def test_the_pipelines_own_markup_does_not_reach_the_reader():
     assert "achieved 5 nm coatings." in prose, "the sentence lost more than its tags"
 
 
+def test_a_tag_the_pass_wrote_as_an_element_is_still_the_pipelines_markup():
+    """A live pass wrapped every paragraph of its report in one.
+
+    Pass 6 of a finished run opened twelve ``<statement facet="safety_governance">``
+    elements and closed eleven -- the twelfth cut off by the manifest's length
+    limit -- and the Knowledge Base reproduced all twenty-three at the reader.
+    """
+    prose = _deep_research_prose(
+        '<statement facet="safety_governance">\n'
+        "Adagrasib with pembrolizumab carries overlapping hepatotoxicity.\n"
+        "</statement>\n"
+        '<statement facet="safety_governance">\n'
+        "The trial mandated a fifty percent dose reduction.\n"
+    )
+
+    assert "<statement" not in prose
+    assert "</statement>" not in prose
+    assert "facet=" not in prose
+    assert (
+        "Adagrasib with pembrolizumab carries overlapping hepatotoxicity." in prose
+    ), "the paragraph lost more than its wrapper"
+    assert "The trial mandated a fifty percent dose reduction." in prose
+    assert "\n\n\n" not in prose, "the struck line left a hole where it had been"
+
+
+def test_a_measurement_in_angle_brackets_is_the_readers_and_stays():
+    """The strike is by element name, because "<0.05 mM" is a finding."""
+    prose = _deep_research_prose(
+        "Retention held where the additive stayed below <0.05 mM in the cell.\n"
+    )
+
+    assert "<0.05 mM" in prose
+
+
 def test_a_tag_the_pass_wrote_as_inline_code_is_still_the_pipelines_markup():
     """A live pass wrote every tag as ``[Facet: contradictory]`` in backticks. The
     trailing lookahead then saw a backtick where it wanted a space, and fourteen of

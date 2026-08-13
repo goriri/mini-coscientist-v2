@@ -7735,6 +7735,21 @@ _FACET_TAG_RE = re.compile(
     re.IGNORECASE,
 )
 _PASS_CITE_RE = re.compile(r"[ \t]*`?\[cite:[^\]\n]{0,80}\]`?")
+# The same record, written as elements instead of labels. One live run's sixth
+# pass wrapped every paragraph of its report in
+# ``<statement facet="safety_governance">`` and closed most of them again, and
+# the Knowledge Base reproduced the lot: twelve opening tags, eleven closing
+# ones -- the twelfth cut off by the manifest's length limit, which is why the
+# tags are struck one at a time rather than as a pair.
+#
+# Only the names the pass was asked to record under. Anything else in angle
+# brackets is the provider's prose -- a concentration written "<0.05 mM", a URL
+# in a mail-style bracket -- and belongs to the reader.
+_PIPELINE_ELEMENT_RE = re.compile(
+    r"(?m)^[ \t]*</?(?:statement|finding|claim|record)\b[^>\n]*>[ \t]*\n?"
+    r"|[ \t]*</?(?:statement|finding|claim|record)\b[^>\n]*>",
+    re.IGNORECASE,
+)
 
 
 # The pass's own record, handed back where a finding was asked for. One live run's
@@ -7794,8 +7809,15 @@ def _without_pipeline_markup(text: str) -> str:
     sentences taken out of the same reports: a live run printed "The most critical
     failure point ... is the sample size requirement. `[Facet: contradictory]`
     There are zero instances" at the head of the section a reader opens first.
+
+    The tag has two syntaxes and the provider picks either. A bracketed one is
+    struck from the sentence it sits in; an element wraps whole paragraphs, so
+    where it stands on a line of its own the line goes with it rather than
+    leaving a blank one behind.
     """
-    return _PASS_CITE_RE.sub("", _FACET_TAG_RE.sub("", text))
+    return _PIPELINE_ELEMENT_RE.sub(
+        "", _PASS_CITE_RE.sub("", _FACET_TAG_RE.sub("", text))
+    )
 
 
 # The enumerator its list gave it, the heading, and the parenthetical the heading ends
