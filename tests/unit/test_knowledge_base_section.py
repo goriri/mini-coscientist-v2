@@ -676,3 +676,56 @@ def test_a_survey_that_was_never_written_leaves_the_passes_to_be_reproduced():
     section = _knowledge_summary(_record(_narrative(), survey=None))
 
     assert "achieved 5 nm coatings" in section
+
+
+def test_a_survey_that_cites_says_the_numbers_over_it_are_this_reports():
+    section = _knowledge_summary(_survey_record(SURVEY, leads=SURVEY_LEADS, ran=7))
+
+    assert "the numbered citations are this report's own" in section
+
+
+def test_a_survey_that_cites_nothing_does_not_promise_the_reader_citations():
+    """A live Knowledge Base ran eighteen thousand characters without one number
+    under a sentence saying the numbered citations were its own. The reports it was
+    merged from had been lost to a restart, so it was written from the paragraph
+    summaries of them, and those have their citations struck."""
+    uncited = SURVEY.model_copy(
+        update={
+            "overview": "Coatings extend cycle life.",
+            "sections": [
+                KnowledgeSurveySection(
+                    heading="Deposition thickness",
+                    prose="Five nanometres is the reported optimum.",
+                )
+            ],
+            "contested": [],
+        }
+    )
+
+    section = _knowledge_summary(_survey_record(uncited, leads=SURVEY_LEADS, ran=7))
+
+    assert "the numbered citations are this report's own" not in section
+    assert "This survey carries no citations" in section
+    assert "Five nanometres is the reported optimum." in section
+
+
+def test_a_pass_whose_report_was_lost_is_not_said_to_have_found_nothing():
+    """Six of a live eight recorded no report because a restart lost them, and the
+    Knowledge Base told the reader a pass that returns nothing is a fact about the
+    literature. Those six returned plenty; this run could not read it."""
+    record = _survey_record(SURVEY, leads=SURVEY_LEADS, ran=3)
+    for run in record.discovery.runs:
+        run.raw_artifact_reference = "interaction://read"
+    record.discovery.runs[0].raw_artifact_reference = ""
+    record.discovery.runs[1].raw_artifact_reference = ""
+    record.discovery.runs[1].status = "failed"
+
+    section = _knowledge_summary(record)
+
+    assert (
+        "*Pass 1 finished and its report could not be read back into this run, so "
+        "nothing from it is in the survey below. That is a gap in this run and not "
+        "in the literature.*" in section
+    )
+    # And the pass that genuinely came back with nothing still says that.
+    assert "*Pass 2 recorded no report and so contributed nothing" in section

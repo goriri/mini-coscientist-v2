@@ -28,7 +28,7 @@ from .citations import (
     resolve_population,
 )
 from .debate import standalone_opening
-from .evidence import GROUNDING_REDIRECT_MARKER
+from .evidence import GROUNDING_REDIRECT_MARKER, unread_passes
 from .governance import open_blockers
 from .models import (
     EVIDENCE_FACETS,
@@ -12842,6 +12842,10 @@ def _knowledge_summary(record: ResearchRecord) -> str:
 # and rejecting it would silently drop the second source.
 _SURVEY_CITE_RE = re.compile(r"([ \t]*)\[\s*S\s*\d+(?:\s*,\s*S?\s*\d+)*\s*\]", re.I)
 
+# What ``CitationRegistry.marker`` prints, with or without its qualifier: this is
+# how a page checks whether the prose above it ended up citing anything.
+_NUMBERED_CITE_RE = re.compile(r"\[\d+(?:, \d+)*\]")
+
 
 def _survey_cited(text: str, survey: KnowledgeSurvey, record: ResearchRecord) -> str:
     """The survey's own citations, renumbered into this report's reference list.
@@ -12892,6 +12896,43 @@ def _knowledge_survey_prose(record: ResearchRecord, survey: KnowledgeSurvey) -> 
         claim.verification_status in {"verified", "corrected"}
         for claim in (record.evidence.claims if record.evidence else [])
     )
+    # The survey before the paragraph that introduces it, because whether it
+    # carries citations is one of the things that paragraph says. Numbering is
+    # assigned on first use and the introduction cites nothing, so writing it
+    # second moves no reference number.
+    body: list[str] = []
+    if survey.overview.strip():
+        body.append(_survey_cited(survey.overview.strip(), survey, record))
+    for section in survey.sections:
+        heading = section.heading.strip()
+        if heading:
+            body.append(f"### {heading}")
+        if section.prose.strip():
+            body.append(_survey_cited(section.prose.strip(), survey, record))
+    if survey.contested:
+        body.append("### Where the literature disagrees")
+        body.append(
+            "\n".join(
+                f"- {_survey_cited(item.strip(), survey, record)}"
+                for item in survey.contested
+                if item.strip()
+            )
+        )
+    if survey.not_found:
+        body.append("### What the searches looked for and did not find")
+        body.append(
+            "An absence here is a result. Each of these is something a search "
+            "went after and came back without, which is a statement about the "
+            "published literature rather than about this run."
+        )
+        body.append(
+            "\n".join(
+                f"- {_survey_cited(item.strip(), survey, record)}"
+                for item in survey.not_found
+                if item.strip()
+            )
+        )
+    cited = any(_NUMBERED_CITE_RE.search(part) for part in body)
     parts: list[str] = []
     if len(runs) > 1:
         parts.append(
@@ -12899,9 +12940,22 @@ def _knowledge_survey_prose(record: ResearchRecord, survey: KnowledgeSurvey) -> 
             "passes, each sent after a different kind of evidence. What follows "
             "is one survey written across all of them rather than the passes "
             "reproduced one after another, so a topic several passes touched is "
-            "in one place and the numbered citations are this report's own. "
-            "What each pass was asked, and which sources each returned, is under "
-            "Literature discovery in the appendix."
+            "in one place"
+            # A live Knowledge Base said the numbered citations were its own over
+            # eighteen thousand characters carrying not one number: the reports
+            # the survey was written from had been lost to a restart, and it was
+            # merged from the paragraph summaries of them, which have their
+            # citations struck. Promising a reader citations that are not there
+            # sends them looking for the paper behind a sentence that has none.
+            + (
+                " and the numbered citations are this report's own. "
+                if cited
+                else ". This survey carries no citations: the pass reports it was "
+                "merged from did not reach it, and the summaries that stood in "
+                "for them record no sources. "
+            )
+            + "What each pass was asked, and which sources each returned, is "
+            "under Literature discovery in the appendix."
         )
     if not checked:
         parts.append(
@@ -12909,12 +12963,16 @@ def _knowledge_survey_prose(record: ResearchRecord, survey: KnowledgeSurvey) -> 
             "it reports what the searches returned rather than a finding about "
             "the field, and the confidence in its wording is theirs."
         )
+    # A pass that started, finished, and was never read is not a pass that found
+    # nothing. Told the second, a reader takes an empty facet for a silent
+    # literature; the two are set out separately for that reason.
+    lost = unread_passes(record.discovery) if record.discovery else set()
     silent = [
         run.pass_number
         for run in sorted(runs, key=lambda item: item.pass_number)
-        if not run.raw_artifact_reference
+        if not run.raw_artifact_reference and run.pass_number not in lost
     ]
-    if silent and len(silent) < len(runs):
+    if silent and len(silent) + len(lost) < len(runs):
         parts.append(
             "*"
             + ("Pass " if len(silent) == 1 else "Passes ")
@@ -12924,38 +12982,19 @@ def _knowledge_survey_prose(record: ResearchRecord, survey: KnowledgeSurvey) -> 
             "nothing is a fact about the literature, and it is the first thing "
             "lost when reports are merged.*"
         )
-    if survey.overview.strip():
-        parts.append(_survey_cited(survey.overview.strip(), survey, record))
-    for section in survey.sections:
-        heading = section.heading.strip()
-        if heading:
-            parts.append(f"### {heading}")
-        if section.prose.strip():
-            parts.append(_survey_cited(section.prose.strip(), survey, record))
-    if survey.contested:
-        parts.append("### Where the literature disagrees")
+    if lost and len(lost) < len(runs):
+        ordered = sorted(lost)
         parts.append(
-            "\n".join(
-                f"- {_survey_cited(item.strip(), survey, record)}"
-                for item in survey.contested
-                if item.strip()
-            )
+            "*"
+            + ("Pass " if len(ordered) == 1 else "Passes ")
+            + _names([str(number) for number in ordered])
+            + (" finished and its" if len(ordered) == 1 else " finished and their")
+            + " report could not be read back into this run, so nothing from "
+            + ("it" if len(ordered) == 1 else "them")
+            + " is in the survey below. That is a gap in this run and not in the "
+            "literature.*"
         )
-    if survey.not_found:
-        parts.append("### What the searches looked for and did not find")
-        parts.append(
-            "An absence here is a result. Each of these is something a search "
-            "went after and came back without, which is a statement about the "
-            "published literature rather than about this run."
-        )
-        parts.append(
-            "\n".join(
-                f"- {_survey_cited(item.strip(), survey, record)}"
-                for item in survey.not_found
-                if item.strip()
-            )
-        )
-    return "\n\n".join(part for part in parts if part.strip())
+    return "\n\n".join(part for part in [*parts, *body] if part.strip())
 
 
 def _searched_knowledge_summary(record: ResearchRecord) -> str:
