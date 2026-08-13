@@ -31,7 +31,7 @@ from .models import (
     SourceRecord,
     TournamentState,
 )
-from .narrative import _counted, _number_word
+from .narrative import _counted, _number_word, idea_title
 from .parity import DEFAULT_ELO, UNMEASURED_MOVEMENT
 
 PRESENTATION_SCHEMA_VERSION = "1"
@@ -89,6 +89,36 @@ def _candidate_index(
             for index, candidate in enumerate(candidates, 1)
         },
     )
+
+
+def _remembered_titles(session: Session) -> dict[str, str]:
+    """The name of every idea the session has ever held.
+
+    Withdrawing a hypothesis rewrites the population without it, and evolution
+    writes its rewrites under new ids that never enter one, so the live
+    population cannot name what the later panels are about. The meta-review card
+    on a finished run headed a card "Excluded" over
+    ``cand_analogy_actrii_d3creatine_03`` for that reason -- an identifier, at a
+    reader being told which idea was dropped. The dossier names these ideas with
+    ``idea_title``, and nobody moving between the panel and the dossier should
+    be handed two names for one idea.
+    """
+    titles: dict[str, str] = {}
+    for artifact in session.artifacts:
+        if not artifact.payload:
+            continue
+        if artifact.schema_name == "CandidatePopulation":
+            candidates = CandidatePopulation.model_validate(artifact.payload).candidates
+        elif artifact.schema_name == "EvolutionCycle":
+            candidates = [
+                record.candidate
+                for record in EvolutionCycle.model_validate(artifact.payload).records
+            ]
+        else:
+            continue
+        for candidate in candidates:
+            titles[candidate.id] = idea_title(candidate)
+    return titles
 
 
 def _candidate_card(
@@ -604,6 +634,11 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
 
     population = _population(session)
     by_id, labels = _candidate_index(population)
+    # Only the naming: an idea the population no longer holds keeps its title
+    # here, and nothing else about it comes back.
+    remembered = _remembered_titles(session)
+    for candidate_id, title in remembered.items():
+        labels.setdefault(candidate_id, title)
     reviews_by_id = _reviews(session)
 
     if stage == "generate":
@@ -876,6 +911,12 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
             {
                 "candidate_id": candidate_id,
                 "label": labels.get(candidate_id, candidate_id),
+                # The card is a verdict on one idea and carries nothing else
+                # about it, so the position in the field -- "Candidate 5" -- is
+                # not enough to head it with. The title is what the reader has
+                # been reasoning about for eight stages.
+                "title": remembered.get(candidate_id)
+                or labels.get(candidate_id, candidate_id),
                 "claim": by_id[candidate_id].claim if candidate_id in by_id else "",
                 "recommended": candidate_id in manifest.recommendation_candidate_ids,
                 "excluded_for_fatal_flaw": candidate_id in fatal_ids,
@@ -898,11 +939,12 @@ def build_stage_presentation(session: Session, stage: str) -> dict[str, Any] | N
                 "value": manifest.evidence_that_would_change_decision,
             },
             {
+                # The key is the name the dossier writer files a section under.
+                # Printed beside the title it put nine rows of "KEY generation
+                # / TITLE Candidate Generation" at the end of the last panel of
+                # the run, which tells a reader nothing the title has not.
                 "label": "Dossier sections",
-                "value": [
-                    {"key": section.key, "title": section.title}
-                    for section in manifest.sections
-                ],
+                "value": [section.title for section in manifest.sections],
             },
         ]
         return result

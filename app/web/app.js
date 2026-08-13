@@ -548,8 +548,8 @@ function renderStagePresentation(presentation, rawText = "") {
     .map(
       (item) => `
         <article class="recommendation-card ${item.excluded_for_fatal_flaw ? "excluded" : ""}">
-          <span>${item.recommended ? "Recommended" : "Excluded"}</span>
-          <h4>${escapeHtml(item.label)}</h4>
+          <span>${item.recommended ? "Recommended" : "Excluded"}${item.title && item.label !== item.title ? ` \u00b7 ${escapeHtml(item.label)}` : ""}</span>
+          <h4>${escapeHtml(item.title || item.label)}</h4>
           <p>${formatInline(item.claim)}</p>
           ${item.fatal_flaws?.length ? `<div class="fatal-flaw">${renderDisplayValue(item.fatal_flaws)}</div>` : ""}
         </article>`,
