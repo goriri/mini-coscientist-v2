@@ -599,6 +599,146 @@ def test_short_worker_steps_start_then_poll_without_duplicate_interaction():
     assert [run.status for run in second.runs] == ["completed"] * len(EVIDENCE_FACETS)
 
 
+# The passes that came back while nobody was listening
+#
+# A wave is read all at once, when every interaction in it is terminal, and the
+# statuses on the way there are persisted after every poll. Between those two
+# facts sits the whole cost of a restart: a pass that finished before the
+# instance died is on the record as completed and nothing was taken from it, and
+# the run that picks the manifest back up has to know that.
+
+
+def _finished(pass_number: int) -> str:
+    return (
+        "Supporting contradictory negative null replication methods safety "
+        f"correction evidence https://pubmed.ncbi.nlm.nih.gov/{pass_number}/"
+    )
+
+
+class _RestartTransport:
+    """Starts an interaction in flight, and answers with a report once asked."""
+
+    def __init__(self) -> None:
+        self.starts = 0
+        self.asked: list[str] = []
+
+    def start(self, *, pass_number: int, **_) -> dict:
+        self.starts += 1
+        return {"id": f"restart-{pass_number}", "status": "in_progress"}
+
+    def get(self, interaction_id: str) -> dict:
+        self.asked.append(interaction_id)
+        number = int(interaction_id.rsplit("-", 1)[1])
+        return {
+            "id": interaction_id,
+            "status": "completed",
+            "output_text": _finished(number),
+        }
+
+
+def test_a_pass_that_finished_before_the_restart_is_read_after_it():
+    """Six of a live seven-pass fan-out were started, paid for, completed, and
+    never read: the instance died with one pass still running, and the invocation
+    that resumed looked only for interactions still in flight. The panel got the
+    literature of the straggler, and the report told the reader the other six
+    passes had returned no source leads."""
+    transport = _RestartTransport()
+    session = Session(question="Restarted research")
+    interrupted = IterativeEvidenceDiscovery(
+        transport,
+        EvidenceArtifactStore(bucket_name=""),
+        polls_per_invocation=0,
+    ).run(session, _plan(session))
+    # What the poll loop had written when the instance went away: every pass but
+    # the last had come back, and none of them had been folded in.
+    for run in interrupted.runs[:-1]:
+        run.status = "completed"
+    assert not any(run.raw_artifact_reference for run in interrupted.runs)
+
+    resumed = IterativeEvidenceDiscovery(
+        transport,
+        EvidenceArtifactStore(bucket_name=""),
+        poll_interval_seconds=0,
+    ).run(session, _plan(session), manifest=interrupted)
+
+    fanned = [run for run in resumed.runs if run.pass_number <= len(EVIDENCE_FACETS)]
+    assert transport.starts == len(EVIDENCE_FACETS)
+    # Each finished pass is asked about once, rather than skipped as terminal.
+    assert sorted(set(transport.asked)) == sorted(
+        f"restart-{run.pass_number}" for run in fanned
+    )
+    assert all(run.raw_artifact_reference for run in fanned)
+    assert {narrative.pass_number for narrative in resumed.narratives} >= {
+        run.pass_number for run in fanned
+    }
+    # And the corpus holds what each of them found, not only the straggler's.
+    assert {lead.canonical_url for lead in resumed.source_leads} >= {
+        f"https://pubmed.ncbi.nlm.nih.gov/{run.pass_number}/" for run in fanned
+    }
+
+
+def test_an_interaction_that_cannot_be_fetched_back_says_which_failed():
+    """A stored interaction that has expired is a fetch this run could not make.
+    Recorded as "Deep Research completed without a report" it reads as a provider
+    that produced nothing, and the pass gets written off rather than retried."""
+
+    class _GoneTransport(_RestartTransport):
+        def get(self, interaction_id: str) -> dict:
+            self.asked.append(interaction_id)
+            raise RuntimeError("interaction 404: not found")
+
+    transport = _GoneTransport()
+    session = Session(question="Expired research")
+    interrupted = IterativeEvidenceDiscovery(
+        transport,
+        EvidenceArtifactStore(bucket_name=""),
+        polls_per_invocation=0,
+    ).run(session, _plan(session))
+    for run in interrupted.runs:
+        run.status = "completed"
+
+    resumed = IterativeEvidenceDiscovery(
+        transport,
+        EvidenceArtifactStore(bucket_name=""),
+        poll_interval_seconds=0,
+    ).run(session, _plan(session), manifest=interrupted)
+
+    assert [run.status for run in resumed.runs] == ["failed"] * len(EVIDENCE_FACETS)
+    assert all("404" in run.error for run in resumed.runs)
+
+
+def test_a_pass_finished_and_unread_is_not_counted_as_one_the_run_has():
+    """The card said "8 completed of 8 attempted" over a corpus built from two of
+    them, because a pass was counted the moment the provider called it done."""
+    from coscientist.evidence import unread_passes
+
+    manifest = DiscoveryManifest(
+        question="Restarted research",
+        runs=[
+            DeepResearchRun(pass_number=1, status="completed", interaction_id="a"),
+            DeepResearchRun(
+                pass_number=2,
+                status="completed",
+                interaction_id="b",
+                raw_artifact_reference="interaction://b",
+            ),
+        ],
+    )
+
+    assert unread_passes(manifest) == {1}
+    said = orchestration.CoScientistWorkflow._evidence_summary(manifest)
+    assert "1 completed of 2 attempted" in said
+    assert "1 finished and could not be read back" in said
+    # A manifest from before the field was recorded says nothing either way, so
+    # every pass on it keeps the standing it always had.
+    for run in manifest.runs:
+        run.raw_artifact_reference = ""
+    assert unread_passes(manifest) == set()
+    assert "2 completed of 2 attempted" in (
+        orchestration.CoScientistWorkflow._evidence_summary(manifest)
+    )
+
+
 def test_gemini_deep_research_transport_uses_adc_when_no_api_key(monkeypatch):
     """No API key on a project means Vertex with Application Default Credentials."""
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)

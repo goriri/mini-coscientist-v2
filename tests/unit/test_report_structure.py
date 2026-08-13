@@ -6491,6 +6491,42 @@ def test_a_pass_that_returned_nothing_gets_a_row_saying_so():
     ] == ["1", "2", "3", "4"]
 
 
+def test_a_pass_whose_report_was_never_read_does_not_read_as_an_empty_literature():
+    """A live appendix said six of eight passes returned no source leads. All six
+    had finished; a restart mid-wave meant nothing was ever taken from them. Told
+    the search came back empty, a reader concludes the field is silent on those
+    facets, which is a claim about the literature this run cannot make."""
+    from coscientist.dossier import _sources_per_pass
+    from coscientist.models import DeepResearchRun, DiscoveryManifest
+    from coscientist.narrative import ResearchRecord
+
+    leads = [
+        SourceLead(canonical_url="https://x/5", title="Five", originating_passes=[5]),
+    ]
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.discovery = DiscoveryManifest(
+        question="Can a coating help?",
+        source_leads=leads,
+        runs=[
+            DeepResearchRun(pass_number=1, status="completed"),
+            DeepResearchRun(
+                pass_number=5,
+                status="completed",
+                raw_artifact_reference="interaction://five",
+            ),
+        ],
+    )
+    record.citations = CitationRegistry(leads)
+
+    said = "\n".join(_sources_per_pass(record))
+
+    assert (
+        "- Pass 1 finished and its report could not be read back into this run, "
+        "so what it found is not in this report." in said
+    )
+    assert "- Pass 1 returned no source leads." not in said
+
+
 def test_a_run_of_one_pass_gets_no_per_pass_breakdown_of_its_own_sources():
     """One row restating the total above it is a section that says nothing."""
     from coscientist.dossier import _sources_per_pass

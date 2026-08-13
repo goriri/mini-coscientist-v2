@@ -45,6 +45,7 @@ from .evidence import (
     retain_leads,
     stated_identifiers,
     sweep_verification,
+    unread_passes,
 )
 from .governance import (
     adjudicated_review_ids,
@@ -1974,7 +1975,20 @@ class CoScientistWorkflow:
         latest = manifest.coverage_history[-1] if manifest.coverage_history else None
         coverage = f"{latest.weighted_score:.0%}" if latest else "not available"
         gaps = latest.gaps if latest else []
-        completed = len([run for run in manifest.runs if run.status == "completed"])
+        # A pass counts as completed once its report has been read into the
+        # manifest, not when the provider says it finished. The two came apart on
+        # a live run that lost six of seven reports to a restart: every pass was
+        # marked completed and the card said "8 completed of 8 attempted" over a
+        # corpus built from two of them.
+        lost = unread_passes(manifest)
+        completed = len(
+            [
+                run
+                for run in manifest.runs
+                if run.status == "completed" and run.pass_number not in lost
+            ]
+        )
+        unread = len(lost)
         providers = sorted({lead.provider for lead in manifest.source_leads})
         # Read off the leads, so a wave that returned none has none to name. Printed
         # as a bare "none" directly under a line reporting seven attempted passes, it
@@ -1989,7 +2003,13 @@ class CoScientistWorkflow:
             "### Evidence Discovery",
             "",
             f"- Deep Research passes: {completed} completed of "
-            f"{len(manifest.runs)} attempted (limit {MAX_DEEP_RESEARCH_PASSES})",
+            f"{len(manifest.runs)} attempted (limit {MAX_DEEP_RESEARCH_PASSES})"
+            + (
+                ""
+                if not unread
+                else f"; {unread} finished and could not be read back, so nothing "
+                "from them is in this corpus"
+            ),
             f"- Discovery provider: {named}",
             f"- Coverage: {coverage}",
             f"- Source leads: {len(manifest.source_leads)}",

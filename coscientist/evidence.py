@@ -1821,6 +1821,29 @@ def merge_leads(
     return list(merged.values())
 
 
+def unread_passes(manifest: DiscoveryManifest) -> set[int]:
+    """Passes the provider finished and this run never folded in.
+
+    A restart mid-wave leaves these behind: statuses are persisted on every poll
+    and a wave is only read once all of it is terminal, so a pass that came back
+    before the instance died is marked completed with nothing recorded from it.
+    Six of a live seven-pass fan-out went that way, and every page that counted
+    passes counted them as delivered.
+
+    The mark of a pass having been read is its ``raw_artifact_reference``, which
+    the ingest writes for every pass it handles. A manifest where no run carries
+    one at all is a manifest from before the field was recorded rather than a run
+    that lost everything, so nothing is claimed about it.
+    """
+    if not any(run.raw_artifact_reference for run in manifest.runs):
+        return set()
+    return {
+        run.pass_number
+        for run in manifest.runs
+        if run.status == "completed" and not run.raw_artifact_reference
+    }
+
+
 def retain_leads(leads: list[SourceLead], limit: int) -> list[SourceLead]:
     """Cut a corpus down to ``limit`` leads without losing whole facets.
 
@@ -2293,6 +2316,22 @@ class IterativeEvidenceDiscovery:
             or {"id": run.interaction_id, "status": run.status}
             for run in wave
         }
+        # A pass this invocation inherited already finished is skipped by the poll
+        # loop below, which only asks about interactions that are not terminal
+        # yet. The stub standing in for it carries a status and no report, so
+        # ingesting it would record "completed without a report" against a pass
+        # that wrote thirty thousand characters. It is fetched here instead, once,
+        # before the loop that will not look at it. A fetch that fails leaves the
+        # stub and says why on the run, rather than taking the stage down over an
+        # interaction that has since expired.
+        for run in wave:
+            if (seed or {}).get(run.interaction_id) or run.status not in self._TERMINAL:
+                continue
+            try:
+                payloads[run.interaction_id] = self.transport.get(run.interaction_id)
+            except Exception as exc:
+                run.error = run.error or f"{type(exc).__name__}: {exc}"
+            run.poll_count += 1
         polls_this_invocation = 0
         if self.polls_per_invocation == 0 and any(
             run.status not in self._TERMINAL for run in wave
@@ -2388,7 +2427,12 @@ class IterativeEvidenceDiscovery:
             report = extract_report(payload)
             if not report.strip():
                 run.status = "failed"
-                run.error = "Deep Research completed without a report."
+                # An error already on the run says what went wrong; this sentence
+                # only says what the ingest found. Overwriting it turned "the
+                # interaction could not be fetched back" into "Deep Research
+                # completed without a report", which blames the provider for a
+                # report it wrote and this run could not reach.
+                run.error = run.error or "Deep Research completed without a report."
                 continue
             completed += 1
             steps = payload.get("steps") or []
@@ -2469,13 +2513,25 @@ class IterativeEvidenceDiscovery:
         manifest = manifest or DiscoveryManifest(question=session.question)
         seed: dict[str, dict] = {}
         while True:
-            # An interaction already in flight is resumed rather than restarted.
-            # This is what lets the Cloud Tasks worker step a fan-out: it returns
-            # after one poll, and the next invocation picks up all seven.
+            # Every interaction this manifest has not read yet, whether it is
+            # still running or came back while nobody was listening. Resuming on
+            # the in-flight ones alone loses the rest: statuses are persisted on
+            # every poll and reports are only read when the whole wave is
+            # terminal, so an invocation that dies mid-wave leaves the passes that
+            # had already finished marked "completed" with nothing folded in, and
+            # the next invocation carried only the stragglers. A live fan-out of
+            # seven lost six that way -- six Deep Research reports started, paid
+            # for, finished, and never read -- and the panel got the literature of
+            # the one pass that was still running at the restart. The report told
+            # the reader those six passes returned no source leads.
+            #
+            # ``raw_artifact_reference`` is the mark of having been read: the
+            # ingest writes it for every pass it handles, ahead of any verdict on
+            # what that pass returned, and nothing else writes it.
             wave = [
                 run
                 for run in manifest.runs
-                if run.status in self._IN_FLIGHT and run.interaction_id
+                if run.interaction_id and not run.raw_artifact_reference
             ]
             if not wave:
                 planned, reason = self._plan_wave(session, plan, manifest)

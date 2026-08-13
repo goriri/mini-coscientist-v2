@@ -31,7 +31,7 @@ from .debate import (
     strip_turn_label,
     unemphasised,
 )
-from .evidence import GROUNDING_REDIRECT_MARKER, names_a_document
+from .evidence import GROUNDING_REDIRECT_MARKER, names_a_document, unread_passes
 from .flowchart import flowchart_drawing, flowchart_steps
 from .markdown_render import (
     FIGURE_INDEX_HEADING,
@@ -2342,6 +2342,11 @@ def _sources_per_pass(record: ResearchRecord) -> list[str]:
     # paragraph saying Deep Research ran eight passes, and the pass with no row is
     # exactly the one a reader would want accounted for.
     statuses = {run.pass_number: run.status for run in discovery.runs}
+    # A pass whose report was never folded in returned no leads because nobody
+    # read it, and the row said only "returned no source leads" -- which tells a
+    # reader the literature holds nothing on that facet. It holds whatever that
+    # pass found; this run does not know what.
+    unread = unread_passes(discovery)
     numbers = sorted(set(by_pass) | set(statuses))
     if len(numbers) < 2:
         return []
@@ -2357,12 +2362,18 @@ def _sources_per_pass(record: ResearchRecord) -> list[str]:
         )
         state = statuses.get(number, "completed")
         if not found:
-            rows.append(
-                f"Pass {number} returned no source leads."
-                if state == "completed"
-                else f"Pass {number} returned no source leads; it is recorded as "
-                f"{state.replace('_', ' ')}."
-            )
+            if number in unread:
+                rows.append(
+                    f"Pass {number} finished and its report could not be read back "
+                    "into this run, so what it found is not in this report."
+                )
+            else:
+                rows.append(
+                    f"Pass {number} returned no source leads."
+                    if state == "completed"
+                    else f"Pass {number} returned no source leads; it is recorded as "
+                    f"{state.replace('_', ' ')}."
+                )
             continue
         rows.append(
             f"Pass {number} returned {_plural(len(found), 'source lead')}"
