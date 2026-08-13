@@ -408,6 +408,19 @@ def _load(session_id: str) -> CoScientistWorkflow:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
+def _resume_kind(workflow: CoScientistWorkflow) -> str:
+    """How a run that was interrupted should be started up again.
+
+    An auto run answers its own gates, and the worker that does that is the one
+    started with kind "auto". Every resumption point below used the default
+    instead, which drafts the next gate and stops -- so an auto run that was
+    interrupted by a governance block never moved again once the block was
+    answered. Three production runs parked at reflect that way: status active,
+    profile auto, a draft waiting and nobody left who would accept it.
+    """
+    return "auto" if workflow.approval_profile == ApprovalProfile.AUTO else "next"
+
+
 def _draft_next_gate(workflow: CoScientistWorkflow) -> None:
     if workflow.done or workflow.session.status != "active":
         return
@@ -820,7 +833,9 @@ def decide_research_session(
                     raise ValueError("There is no current stage draft to accept.")
                 workflow.accept(draft, actor=request.actor, automatic=False)
                 if not workflow.done and workflow.session.status == "active":
-                    _schedule_advance(session_id, background_tasks)
+                    _schedule_advance(
+                        session_id, background_tasks, kind=_resume_kind(workflow)
+                    )
             elif request.action == "revise":
                 workflow.request_revision(request.feedback, actor=request.actor)
                 _schedule_advance(
@@ -845,11 +860,15 @@ def decide_research_session(
             elif request.action == "continue":
                 if workflow.session.status == "evidence_required":
                     workflow.retry_evidence(actor=request.actor)
-                    _schedule_advance(session_id, background_tasks)
+                    _schedule_advance(
+                        session_id, background_tasks, kind=_resume_kind(workflow)
+                    )
                 elif workflow.pending_draft is not None:
                     raise ValueError("A draft is already waiting for a decision.")
                 else:
-                    _schedule_advance(session_id, background_tasks)
+                    _schedule_advance(
+                        session_id, background_tasks, kind=_resume_kind(workflow)
+                    )
             elif request.action == "stop":
                 workflow.stop(actor=request.actor)
             elif request.action == "approve_artifact":
@@ -866,10 +885,14 @@ def decide_research_session(
                 workflow.approve_artifact(artifact, actor=request.actor)
             elif request.action == "literature_only":
                 workflow.accept_literature_only(actor=request.actor)
-                _schedule_advance(session_id, background_tasks)
+                _schedule_advance(
+                    session_id, background_tasks, kind=_resume_kind(workflow)
+                )
             elif request.action == "exploratory_evidence":
                 workflow.accept_exploratory_evidence(actor=request.actor)
-                _schedule_advance(session_id, background_tasks)
+                _schedule_advance(
+                    session_id, background_tasks, kind=_resume_kind(workflow)
+                )
             elif request.action in {"withdraw_hypothesis", "override_governance"}:
                 if not request.review_id:
                     raise ValueError(
@@ -905,7 +928,9 @@ def decide_research_session(
                 # this action exists to clear. The other two waivers resume the
                 # same way.
                 if workflow.session.status == "active":
-                    _schedule_advance(session_id, background_tasks)
+                    _schedule_advance(
+                        session_id, background_tasks, kind=_resume_kind(workflow)
+                    )
             elif request.action == "provide_input":
                 if not request.input_type or not request.input_reference:
                     raise ValueError("Input type and reference are required.")

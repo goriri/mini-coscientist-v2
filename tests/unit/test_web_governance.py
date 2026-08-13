@@ -26,6 +26,7 @@ from app.research_api import (
 from coscientist.governance import latest_population, withdrawn_candidate_ids
 from coscientist.ledger import ResearchLedger
 from coscientist.models import (
+    ApprovalProfile,
     Artifact,
     ArtifactStatus,
     Candidate,
@@ -210,6 +211,39 @@ def test_answering_the_last_finding_starts_the_workflow_moving_again(blocked):
         actor=NAME,
     )
     assert tasks.tasks, "the cleared session was left with nothing scheduled"
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected"),
+    [(ApprovalProfile.AUTO, "auto"), (ApprovalProfile.MILESTONE, "next")],
+)
+def test_an_unattended_run_resumes_with_the_worker_that_answers_its_own_gates(
+    blocked, profile, expected
+):
+    """Resuming an auto run with the gate-drafting worker parks it.
+
+    The "next" worker prepares the next gate and stops, which is right for a
+    profile with a human on the other side of it and wrong for one without: the
+    run comes back from the block, drafts reflect and waits for an acceptance
+    that, on this profile, only the auto worker was ever going to give it.
+    Three live sessions sat at reflect that way with nothing blocked.
+    """
+    workflow = CoScientistWorkflow.load_from_ledger(blocked, research_api._ledger())
+    workflow.session.approval_profile = profile
+    research_api._ledger().save(
+        workflow.session, expected_version=workflow.session.version
+    )
+
+    tasks = BackgroundTasks()
+    _decide(
+        blocked,
+        tasks,
+        action="withdraw_hypothesis",
+        review_id="rev_1",
+        feedback=REASON,
+        actor=NAME,
+    )
+    assert [task.kwargs["kind"] for task in tasks.tasks] == [expected]
 
 
 def test_a_finding_answered_while_others_remain_does_not_resume_the_run(blocked):
