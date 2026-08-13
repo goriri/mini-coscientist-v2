@@ -1175,19 +1175,51 @@ def merge_evidence_packets(
                 existing.title = source.title
             if existing.source_type == "unknown":
                 existing.source_type = source.source_type
+            # The document, not the packet, decides which status stands. Each
+            # batch is shown the whole discovered corpus and carries forward
+            # what it did not itself check, so the same paper arrives verified
+            # from the batch that opened it and unreachable from the nine that
+            # were never asked about it. First-wins made that a lottery on batch
+            # order: a paper retrieved and read in batch three was printed as
+            # not retrieved because batch one had said nothing about it.
+            # "retracted" is not a rung on that ladder and is never traded away
+            # for one: a withdrawn paper that one batch happened to read is
+            # still withdrawn.
+            if existing.verification_status == "retracted":
+                continue
+            if source.verification_status == "retracted" or _TIER_RANK.get(
+                source.verification_status, 0
+            ) > _TIER_RANK.get(existing.verification_status, 0):
+                existing.verification_status = source.verification_status
+                existing.verification_note = source.verification_note
 
     merged_claims: list[EvidenceClaim] = []
-    seen: set[str] = set()
+    seen: dict[str, EvidenceClaim] = {}
     for index, packet in enumerate(packets):
         for claim in packet.claims:
             fingerprint = " ".join(claim.claim.lower().split())
-            if fingerprint in seen:
-                continue
-            seen.add(fingerprint)
+            standing = seen.get(fingerprint)
             copy = claim.model_copy(deep=True)
             copy.id = _unclaimed_id(claim.id, used_ids)
             copy.source_id = remapped.get((index, claim.source_id or ""))
-            merged_claims.append(copy)
+            if standing is None:
+                seen[fingerprint] = copy
+                merged_claims.append(copy)
+                continue
+            # For the same reason as the sources above. The batch that checked
+            # the finding says more about it than the nine that carried it
+            # forward untouched, whatever order they finished in -- and what it
+            # says includes the exact location, which is what a reader opens the
+            # paper at.
+            if _TIER_RANK.get(copy.verification_status, 0) > _TIER_RANK.get(
+                standing.verification_status, 0
+            ):
+                standing.verification_status = copy.verification_status
+                standing.confidence = copy.confidence
+                if copy.source_id:
+                    standing.source_id = copy.source_id
+                if copy.exact_location:
+                    standing.exact_location = copy.exact_location
 
     by_id = {source.id: source for source in merged_sources.values()}
     for claim in merged_claims:

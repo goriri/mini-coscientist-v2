@@ -32,6 +32,7 @@ from coscientist.evidence import (
 from coscientist.models import (
     MAX_VERIFICATION_BATCHES,
     VERIFICATION_BATCH_SIZE,
+    Artifact,
     ArtifactStatus,
     DiscoveryManifest,
     DiscoveryNarrative,
@@ -457,6 +458,124 @@ def test_a_batch_with_nothing_stated_about_it_asks_the_question_it_always_did():
     assert "What the search says it shows" not in feedback
     assert "carry into your packet" not in feedback
     assert f"- {ACS} -- Alumina interphases" in feedback
+
+
+class _SilentVerifier(DeterministicProvider):
+    """Answers about the first document and says nothing about the rest.
+
+    Which is what the live verifier does, at scale: asked about ninety leads it
+    returned five sources, no claims, and no word about the other eighty-five.
+    """
+
+    def __init__(self, *, answers: int = 1) -> None:
+        self.answers = answers
+
+    def complete(self, *, role: str, prompt: str) -> str:
+        if role == "source_verification":
+            return json.dumps(
+                {
+                    "question": QUESTION,
+                    "sources": [
+                        {
+                            "id": f"ver_{index}",
+                            "url": url,
+                            "title": "Alumina interphases",
+                            "verification_status": "metadata_verified",
+                            "verification_note": "crossref confirms this record.",
+                        }
+                        for index, url in enumerate(
+                            _LISTED_URL_RE.findall(prompt)[: self.answers]
+                        )
+                    ],
+                    "claims": [],
+                }
+            )
+        return super().complete(role=role, prompt=prompt)
+
+
+def _searched_run(
+    monkeypatch: pytest.MonkeyPatch, manifest: DiscoveryManifest, *, answers: int = 2
+):
+    """A run whose literature search returned a manifest, as Deep Research does."""
+    flow = CoScientistWorkflow(QUESTION, _SilentVerifier(answers=answers))
+
+    async def _discovered(self, plan, *, feedback, revision):
+        artifact = Artifact(
+            stage="evidence",
+            agent="deep_research_discovery",
+            artifact_type="specialist_output",
+            content="Deep Research returned.",
+            schema_name="DiscoveryManifest",
+            payload=manifest.model_dump(mode="json"),
+        )
+        self.session.artifacts.append(artifact)
+        return manifest, artifact
+
+    monkeypatch.setattr(CoScientistWorkflow, "_discovered_evidence", _discovered)
+    flow.accept(flow.preview(), actor="test_researcher")
+    flow.preview()
+    return flow
+
+
+def _newest_packet(flow: CoScientistWorkflow) -> EvidencePacket:
+    """What the gate, the panel and the citable ids all read."""
+    return EvidencePacket.model_validate(
+        next(
+            item
+            for item in reversed(flow.session.artifacts)
+            if item.schema_name == "EvidencePacket"
+            and item.payload
+            and item.status != ArtifactStatus.SUPERSEDED
+        ).payload
+    )
+
+
+def test_a_verifier_that_returns_no_claims_does_not_empty_the_corpus(monkeypatch):
+    """Verification answers about sources. Dropping the findings the search
+    recorded against them is the same loss one stage later, and it is the stage
+    whose packet everything downstream actually reads."""
+    flow = _searched_run(
+        monkeypatch, _searched(_statement("Alumina halves first-cycle loss.", [ACS]))
+    )
+
+    packet = _newest_packet(flow)
+
+    assert [claim.claim for claim in packet.claims] == [
+        "Alumina halves first-cycle loss."
+    ]
+
+
+def test_where_verification_spoke_about_a_paper_its_status_is_the_one_that_stands(
+    monkeypatch,
+):
+    """The corpus discovery stated is a floor under the claims, never a way for
+    an unchecked status to overwrite a checked one."""
+    flow = _searched_run(
+        monkeypatch, _searched(_statement("Alumina halves first-cycle loss.", [ACS]))
+    )
+
+    packet = _newest_packet(flow)
+
+    checked = next(source for source in packet.sources if source.url == ACS)
+    assert checked.verification_status == "metadata_verified"
+    # And the claim resting on it is still bound to it after the ids are rewritten.
+    assert packet.claims[0].source_id == checked.id
+
+
+def test_a_paper_the_verifier_never_answered_about_is_still_in_the_corpus(monkeypatch):
+    """Asked about ninety leads, a live pass returned five sources and said
+    nothing about the other eighty-five, and the eighty-five were gone. Omission
+    is not a finding about a document, so it cannot delete one."""
+    flow = _searched_run(
+        monkeypatch,
+        _searched(_statement("Alumina halves first-cycle loss.", [ACS])),
+        answers=1,
+    )
+
+    packet = _newest_packet(flow)
+
+    unanswered = next(source for source in packet.sources if source.url == FRONTIERS)
+    assert unanswered.verification_status == "discovered_unverified"
 
 
 # ---------------------------------------------------------------------------

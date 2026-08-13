@@ -18,6 +18,7 @@ from coscientist.models import (
     EvidenceClaim,
     EvidencePacket,
     Session,
+    SourceRecord,
 )
 from coscientist.parity import evidence_packet
 
@@ -143,7 +144,7 @@ def test_a_discovered_claim_the_verifier_forgot_is_carried_forward_unreachable()
     carried = {claim.id: claim for claim in packet.claims}["claim_9"]
     assert carried.verification_status == "inaccessible"
     assert "unreachable rather than dropped" in carried.limitations[0]
-    assert any("carried forward as unreachable" in note for note in packet.limitations)
+    assert any("carried forward unconfirmed" in note for note in packet.limitations)
 
 
 def test_nothing_is_carried_forward_when_the_pass_returned_everything():
@@ -162,6 +163,86 @@ def test_nothing_is_carried_forward_when_the_pass_returned_everything():
     packet = evidence_packet(_session(discovered), content, verified=True)
     assert len(packet.claims) == 1
     assert not any("carried forward" in note for note in packet.limitations)
+
+
+PAPER = "https://pubs.acs.org/doi/10.1021/acsami.4c13335"
+
+
+def _discovered(packet: EvidencePacket) -> Session:
+    """A session whose accepted evidence artifact is this whole corpus."""
+    session = Session(question=QUESTION)
+    session.artifacts.append(
+        Artifact(
+            stage="evidence",
+            agent="evidence_discovery",
+            content="",
+            schema_name="EvidencePacket",
+            payload=packet.model_dump(mode="json"),
+            status=ArtifactStatus.ACCEPTED,
+        )
+    )
+    return session
+
+
+def test_a_carried_claim_binds_to_the_paper_the_pass_already_checked():
+    """The verifier writes its own ids, so the paper discovery called src_4 comes
+    back as ver_1. Matched by id, every checked paper looked missing and
+    discovery's copy was appended beside it: the same document in the corpus
+    twice, once retrieved and once unreachable, with the finding bound to the
+    unreachable one."""
+    session = _discovered(
+        EvidencePacket(
+            question=QUESTION,
+            sources=[SourceRecord(id="src_4", url=PAPER, title="Alumina")],
+            claims=[
+                EvidenceClaim(id="claim_9", claim="Halves loss.", source_id="src_4")
+            ],
+        )
+    )
+    content = _packet_json(
+        claims=[],
+        sources=[
+            {
+                "id": "ver_1",
+                "url": PAPER,
+                "title": "Alumina",
+                "verification_status": "verified",
+            }
+        ],
+    )
+
+    packet = evidence_packet(session, content, verified=True)
+
+    assert [source.url for source in packet.sources] == [PAPER]
+    carried = packet.claims[0]
+    assert carried.source_id == "ver_1"
+    # And the finding is unconfirmed, not unreachable: the pass opened the paper
+    # and said nothing about this statement, which is a different fact.
+    assert carried.verification_status == "discovered_unverified"
+    assert "the source was checked, this finding was not" in carried.limitations[0]
+
+
+def test_a_carried_claim_whose_paper_the_pass_never_named_is_still_unreachable():
+    session = _discovered(
+        EvidencePacket(
+            question=QUESTION,
+            sources=[SourceRecord(id="src_4", url=PAPER, title="Alumina")],
+            claims=[
+                EvidenceClaim(id="claim_9", claim="Halves loss.", source_id="src_4")
+            ],
+        )
+    )
+    content = _packet_json(
+        claims=[],
+        sources=[{"id": "ver_1", "url": "https://example.org/other", "title": "Other"}],
+    )
+
+    packet = evidence_packet(session, content, verified=True)
+
+    brought = next(source for source in packet.sources if source.url == PAPER)
+    assert brought.verification_status == "inaccessible"
+    assert packet.claims[0].source_id == brought.id
+    assert packet.claims[0].verification_status == "inaccessible"
 
 
 def test_a_search_redirect_link_is_named_as_uncitable():

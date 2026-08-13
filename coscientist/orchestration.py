@@ -738,7 +738,7 @@ class CoScientistWorkflow:
         # summary that both said nothing about either.
         batches = self._verification_batches(manifest)
         stated = self._record_discovered_corpus(manifest, feedback=feedback)
-        corpus = (
+        stated_corpus = (
             EvidencePacket.model_validate(stated.payload)
             if stated is not None
             else None
@@ -812,7 +812,7 @@ class CoScientistWorkflow:
                     temporary,
                     verifier_definition,
                     feedback=self._verification_feedback(
-                        feedback, batch, index, len(batches), corpus
+                        feedback, batch, index, len(batches), stated_corpus
                     ),
                     revision=revision,
                 )
@@ -850,10 +850,18 @@ class CoScientistWorkflow:
         # artifacts, the gate, the panel and the list of citable ids would all
         # see whichever batch happened to finish last. They are folded into one
         # here for the same reason the discovery angles are.
-        if len(verified_packets) > 1:
-            consolidated = merge_evidence_packets(
-                self.session.question, verified_packets
-            )
+        #
+        # The corpus discovery stated is folded in behind them. Verification
+        # answers about sources, and the findings the search recorded against
+        # those sources are not its to discard by omission -- a verifier that
+        # returns an entry per source and no claims would undo the corpus
+        # written above, which is this very failure arriving one stage later.
+        # The verified packets come first, so wherever verification spoke about
+        # a document its status is the one that stands, and what is left over is
+        # carried at the tier discovery is entitled to assert and no higher.
+        folded = verified_packets + ([stated_corpus] if stated_corpus else [])
+        if len(folded) > 1:
+            consolidated = merge_evidence_packets(self.session.question, folded)
             for result in results:
                 if result.artifact.schema_name == "EvidencePacket":
                     result.artifact.status = ArtifactStatus.SUPERSEDED
@@ -864,7 +872,8 @@ class CoScientistWorkflow:
                 content=(
                     f"### Verified corpus\n\n{len(consolidated.sources)} distinct "
                     f"sources and {len(consolidated.claims)} claims, merged from "
-                    f"{len(verified_packets)} verification batches."
+                    f"{len(verified_packets)} verification batches"
+                    + (" and what discovery stated." if stated_corpus else ".")
                 ),
                 feedback=feedback,
                 producer_model=getattr(self.provider, "model_id", "unknown"),

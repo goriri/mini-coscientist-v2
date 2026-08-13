@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from .citations import latest_evidence_packet
 from .contract_io import ParseOutcome, parse_contract
+from .evidence import canonicalize_url
 from .methods import method_requirements
 from .models import (
     Artifact,
@@ -369,6 +370,19 @@ def evidence_packet(
 _OPAQUE_URL_MARKER = "grounding-api-redirect"
 
 
+def _locator(url: str) -> str:
+    """What two records must share to be the same document, or "" for neither.
+
+    A locator that cannot be canonicalized is not a document two packets can be
+    said to agree about, so it matches nothing rather than matching everything
+    that is equally unusable.
+    """
+    try:
+        return canonicalize_url(url)
+    except ValueError:
+        return ""
+
+
 def _audited_verification(session: Session, packet: EvidencePacket) -> EvidencePacket:
     """Hold a verification packet to its own standard without discarding it.
 
@@ -449,21 +463,49 @@ def _audited_verification(session: Session, packet: EvidencePacket) -> EvidenceP
     ]
     # A carried claim whose source is not in this packet cites a document the
     # report cannot name. Bring the source across too, marked unreachable.
-    wanted = {claim.source_id for claim in carried} - source_ids - {None}
-    for source in discovered.sources if discovered else []:
-        if source.id not in wanted:
-            continue
-        copied = source.model_copy(deep=True)
-        copied.verification_status = "inaccessible"
-        packet.sources.append(copied)
-        source_ids.add(copied.id)
+    #
+    # Matched on the document rather than on the id it arrived under. A verifier
+    # writes its own ids -- the paper discovery called ``src_4`` comes back as
+    # ``ver_1`` -- so an id lookup saw every checked paper as missing and
+    # appended discovery's copy of it a second time. The corpus then held the
+    # same document twice, once retrieved and once unreachable, with the finding
+    # bound to the unreachable one; the report printed the paper as not
+    # retrieved directly underneath the passage quoted out of it.
+    standing: dict[str, SourceRecord] = {}
+    for source in packet.sources:
+        key = _locator(source.url)
+        if key:
+            standing.setdefault(key, source)
+    discovered_sources = {
+        source.id: source for source in (discovered.sources if discovered else [])
+    }
     for claim in carried:
-        # A claim the verifier could not reach and a claim nobody ever made
-        # look identical once one of them is deleted. Keep it, marked for what
-        # it is: discovered, and not confirmed by this pass.
-        claim.verification_status = "inaccessible"
+        origin = discovered_sources.get(claim.source_id or "")
+        key = _locator(origin.url) if origin is not None else ""
+        source = standing.get(key) if key else None
+        if source is None and origin is not None:
+            source = origin.model_copy(deep=True)
+            source.verification_status = "inaccessible"
+            packet.sources.append(source)
+            source_ids.add(source.id)
+            if key:
+                standing[key] = source
+        if source is not None:
+            claim.source_id = source.id
+        # A claim the verifier could not reach and a claim nobody ever made look
+        # identical once one of them is deleted. Keep it, marked for what it is.
+        # Which of the two it is depends on the document: where the pass did
+        # reach the paper and simply said nothing about this finding, calling the
+        # finding unreachable states something about the document that is untrue.
+        reached = source is not None and source.verification_status != "inaccessible"
+        claim.verification_status = (
+            "discovered_unverified" if reached else "inaccessible"
+        )
         claim.limitations.append(
-            "Discovered upstream but absent from the verification pass; "
+            "Discovered upstream and not spoken to by the verification pass; "
+            "the source was checked, this finding was not."
+            if reached
+            else "Discovered upstream but absent from the verification pass; "
             "recorded as unreachable rather than dropped."
         )
     packet.claims.extend(carried)
@@ -471,7 +513,7 @@ def _audited_verification(session: Session, packet: EvidencePacket) -> EvidenceP
     if carried:
         packet.limitations.append(
             f"{len(carried)} discovered claim(s) were not returned by the "
-            "verification pass and are carried forward as unreachable."
+            "verification pass and are carried forward unconfirmed."
         )
     if any(_OPAQUE_URL_MARKER in source.url for source in packet.sources):
         packet.limitations.append(

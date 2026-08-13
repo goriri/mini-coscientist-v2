@@ -221,6 +221,71 @@ def test_the_same_finding_reported_by_two_angles_is_one_claim():
     assert [claim.claim for claim in merged.claims] == ["Same"]
 
 
+def _tiered(url: str, status: str, claim: tuple[str, str] | None = None):
+    """One packet's word on one document, at the tier it claims for it."""
+    packet = _packet([("src_1", url)], [("c_1", claim[0], "src_1")] if claim else [])
+    packet.sources[0].verification_status = status
+    if claim:
+        packet.claims[0].verification_status = claim[1]
+    return packet
+
+
+def test_the_batch_that_opened_the_paper_outranks_the_nine_that_did_not():
+    """Every batch is shown the whole discovered corpus and carries forward what
+    it was not asked about, so the same paper arrives checked from one batch and
+    unreachable from the rest. First-wins made the status a lottery on which
+    batch finished first: a paper retrieved and read in batch three was printed
+    as not retrieved because batch one had said nothing about it."""
+    merged = merge_evidence_packets(
+        QUESTION,
+        [
+            _tiered("https://doi.org/10.1000/a", "inaccessible"),
+            _tiered("https://doi.org/10.1000/a", "verified"),
+        ],
+    )
+
+    assert [source.verification_status for source in merged.sources] == ["verified"]
+
+
+def test_a_finding_one_batch_confirmed_is_not_overwritten_by_one_that_carried_it():
+    merged = merge_evidence_packets(
+        QUESTION,
+        [
+            _tiered("https://doi.org/10.1000/a", "verified", ("Alpha", "inaccessible")),
+            _tiered("https://doi.org/10.1000/a", "verified", ("alpha", "verified")),
+        ],
+    )
+
+    assert [claim.claim for claim in merged.claims] == ["Alpha"]
+    assert merged.claims[0].verification_status == "verified"
+
+
+def test_a_retraction_is_never_traded_away_for_a_higher_tier():
+    """It is not a rung on that ladder. A withdrawn paper one batch happened to
+    read is still withdrawn."""
+    merged = merge_evidence_packets(
+        QUESTION,
+        [
+            _tiered("https://doi.org/10.1000/a", "retracted"),
+            _tiered("https://doi.org/10.1000/a", "verified"),
+        ],
+    )
+
+    assert [source.verification_status for source in merged.sources] == ["retracted"]
+
+
+def test_a_retraction_found_late_still_overrides_what_was_read_earlier():
+    merged = merge_evidence_packets(
+        QUESTION,
+        [
+            _tiered("https://doi.org/10.1000/a", "verified"),
+            _tiered("https://doi.org/10.1000/a", "retracted"),
+        ],
+    )
+
+    assert [source.verification_status for source in merged.sources] == ["retracted"]
+
+
 def test_a_limitation_one_angle_recorded_is_neither_lost_nor_repeated():
     shared = "Search results were read; no source was opened."
     merged = merge_evidence_packets(
