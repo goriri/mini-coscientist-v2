@@ -18,13 +18,16 @@ from __future__ import annotations
 import json
 
 from coscientist.models import (
+    Artifact,
     DeepResearchRun,
     DiscoveryManifest,
     DiscoveryNarrative,
     KnowledgeSurvey,
     KnowledgeSurveySection,
+    Session,
     SourceLead,
 )
+from coscientist.narrative import _knowledge_summary, load_record
 from coscientist.survey import (
     MIN_REPORT_CHARACTERS,
     SourceIndex,
@@ -270,12 +273,12 @@ def test_a_pass_whose_artifact_has_gone_falls_back_to_the_paragraph_it_kept():
 
 
 def test_the_survey_records_the_source_list_it_was_given_not_the_one_it_returned():
-    """``sources`` is what resolves an [S7] back to a lead once the manifest has been
-    revised and re-sorted under it, so it may not be the model's to write."""
+    """``source_ids`` is what resolves an [S7] back to a lead once the manifest has
+    been revised and re-sorted under it, so it may not be the model's to write."""
     survey = write_knowledge_survey(_manifest(), _Provider(ANSWER), store=_store())
 
     assert survey is not None
-    assert survey.sources == ["lead_a", "lead_b"]
+    assert survey.source_ids == ["lead_a", "lead_b"]
     assert survey.question == "What drives sotorasib resistance?"
     assert survey.not_found == ["No trial reported a rechallenge arm."]
 
@@ -315,3 +318,61 @@ def test_the_contract_holds_the_two_things_a_careless_merge_destroys():
     )
 
     assert survey.contested and survey.not_found
+
+
+def _rendered(manifest: DiscoveryManifest) -> str:
+    """The Knowledge Base as a reader gets it: stored, loaded back, rendered.
+
+    The trip is the test. Every step of it had its own passing tests while the live
+    section carried no citations at all, because what broke the survey happened
+    between them -- in the pass that loads a session for rendering, over a field that
+    each side of the seam was right about on its own.
+    """
+    session = Session(question=manifest.question)
+    session.artifacts.append(
+        Artifact(
+            stage="evidence",
+            agent="deep_research_discovery",
+            artifact_type="specialist_output",
+            content="Two passes, merged into one survey.",
+            schema_name="DiscoveryManifest",
+            payload=manifest.model_dump(mode="json"),
+        )
+    )
+    return _knowledge_summary(load_record(session))
+
+
+def test_the_leads_the_survey_recorded_are_still_the_leads_when_it_is_rendered():
+    """A live Knowledge Base of eighteen thousand characters carried not one citation
+    while the survey behind it cited forty-eight sources. ``_scrub_prose`` names every
+    id it finds in a stored contract after the thing that id points at, and it spares
+    a field by its name -- ``id``, ``_id``, ``_ids``. This list of lead ids was called
+    ``sources``, so all forty-eight were rewritten into phrases like "The unverified
+    source Coating study 1" before the renderer looked one up, and every marker over
+    them was struck as naming a lead the manifest no longer held."""
+    survey = write_knowledge_survey(_manifest(), _Provider(ANSWER), store=_store())
+    assert survey is not None
+    manifest = _manifest().model_copy(update={"knowledge_survey": survey})
+
+    section = _rendered(manifest)
+
+    assert "Resistance is polyclonal [1, 2]." in section
+    assert "Onset is early [2]." in section
+    assert "[S1" not in section and "[S2" not in section
+
+
+def test_a_survey_stored_under_the_earlier_field_name_still_cites_its_sources():
+    """The report is computed on demand, so every session already on disk is rendered
+    by today's code and every one of them wrote this list as ``sources``. What they
+    stored is sound -- the ids were only ever rewritten on the way to the page -- so
+    the rename reads them rather than refusing the manifest they are part of."""
+    survey = write_knowledge_survey(_manifest(), _Provider(ANSWER), store=_store())
+    assert survey is not None
+    payload = _manifest().model_copy(update={"knowledge_survey": survey}).model_dump()
+    payload["knowledge_survey"]["sources"] = payload["knowledge_survey"].pop(
+        "source_ids"
+    )
+
+    section = _rendered(DiscoveryManifest.model_validate(payload))
+
+    assert "Resistance is polyclonal [1, 2]." in section

@@ -530,7 +530,7 @@ class KnowledgeSurvey(Contract):
     not_found: list[str] = Field(default_factory=list)
     """What the searches went looking for and did not find."""
 
-    sources: list[str] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
     """Which lead each ``[S1]`` in the prose above names, in order.
 
     Written by the supervisor after the survey parses, never by the model: it is
@@ -539,7 +539,36 @@ class KnowledgeSurvey(Contract):
     report's own reference number. Recording the order rather than trusting
     ``source_leads`` to still be in it is what makes the survey survive a later
     revision of the manifest, which appends leads and re-sorts them.
+
+    Named ``_ids`` because that is what stops the report from rewriting it.
+    ``_scrub_prose`` names every id it finds in a stored contract after the
+    thing the id points at, and it spares a field by its name: ``id``, ``_id``,
+    ``_ids``. Called ``sources``, this list was read as prose, and a live
+    Knowledge Base of eighteen thousand characters carried not one citation
+    because all forty-eight of its lead ids had been rewritten into phrases like
+    "The unverified source Coating study 1" before the renderer looked one up.
     """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_the_earlier_field_name(cls, data: Any) -> Any:
+        """Read a survey stored under the old key, which every session before this has.
+
+        The report is computed on demand from the stored session, so the sessions
+        already on disk are rendered by today's code. Left unmapped, ``extra="forbid"``
+        would refuse the whole manifest they are part of, and a rename meant to bring
+        back the Knowledge Base's citations would take the evidence panel, the source
+        leads and the pass reports down with them.
+
+        What those sessions stored is sound -- the ids were only ever rewritten on
+        the way to the page, never on the way to disk -- so it is carried over rather
+        than dropped, and their Knowledge Bases start citing their sources.
+        """
+        if isinstance(data, dict) and "sources" in data:
+            data = dict(data)
+            legacy = data.pop("sources")
+            data.setdefault("source_ids", legacy)
+        return data
 
 
 class DiscoveryManifest(Contract):

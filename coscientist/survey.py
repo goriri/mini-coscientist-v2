@@ -250,5 +250,5 @@ def write_knowledge_survey(
     # Written here rather than trusted from the model: it is the list the prompt
     # handed over, and it is the only thing that can turn an [S7] back into a
     # reference number once the manifest has been revised and re-sorted under it.
-    survey.sources = index.ids
+    survey.source_ids = index.ids
     return survey

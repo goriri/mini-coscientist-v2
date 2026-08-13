@@ -12875,9 +12875,9 @@ def _survey_cited(text: str, survey: KnowledgeSurvey, record: ResearchRecord) ->
         urls = []
         for digits in re.findall(r"\d+", match.group(0)):
             position = int(digits)
-            if not 1 <= position <= len(survey.sources):
+            if not 1 <= position <= len(survey.source_ids):
                 continue
-            lead = leads.get(survey.sources[position - 1])
+            lead = leads.get(survey.source_ids[position - 1])
             if lead is not None and lead.canonical_url:
                 urls.append(lead.canonical_url)
         marker = record.citations.marker(urls) if urls else ""
@@ -12964,12 +12964,12 @@ def _knowledge_survey_prose(record: ResearchRecord, survey: KnowledgeSurvey) -> 
     # locators the reference list will number -- is said here, where an operator
     # reading a run's logs can act on it.
     if written and not cited:
-        held = [lead_id for lead_id in survey.sources if lead_id in lead_index]
+        held = [lead_id for lead_id in survey.source_ids if lead_id in lead_index]
         logger.warning(
             "The knowledge survey cited %d sources and none of them could be "
             "numbered: %d of those lead ids are still in the manifest, and %d of "
             "the leads they name carry a locator this report can cite.",
-            len(survey.sources),
+            len(survey.source_ids),
             len(held),
             len(
                 [
