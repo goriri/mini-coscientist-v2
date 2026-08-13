@@ -7,10 +7,12 @@ and handed the gate a corpus it measured as one usable source. Nothing was
 broken in the sense of raising; each stage quietly dropped material the stage
 before it had found.
 
-Three separate leaks, tested here in the order they happen: the provider's
+Four separate leaks, tested here in the order they happen: the provider's
 citations not being recognised as citations, coverage being scored on prose that
-therefore had none, and one specialist being asked to enumerate ninety sources
-in a single answer.
+therefore had none, one specialist being asked to enumerate ninety sources in a
+single answer, and -- the widest of them -- the search's own findings never
+being written down at all, so verification was handed a list of addresses and
+the panel got ten claims out of ninety-two papers.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from coscientist.agents import DeterministicProvider
 from coscientist.evidence import (
     _fallback_narrative,
     audit_coverage,
+    discovered_corpus,
     normalize_report,
 )
 from coscientist.models import (
@@ -302,6 +305,158 @@ def test_an_empty_batch_passes_the_original_feedback_through_untouched():
     assert CoScientistWorkflow._verification_feedback("Original.", [], 1, 1) == (
         "Original."
     )
+
+
+# ---------------------------------------------------------------------------
+# What the search found is what the verifier is asked about
+# ---------------------------------------------------------------------------
+
+
+def _statement(text: str, urls: list[str], **overrides) -> DiscoveryStatement:
+    return DiscoveryStatement(
+        text=text,
+        facet=overrides.pop("facet", "supporting"),
+        source_urls=urls,
+        originating_pass=overrides.pop("originating_pass", 1),
+        **overrides,
+    )
+
+
+def _searched(*statements: DiscoveryStatement, leads: list[str] | None = None):
+    urls = leads if leads is not None else [ACS, FRONTIERS]
+    return DiscoveryManifest(
+        question=QUESTION,
+        source_leads=[
+            SourceLead(canonical_url=url, title=f"Paper on {url.split('/')[2]}")
+            for url in urls
+        ],
+        narratives=[DiscoveryNarrative(question=QUESTION, statements=list(statements))],
+    )
+
+
+def test_what_a_search_pass_reported_becomes_a_claim_against_the_paper_it_named():
+    """The live failure. Deep Research writes a manifest, the grounded path
+    writes a packet, and nothing turned one into the other -- so the verifier
+    was handed titles and URLs and the panel got ten findings out of
+    ninety-two sources."""
+    manifest = _searched(
+        _statement("Alumina halves first-cycle loss.", [ACS]),
+        _statement("Cycling above 4.4 V undoes the gain.", [FRONTIERS]),
+    )
+
+    corpus = discovered_corpus(QUESTION, manifest)
+
+    by_id = {source.id: source.url for source in corpus.sources}
+    assert [(claim.claim, by_id[claim.source_id]) for claim in corpus.claims] == [
+        ("Alumina halves first-cycle loss.", ACS),
+        ("Cycling above 4.4 V undoes the gain.", FRONTIERS),
+    ]
+    # Discovery says where a finding came from; the status is verification's.
+    assert {claim.verification_status for claim in corpus.claims} == {
+        "discovered_unverified"
+    }
+    assert {source.verification_status for source in corpus.sources} == {
+        "discovered_unverified"
+    }
+    assert [source.supports_claim_ids for source in corpus.sources] == [
+        [corpus.claims[0].id],
+        [corpus.claims[1].id],
+    ]
+
+
+def test_a_finding_two_passes_both_reported_is_one_claim_not_two():
+    """Seven passes cover overlapping ground and report the same result in the
+    same words. The merge keys claims on their text, so duplicates that get this
+    far are dropped there anyway -- having taken up room in the batches on the
+    way."""
+    manifest = _searched(
+        _statement("Alumina halves first-cycle loss.", [ACS]),
+        _statement(
+            "Alumina  halves first-cycle loss.", [FRONTIERS], originating_pass=2
+        ),
+    )
+
+    corpus = discovered_corpus(QUESTION, manifest)
+
+    assert [claim.claim for claim in corpus.claims] == [
+        "Alumina halves first-cycle loss."
+    ]
+    # The paper the surviving claim did not name stays citable in its own right.
+    assert len(corpus.sources) == 2
+
+
+def test_a_finding_whose_papers_were_all_dropped_is_not_carried_unsourced():
+    """A claim with no source is the shape of the thing the badge complains
+    about, and the retention ceiling cuts leads out from under statements."""
+    manifest = _searched(
+        _statement("Coatings help.", ["https://example.org/cut-by-the-ceiling"]),
+        leads=[ACS],
+    )
+
+    assert discovered_corpus(QUESTION, manifest).claims == []
+
+
+def test_the_search_corpus_is_recorded_as_the_artifact_the_stage_carries():
+    """It has to be an artifact, not a local: the gate reads what the run wrote
+    down, and a corpus the verifier saw but nothing recorded is a corpus the
+    reader cannot check the verification against."""
+    flow = CoScientistWorkflow(QUESTION, DeterministicProvider())
+    manifest = _searched(_statement("Alumina halves first-cycle loss.", [ACS]))
+
+    artifact = flow._record_discovered_corpus(manifest, feedback="Original.")
+
+    assert artifact is not None
+    assert artifact in flow.session.artifacts
+    assert (artifact.stage, artifact.agent) == ("evidence", "evidence_discovery")
+    packet = EvidencePacket.model_validate(artifact.payload)
+    assert [claim.claim for claim in packet.claims] == [
+        "Alumina halves first-cycle loss."
+    ]
+
+
+def test_a_grounded_manifest_carries_no_narrative_and_writes_no_second_corpus():
+    """The grounded specialist returns the packet itself. A second corpus
+    written over the top of it supersedes the one the run already has, and that
+    one holds the findings its specialist wrote."""
+    flow = CoScientistWorkflow(QUESTION, DeterministicProvider())
+    manifest = DiscoveryManifest(
+        question=QUESTION, source_leads=[SourceLead(canonical_url=ACS, title="Alumina")]
+    )
+
+    assert flow._record_discovered_corpus(manifest, feedback="Original.") is None
+    assert flow.session.artifacts == []
+
+
+def test_the_verifier_is_shown_what_the_search_says_each_paper_shows():
+    """Handed addresses, a verifier returns addresses. The finding has to
+    travel with the URL for the check to be a check of anything."""
+    corpus = discovered_corpus(
+        QUESTION, _searched(_statement("Alumina halves first-cycle loss.", [ACS]))
+    )
+    batch = [SourceLead(canonical_url=ACS, title="Alumina interphases")]
+
+    feedback = CoScientistWorkflow._verification_feedback(
+        "Original.", batch, 1, 1, corpus
+    )
+
+    assert (
+        f"- {ACS} -- Alumina interphases\n"
+        "    - What the search says it shows: Alumina halves first-cycle loss."
+    ) in feedback
+    assert "carry into your packet with a status of its own" in feedback
+
+
+def test_a_batch_with_nothing_stated_about_it_asks_the_question_it_always_did():
+    """Grounded runs and revisions reach here with no manifest findings, and an
+    instruction about a list that is not printed is an instruction to invent
+    one."""
+    batch = [SourceLead(canonical_url=ACS, title="Alumina interphases")]
+
+    feedback = CoScientistWorkflow._verification_feedback("Original.", batch, 1, 1)
+
+    assert "What the search says it shows" not in feedback
+    assert "carry into your packet" not in feedback
+    assert f"- {ACS} -- Alumina interphases" in feedback
 
 
 # ---------------------------------------------------------------------------

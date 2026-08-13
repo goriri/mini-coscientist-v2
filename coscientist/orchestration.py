@@ -33,6 +33,7 @@ from .evidence import (
     IterativeEvidenceDiscovery,
     RegistryMetadataEnricher,
     audit_coverage,
+    discovered_corpus,
     discovery_angles,
     downgrade_unlocatable_sources,
     evaluate_evidence_floor,
@@ -736,6 +737,12 @@ class CoScientistWorkflow:
         # left behind, and computing it afterwards published a manifest and a
         # summary that both said nothing about either.
         batches = self._verification_batches(manifest)
+        stated = self._record_discovered_corpus(manifest, feedback=feedback)
+        corpus = (
+            EvidencePacket.model_validate(stated.payload)
+            if stated is not None
+            else None
+        )
 
         summary = self._evidence_summary(manifest)
         discovery.revise(summary, manifest.model_dump(mode="json"))
@@ -805,7 +812,7 @@ class CoScientistWorkflow:
                     temporary,
                     verifier_definition,
                     feedback=self._verification_feedback(
-                        feedback, batch, index, len(batches)
+                        feedback, batch, index, len(batches), corpus
                     ),
                     revision=revision,
                 )
@@ -1482,20 +1489,50 @@ class CoScientistWorkflow:
 
     @staticmethod
     def _verification_feedback(
-        feedback: str, batch: list[SourceLead], index: int, total: int
+        feedback: str,
+        batch: list[SourceLead],
+        index: int,
+        total: int,
+        corpus: EvidencePacket | None = None,
     ) -> str:
+        # What the search said each of these documents shows, so the verifier is
+        # checking a stated finding against the text rather than reading a title
+        # and writing down whatever it can make of it. Without this the batch is
+        # a list of addresses, and a verifier handed addresses returns addresses:
+        # a live run reached the panel with ninety-two sources and ten findings.
+        findings: dict[str, list[str]] = {}
+        if corpus is not None:
+            by_id = {source.id: source.url for source in corpus.sources}
+            for claim in corpus.claims:
+                url = by_id.get(claim.source_id or "")
+                if url and claim.claim:
+                    findings.setdefault(url, []).append(claim.claim)
         if not batch:
             return feedback
-        listing = "\n".join(
-            f"- {lead.canonical_url}" + (f" -- {lead.title}" if lead.title else "")
-            for lead in batch
+        lines: list[str] = []
+        for lead in batch:
+            lines.append(
+                f"- {lead.canonical_url}" + (f" -- {lead.title}" if lead.title else "")
+            )
+            lines.extend(
+                f"    - What the search says it shows: {text}"
+                for text in findings.get(lead.canonical_url, [])
+            )
+        listing = "\n".join(lines)
+        stated = (
+            " Each finding listed under a source is a claim to check against "
+            "that document and carry into your packet with a status of its own: "
+            "keep its wording, and where the text does not support it say so "
+            "rather than dropping it."
+            if findings
+            else ""
         )
         return (
             f"Verify exactly these {len(batch)} sources. They are batch {index} of "
             f"{total}; the others are being verified in parallel, so do not reach "
             "for sources outside this list and do not shorten a URL to its "
             "domain -- fetch each locator exactly as written. Return one entry "
-            "per source, including the ones you could not reach.\n\n"
+            f"per source, including the ones you could not reach.{stated}\n\n"
             f"{listing}\n\n{feedback}"
         ).strip()
 
@@ -1834,6 +1871,52 @@ class CoScientistWorkflow:
                 return await resolve_manifest_locators(manifest, client=client)
         except Exception:
             return manifest
+
+    def _record_discovered_corpus(
+        self, manifest: DiscoveryManifest, *, feedback: str
+    ) -> Artifact | None:
+        """Write down what the search found, as claims against the documents.
+
+        The grounded path's specialist returns a packet and this is already
+        there. Deep Research returns a manifest, and until now nothing turned
+        one into the other: the verifier was handed titles and URLs, invented
+        the handful of claims it could from them, and a run holding ninety-two
+        verified sources reached the panel with ten findings to cite. That is
+        the whole of "the knowledge base is thin" -- not what the search found,
+        but what survived the handover.
+
+        Merged with the corpus already standing rather than replacing it, so a
+        revision that gap-searched keeps the findings that search returned.
+        """
+        corpus = discovered_corpus(self.session.question, manifest)
+        # Nothing to add. A grounded manifest keeps no narratives -- its
+        # specialist wrote the corpus directly and it is already standing -- so
+        # this is the path that writes one and the path that leaves it alone.
+        if not corpus.claims:
+            return None
+        prior = self._discovered_corpus()
+        if prior is not None:
+            corpus = merge_evidence_packets(
+                self.session.question,
+                [EvidencePacket.model_validate(prior.payload), corpus],
+            )
+            prior.status = ArtifactStatus.SUPERSEDED
+        artifact = Artifact(
+            stage="evidence",
+            agent="evidence_discovery",
+            artifact_type="specialist_output",
+            content=(
+                f"### Discovered corpus\n\n{len(corpus.sources)} distinct sources "
+                f"and {len(corpus.claims)} findings, read off the search reports. "
+                "Nothing here is verified."
+            ),
+            feedback=feedback,
+            producer_model=getattr(self.provider, "model_id", "unknown"),
+            schema_name="EvidencePacket",
+            payload=corpus.model_dump(mode="json"),
+        )
+        self.session.artifacts.append(artifact)
+        return artifact
 
     def _merged_discovery_corpus(
         self,

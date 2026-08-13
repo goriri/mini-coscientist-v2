@@ -1045,6 +1045,101 @@ def _unclaimed_id(preferred: str, used: set[str]) -> str:
     return candidate
 
 
+def discovered_corpus(question: str, manifest: DiscoveryManifest) -> EvidencePacket:
+    """What a Deep Research wave found, as the corpus verification is given.
+
+    The grounded search path writes a packet: its specialist returns sources and
+    the findings resting on them, and the verifier is handed both. Deep Research
+    writes a manifest instead, and nothing ever turned one into the other -- so
+    on every real run the verifier received a list of titles and URLs with no
+    finding attached to any of them, and wrote whatever claims it could invent
+    from the titles. A live dossier measured here reached the panel with
+    ninety-two verified sources and ten claims behind them, and printed nine
+    references at the end of two hundred and eighty-five thousand characters.
+    Everything downstream reads claims: a candidate cites what it can read, and
+    a title is not a finding.
+
+    The findings are already on the manifest. Each pass's narrative holds what
+    that pass reported and which documents each statement rests on, and those
+    URLs are the leads. Joining them here is what makes the search legible to
+    the rest of the run.
+
+    One claim per statement rather than one per document it names: the merge
+    below keys claims on their text, so the same finding entered once against
+    each of its five sources survives as one claim against whichever came first.
+    The remaining documents stay in the corpus as sources, which are citable in
+    their own right, and the claim names the first of them.
+    """
+    by_url: dict[str, SourceRecord] = {}
+    for lead in manifest.source_leads:
+        try:
+            url = canonicalize_url(lead.canonical_url)
+        except ValueError:
+            continue
+        if url in by_url:
+            continue
+        by_url[url] = SourceRecord(
+            url=lead.canonical_url,
+            title=lead.title,
+            source_type=lead.source_type,
+            # Discovery states where a finding came from and nothing more. The
+            # status is verification's to write, and a lead that arrives already
+            # calling itself verified is the one thing this packet must not say.
+            verification_status="discovered_unverified",
+            facet=next(iter(lead.facets), ""),
+            authors=list(lead.authors),
+            year=lead.year,
+            identifiers=dict(lead.identifiers),
+        )
+    claims: list[EvidenceClaim] = []
+    seen: set[str] = set()
+    for narrative in manifest.narratives:
+        for statement in narrative.statements:
+            text = " ".join(str(statement.text or "").split())
+            fingerprint = text.casefold()
+            if not text or fingerprint in seen:
+                continue
+            source = next(
+                (
+                    by_url[url]
+                    for raw in statement.source_urls
+                    for url in (_canonical_or_blank(raw),)
+                    if url in by_url
+                ),
+                None,
+            )
+            # A statement whose documents were all cut by the retention ceiling
+            # has nothing for the verifier to open, and a claim with no source
+            # is the shape of an unsourced assertion.
+            if source is None:
+                continue
+            seen.add(fingerprint)
+            claim = EvidenceClaim(
+                claim=text,
+                source_id=source.id,
+                relation=statement.relation,
+                verification_status="discovered_unverified",
+            )
+            claims.append(claim)
+            source.supports_claim_ids.append(claim.id)
+    return EvidencePacket(
+        question=question,
+        sources=list(by_url.values()),
+        claims=claims,
+        limitations=[
+            "Discovery states what the search reported and which document it "
+            "named. Nothing here has been retrieved or checked."
+        ],
+    )
+
+
+def _canonical_or_blank(url: str) -> str:
+    try:
+        return canonicalize_url(url)
+    except ValueError:
+        return ""
+
+
 def merge_evidence_packets(
     question: str, packets: list[EvidencePacket]
 ) -> EvidencePacket:
