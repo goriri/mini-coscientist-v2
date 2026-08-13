@@ -127,6 +127,33 @@ STRUCTURED_OUTPUT_INSTRUCTIONS = {
         "holds its status, in terms a researcher can act on: which registry "
         "confirmed it, or what the fetch returned."
     ),
+    "evidence_synthesis": (
+        "Return one KnowledgeSurvey JSON object: overview, sections, contested, "
+        "not_found.\n"
+        "You are given every search report this run produced, in full, and the "
+        "numbered source list they were all renumbered against. Write one survey "
+        "of the literature, not a summary of the reports. Organize the sections "
+        "by what the field knows; a topic that three passes touched is one "
+        "section, and a pass that touched four topics is spread across four.\n"
+        "Cite with the S-numbers from the source list, written [S12] or "
+        "[S12, S7] immediately after the claim they support. The reports below "
+        "already carry those markers, so a sentence you draw on tells you which "
+        "sources back it. Every substantive claim in the survey carries at least "
+        "one. Never write an S-number the list does not contain, and never move "
+        "one onto a claim its report did not attach it to -- an invented citation "
+        "is worse than an uncited sentence, because it survives review.\n"
+        "Keep the specifics: quantities with units, populations, study designs, "
+        "effect directions, dates, and the names of the compounds, genes, "
+        "cohorts or instruments involved. A survey that generalizes them away "
+        "tells a reader nothing they could not have guessed from the question.\n"
+        "contested is for what the reports disagree about, each entry giving "
+        "both positions and the sources behind each. not_found is for what a "
+        "search states it looked for and did not find. Neither may be smoothed "
+        "into the prose: they are the two things a careless merge destroys, and "
+        "an absence in the literature is a result.\n"
+        "Do not name the passes, number them, or say what any report 'reports'. "
+        "The reader is being told about the field, not about the search."
+    ),
     "generation_evidence_first": (
         "Return one CandidatePopulation JSON object containing exactly two candidates "
         "using the evidence_first strategy. For each candidate, generate a reader-facing title, "
@@ -326,6 +353,7 @@ class DeterministicProvider:
         templates = {
             "goal_manager": f"Research objective: {question}\n\nConstraints to confirm with the researcher:\n- target system, population/material, and available measurements\n- success metric, baseline, resources, timeline, safety/ethics\n\nDeliverable: a falsifiable hypothesis and an auditable experiment plan.",
             "evidence_discovery": "Evidence discovery status: OFFLINE / UNVERIFIED.\n\nSearch questions to run with the live Google Search specialist:\n- What primary studies directly test the proposed mechanism?\n- What negative findings, replications, corrections, or retractions exist?\n- Which official datasets, standards, or registered protocols apply?\n\nNo source has been discovered or verified by the deterministic provider.",
+            "evidence_synthesis": "Knowledge survey status: NOTHING TO MERGE.\n\nA survey of the literature is written across the reports the search passes returned, and the deterministic provider runs no search. Nothing here satisfies the KnowledgeSurvey contract, so the Knowledge Base reproduces whatever reports the run does have, one per pass.",
             "source_verification": "Source verification status: NO SOURCES PROVIDED.\n\nA live verifier must open the original source, resolve its DOI/PMID or dataset identifier, inspect the exact supporting passage, and check correction/retraction status. Search snippets cannot satisfy an evidence gate.",
             "generation": "Eight candidate records were created using evidence-first, mechanism-first, analogy/transfer, and competing-explanation strategies. All are proposals pending verified evidence; inspect the typed CandidatePopulation artifact for their predictions, alternatives, dependencies, risks, falsifiers, go/no-go tests, and cross-candidate comparison criteria.",
             "generation_evidence_first": "Eight candidate records were created using evidence-first strategy. All are proposals pending verified evidence; inspect the typed CandidatePopulation artifact for their predictions, alternatives, dependencies, risks, falsifiers, go/no-go tests, and cross-candidate comparison criteria.",
@@ -727,7 +755,7 @@ class Specialist:
         """Let a domain critic send the draft back until it stops objecting.
 
         Bounded by :data:`CRITIC_ROUNDS` rather than run to exhaustion. Each
-        round costs two model calls, and there are seventeen specialists across
+        round costs two model calls, and there are eighteen specialists across
         nine stages: at ten rounds a single run can make three hundred calls
         nobody is waiting on productively, and the rounds that change anything
         are the early ones.
@@ -748,7 +776,7 @@ class Specialist:
         for round_number in range(1, CRITIC_ROUNDS + 1):
             # Addressed to the specialist's own role, not to a "<role>_critic".
             # A role is the address of a published A2A agent, and only the
-            # seventeen specialists are published: a critic role resolved to no
+            # eighteen specialists are published: a critic role resolved to no
             # agent card, so against the deployment every run died at the first
             # stage with a 404 for
             # ``/a2a/specialists/goal_manager_critic/.well-known/agent-card.json``.
@@ -924,6 +952,15 @@ SPECIALISTS = (
         "evidence",
         "source_verification",
         "Inspect permitted original sources, normalize identifiers, and map exact claim support; never treat snippets as verified evidence.",
+    ),
+    Specialist(
+        "evidence",
+        "evidence_synthesis",
+        "Merge every literature pass into one survey of what the field knows, "
+        "organized by topic rather than by which search found it, cited against "
+        "the run's own numbered source list. Keep what the passes disagree about "
+        "and what they went looking for and did not find; both vanish when "
+        "reports are merged carelessly, and both are findings about the field.",
     ),
     Specialist(
         "generate",

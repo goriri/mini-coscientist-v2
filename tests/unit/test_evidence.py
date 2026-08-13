@@ -11,9 +11,9 @@ from coscientist.evidence import (
     EvidenceArtifactStore,
     GeminiDeepResearchTransport,
     IterativeEvidenceDiscovery,
-    _extract_report,
     build_research_prompt,
     canonicalize_url,
+    extract_report,
     merge_leads,
     normalize_report,
 )
@@ -161,12 +161,12 @@ def test_transport_error_names_both_missing_credentials():
 
 
 def test_extract_report_reads_the_vertex_interaction_shape():
-    report = _extract_report(VERTEX_COMPLETED_PAYLOAD)
+    report = extract_report(VERTEX_COMPLETED_PAYLOAD)
     assert report.startswith("# Report")
 
     step_only = dict(VERTEX_COMPLETED_PAYLOAD)
     step_only.pop("output_text")
-    assert "Supporting evidence" in _extract_report(step_only)
+    assert "Supporting evidence" in extract_report(step_only)
 
 
 def test_vertex_citation_annotations_become_titled_source_leads():

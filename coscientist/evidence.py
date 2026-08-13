@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
 import os
 import re
 import time
@@ -30,7 +31,9 @@ from .models import (
     EVIDENCE_FLOOR_FACETS,
     FACET_PHRASES,
     MAX_DISCOVERY_PASSES,
+    MAX_VERIFICATION_BATCHES,
     METADATA_VERIFIED_WEIGHT,
+    VERIFICATION_BATCH_SIZE,
     VERIFIED_STATUSES,
     DeepResearchRun,
     DiscoveryCoverage,
@@ -49,6 +52,8 @@ from .models import (
 )
 from .normalization import strip_unstorable_characters
 from .retrieval import RetrievalOutcome, SourceRetriever, assess_sources
+
+logger = logging.getLogger(__name__)
 
 DEEP_RESEARCH_AGENT = "deep-research-preview-04-2026"
 DEEP_RESEARCH_LOCATION = "global"
@@ -77,7 +82,15 @@ follows is what keeps the gap-direction that the fan-out gives up.
 DEFAULT_PASS_TIMEOUT_SECONDS = 3900
 MAX_ENRICHMENT_REQUESTS = 6
 MAX_REGISTRY_REQUESTS = 30
-MAX_RETAINED_SOURCE_LEADS = 90
+MAX_RETAINED_SOURCE_LEADS = VERIFICATION_BATCH_SIZE * MAX_VERIFICATION_BATCHES
+"""How many discovered leads one manifest keeps, out of everything the fan-out found.
+
+Tied to what verification can actually get through rather than set beside it. At
+ninety against a verification capacity of a hundred and twenty, a live run threw
+away a hundred and eighty-four leads to hold a ceiling that left two whole
+batches of verifiers idle -- and the reference list a reader ends up with is
+built from the leads that survive this cut.
+"""
 
 GROUNDING_REDIRECT_MARKER = "grounding-api-redirect"
 """What a Vertex search-grounding link looks like before it is followed."""
@@ -345,6 +358,35 @@ class EvidenceArtifactStore:
             if getattr(exc, "code", None) != 412:
                 raise
         return f"gs://{self.bucket_name}/{object_name}"
+
+    def get(self, uri: str) -> dict:
+        """Read one stored interaction back, or return nothing where it is gone.
+
+        Only the manifest survives the discovery stage in the session itself,
+        and what it keeps of a pass is the normalizer's paragraph -- twelve
+        thousand characters at most, and in practice a hundred and fifty words.
+        The report those were drawn from is thirty thousand characters long and
+        it is here. The Knowledge Base is written from these, so it has to be
+        able to reach them.
+
+        Returns ``{}`` rather than raising for every reason a run has for not
+        having one: no bucket configured, a session that predates the store, an
+        object a lifecycle rule has since removed. The caller falls back to the
+        paragraphs, which is what it printed before this existed.
+        """
+        if not uri.startswith("gs://"):
+            return {}
+        bucket_name, _, object_name = uri[len("gs://") :].partition("/")
+        if not bucket_name or not object_name:
+            return {}
+        from google.cloud import storage
+
+        try:
+            blob = storage.Client().bucket(bucket_name).blob(object_name)
+            return json.loads(blob.download_as_bytes())
+        except Exception:
+            logger.warning("Could not read the stored interaction at %s.", uri)
+            return {}
 
 
 class RegistryMetadataEnricher:
@@ -1092,7 +1134,7 @@ def _content_text(value: Any) -> str:
     return ""
 
 
-def _extract_report(payload: dict) -> str:
+def extract_report(payload: dict) -> str:
     """Return the final Deep Research report from either backend's payload."""
     if text := _content_text(payload.get("output_text")):
         return text
@@ -2059,7 +2101,7 @@ class IterativeEvidenceDiscovery:
                     payload.get("error") or payload.get("incomplete_details") or {}
                 )
                 continue
-            report = _extract_report(payload)
+            report = extract_report(payload)
             if not report.strip():
                 run.status = "failed"
                 run.error = "Deep Research completed without a report."

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -52,7 +53,11 @@ from .governance import (
 )
 from .ledger import ResearchLedger
 from .methods import classify_research_mode, method_requirements
-from .model_catalog import DEFAULT_LANGUAGE, DEFAULT_MODEL
+from .model_catalog import (
+    DEFAULT_LANGUAGE,
+    DEFAULT_MODEL,
+    session_language_clause,
+)
 from .models import (
     EVIDENCE_FACETS,
     FACET_PHRASES,
@@ -81,6 +86,7 @@ from .models import (
     GovernanceAdjudication,
     HumanDecision,
     KnowledgeBaseManifest,
+    KnowledgeSurvey,
     ResearchPlan,
     ReviewSet,
     Session,
@@ -97,6 +103,9 @@ from .parity import (
     detect_input_requirements,
     unresolved_blockers,
 )
+from .survey import write_knowledge_survey
+
+logger = logging.getLogger(__name__)
 
 WORKFLOW_STAGES_V1 = tuple(
     stage for stage in STAGES if stage not in {"evidence", "report"}
@@ -866,6 +875,19 @@ class CoScientistWorkflow:
                 self._evidence_summary(manifest), manifest.model_dump(mode="json")
             )
 
+        # Here rather than at render time, for two reasons that both make it the
+        # only place it can go. The report is computed on demand from the stored
+        # session, so a section that needed a model call to draw would be a model
+        # call inside a page request; and the reports being merged live in the
+        # artifact store, which is the one thing the stored session does not
+        # carry, so this is the last point in the run that can still reach them.
+        survey = await asyncio.to_thread(self._knowledge_survey, manifest)
+        if survey is not None:
+            manifest = manifest.model_copy(update={"knowledge_survey": survey})
+            discovery.revise(
+                self._evidence_summary(manifest), manifest.model_dump(mode="json")
+            )
+
         # The corpus once, never the specialist's surrounding prose. A live run
         # ended its answer by pasting the navigation menu of a university site
         # its fetch tool had returned -- "Skip to main content", the whole course
@@ -1489,6 +1511,30 @@ class CoScientistWorkflow:
             return await sweep_verification(packet)
         except Exception:
             return packet
+
+    def _knowledge_survey(self, manifest: DiscoveryManifest) -> KnowledgeSurvey | None:
+        """Merge the search passes into one cited survey, or leave them as they are.
+
+        Every failure is swallowed on purpose. What this produces is one section
+        of the report, and the section exists without it: the Knowledge Base
+        reproduces the pass reports where no survey was written, which is what it
+        did before this stage learned to merge them. Raising here would throw
+        away a completed evidence stage -- seven Deep Research passes and the
+        verification behind them -- over the presentation of what it found.
+        """
+        try:
+            return write_knowledge_survey(
+                manifest,
+                self.provider,
+                language=session_language_clause(self.session),
+            )
+        except Exception:
+            logger.exception(
+                "The knowledge survey failed; the Knowledge Base will reproduce "
+                "the %d search passes instead.",
+                len(manifest.runs),
+            )
+            return None
 
     def _manifest_with_verification(
         self, manifest: DiscoveryManifest, packets: list[EvidencePacket]

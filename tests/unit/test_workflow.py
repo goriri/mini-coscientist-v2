@@ -105,7 +105,7 @@ def test_only_discovery_card_has_google_search():
     # provenance, and a verifier that only sees text cannot tell a paywall notice
     # from a paper.
     assert verifier.tools == ["fetch_source_document"]
-    assert len(flow.agent_cards) == 17
+    assert len(flow.agent_cards) == 18
 
 
 def test_a_drafted_stage_records_how_long_its_specialists_took():

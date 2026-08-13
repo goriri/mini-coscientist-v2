@@ -499,6 +499,49 @@ class EnrichmentRequest(Contract):
     result_artifact_reference: str = ""
 
 
+class KnowledgeSurveySection(Contract):
+    heading: str
+    prose: str
+    """The section's own paragraphs, as markdown, with no heading inside them."""
+
+
+class KnowledgeSurvey(Contract):
+    """One survey of the literature, written across every pass that searched it.
+
+    The fan-out asks seven questions and gets seven reports, each written as if
+    it were the only one. Reproducing them one after another made the Knowledge
+    Base a stack of seven literature reviews that repeat each other's
+    background, disagree without noticing, and leave the reader to do the
+    merging. This is that merge, done once by a model that can see all seven.
+
+    It replaces the reproduction and does not summarise it away: what a pass
+    failed to find is a finding about the field, so it has a field of its own
+    here rather than dissolving into prose about what was found.
+    """
+
+    question: str = ""
+    overview: str = ""
+    """Where the field stands on this question, in a paragraph or two."""
+
+    sections: list[KnowledgeSurveySection] = Field(default_factory=list, max_length=12)
+    contested: list[str] = Field(default_factory=list)
+    """Points the literature argues with itself about, each with both sides."""
+
+    not_found: list[str] = Field(default_factory=list)
+    """What the searches went looking for and did not find."""
+
+    sources: list[str] = Field(default_factory=list)
+    """Which lead each ``[S1]`` in the prose above names, in order.
+
+    Written by the supervisor after the survey parses, never by the model: it is
+    the numbered list the prompt handed over, kept so the renderer can resolve
+    ``[S7]`` to the manifest's seventh offered lead and from there to the
+    report's own reference number. Recording the order rather than trusting
+    ``source_leads`` to still be in it is what makes the survey survive a later
+    revision of the manifest, which appends leads and re-sorts them.
+    """
+
+
 class DiscoveryManifest(Contract):
     question: str
     runs: list[DeepResearchRun] = Field(
@@ -535,6 +578,14 @@ class DiscoveryManifest(Contract):
     # empty is indistinguishable from one nothing was spent on.
     gap_searches_deferred: int = Field(default=0, ge=0)
     synthesis_report: str = ""
+    knowledge_survey: KnowledgeSurvey | None = None
+    """One survey written across every pass, or nothing where none was written.
+
+    Nothing on a session saved before this field, on a run whose only pass was
+    the grounded fallback -- there is nothing to merge -- and on a run whose
+    synthesis failed its contract. The Knowledge Base falls back to reproducing
+    the reports one per pass in all three cases.
+    """
 
 
 class ResearchDirection(Contract):

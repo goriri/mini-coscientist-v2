@@ -179,7 +179,20 @@ def citation_rule(session: Session) -> str:
     return (
         "Citable evidence: cite only these identifiers, exactly as written, "
         "and leave evidence_ids empty where none of them applies -- "
-        f"{', '.join(available)}."
+        f"{', '.join(available)}.\n"
+        # A candidate-level list of ids says the idea rests on this evidence
+        # somewhere. The report prints the statements one at a time and labels
+        # each with what stands behind it, and with no id in the sentence there
+        # was nothing to read: a live run labelled fifteen of one idea's
+        # eighteen evidence statements "[Unsourced claim]" while the same
+        # candidate's evidence_ids listed nine records.
+        "Name the record inside the statement as well, not only in "
+        "evidence_ids: every evidence_for and evidence_against entry opens with "
+        'the identifier it rests on, as in "claim_7: sotorasib resistance '
+        'arises through ...". A statement that names none is reported to the '
+        "reader as unsourced, however many identifiers the item carries "
+        "alongside it. Where a statement genuinely rests on no record in the "
+        "list, it belongs in evidence_gaps."
     )
 
 

@@ -23,9 +23,15 @@ from coscientist.models import (
     DeepResearchRun,
     DiscoveryNarrative,
     DiscoveryStatement,
+    KnowledgeSurvey,
+    KnowledgeSurveySection,
     SourceLead,
 )
-from coscientist.narrative import _deep_research_prose, _knowledge_summary
+from coscientist.narrative import (
+    CitationRegistry,
+    _deep_research_prose,
+    _knowledge_summary,
+)
 
 REPORT = """# Protective Coatings and Cycle Life
 
@@ -63,6 +69,7 @@ def _record(
     leads: Sequence[SourceLead] = (),
     numbers: dict[str, int] | None = None,
     seeded_from: str = "",
+    survey: KnowledgeSurvey | None = None,
 ) -> SimpleNamespace:
     """``ran`` is how many passes the manifest recorded, which need not be how many
     of them came back with a report to print. ``leads`` and ``numbers`` are what a
@@ -75,6 +82,7 @@ def _record(
         session=SimpleNamespace(seeded_evidence_from=seeded_from),
         citations=SimpleNamespace(numbered=assigned.get),
         discovery=SimpleNamespace(
+            knowledge_survey=survey,
             narratives=list(narratives),
             source_leads=list(leads),
             runs=[
@@ -578,3 +586,93 @@ def test_what_is_not_a_list_marker_is_left_where_the_provider_put_it():
     assert "\n***\n" in prose
     assert "* * *" in prose
     assert "- " not in prose
+
+
+def _survey_record(survey: KnowledgeSurvey, *, leads: Sequence[SourceLead], ran: int):
+    """The survey path, wired to a real registry so the numbers are the real ones.
+
+    ``numbered``/``marker`` are the whole point of these tests -- the Knowledge Base
+    is the section that used to carry no reference numbers at all -- so the double
+    the tests above use, which only answers ``numbered``, would test nothing here.
+    """
+    record = _record(ran=ran, leads=leads, survey=survey)
+    record.citations = CitationRegistry(leads)
+    return record
+
+
+SURVEY = KnowledgeSurvey(
+    question="Does a coating improve cycle life?",
+    overview="Coatings extend cycle life [S1, S2].",
+    sections=[
+        KnowledgeSurveySection(
+            heading="Deposition thickness",
+            prose="Five nanometres is the reported optimum [S2].",
+        )
+    ],
+    contested=["Whether the gain survives fast charging [S1]."],
+    not_found=["No study reported a pouch-cell result."],
+    sources=["lead_a", "lead_b"],
+)
+
+SURVEY_LEADS = [
+    SourceLead(
+        id="lead_a", canonical_url="https://example.org/a", title="Coatings and life"
+    ),
+    SourceLead(
+        id="lead_b", canonical_url="https://example.org/b", title="Deposition thickness"
+    ),
+]
+
+
+def test_the_merged_survey_replaces_the_stack_of_per_pass_reports():
+    """Seven passes used to print as seven literature reviews of one question."""
+    section = _knowledge_summary(
+        _survey_record(SURVEY, leads=SURVEY_LEADS, ran=7),
+    )
+
+    assert "Coatings extend cycle life" in section
+    assert "### Deposition thickness" in section
+    assert "PASS 1" not in section and "Pass 1:" not in section
+
+
+def test_the_surveys_citations_are_printed_as_this_reports_reference_numbers():
+    """``[S2]`` names the second lead the synthesis was offered, which is not the
+    second reference of this report and not the number any pass gave it."""
+    record = _survey_record(SURVEY, leads=SURVEY_LEADS, ran=7)
+
+    section = _knowledge_summary(record)
+
+    assert "Coatings extend cycle life [1, 2]." in section
+    assert "Five nanometres is the reported optimum [2]." in section
+    assert "[S1" not in section and "[S2" not in section
+    assert [citation.title for citation in record.citations.references()] == [
+        "Coatings and life",
+        "Deposition thickness",
+    ]
+
+
+def test_a_token_naming_a_lead_the_manifest_no_longer_holds_is_struck():
+    """The manifest is revised after the survey is written, so a lead can go."""
+    section = _knowledge_summary(
+        _survey_record(SURVEY, leads=SURVEY_LEADS[:1], ran=7),
+    )
+
+    assert "Five nanometres is the reported optimum." in section
+    assert "Coatings extend cycle life [1]." in section
+
+
+def test_what_the_searches_did_not_find_survives_the_merge():
+    """It is the first thing lost when reports are folded into one another, and it
+    is a statement about the published literature rather than about this run."""
+    section = _knowledge_summary(_survey_record(SURVEY, leads=SURVEY_LEADS, ran=7))
+
+    assert "### Where the literature disagrees" in section
+    assert "Whether the gain survives fast charging [1]." in section
+    assert "### What the searches looked for and did not find" in section
+    assert "No study reported a pouch-cell result." in section
+
+
+def test_a_survey_that_was_never_written_leaves_the_passes_to_be_reproduced():
+    section = _knowledge_summary(_record(_narrative(), survey=None))
+
+    assert "achieved 5 nm coatings" in section

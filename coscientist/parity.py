@@ -25,6 +25,7 @@ from .models import (
     EvolutionCycle,
     EvolutionRecord,
     InputRequirement,
+    KnowledgeSurvey,
     PairwiseComparison,
     ResearchCluster,
     ResearchLandscape,
@@ -235,6 +236,7 @@ ROLE_CONTRACTS: dict[str, type[BaseModel]] = {
     "goal_manager": ResearchPlan,
     "evidence_discovery": EvidencePacket,
     "source_verification": EvidencePacket,
+    "evidence_synthesis": KnowledgeSurvey,
     "generation": CandidatePopulation,
     "generation_evidence_first": CandidatePopulation,
     "generation_mechanism_first": CandidatePopulation,
@@ -1558,6 +1560,14 @@ def typed_specialist_payload(session: Session, role: str, content: str) -> Typed
     elif role == "proximity":
         fallback = research_landscape(session)
         value = parsed_research_landscape(session, outcome.value, fallback)
+    elif role == "evidence_synthesis":
+        # An empty one, deliberately. There is no deterministic survey of a
+        # literature nobody searched, and the Knowledge Base already knows what
+        # to print when no survey was written -- the pass reports themselves.
+        # Without this branch the role fell through to the dossier manifest
+        # below and a failed survey would have been stored as a dossier.
+        fallback = KnowledgeSurvey(question=session.question)
+        value = outcome.value or fallback
     else:
         fallback = dossier_manifest(session)
         value = outcome.value or fallback

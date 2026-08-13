@@ -46,6 +46,7 @@ from .models import (
     EvidencePacket,
     EvolutionCycle,
     EvolutionRecord,
+    KnowledgeSurvey,
     ResearchCluster,
     ResearchLandscape,
     ResearchPlan,
@@ -7567,11 +7568,11 @@ def _evidence_notes(
     # printed. URLs rather than markers, because the registry numbers on first use --
     # asking it for every record in the index would number the ones no chapter prints
     # and leave the reference list padded and reordered.
-    located: dict[str, str] = {}
+    located: dict[str, _EvidenceRecord] = {}
     for entry in index.values():
         said = _sentence(entry.text, fallback="")
         if entry.url and said:
-            located.setdefault(_comparable(said), entry.url)
+            located.setdefault(_comparable(said), entry)
     notes: list[tuple[str, str, str, str]] = []
     for heading, statements in zip(
         ("Evidence for", "Evidence against", "Evidence gaps"), recorded, strict=True
@@ -7587,6 +7588,18 @@ def _evidence_notes(
             if not text:
                 continue
             cited = _cited_records(text, index)
+            stated = _stated_evidence(text, index, names, prefixes)
+            # Matching the printed sentence against the record's own finds the bullet
+            # that quotes its record where the specialist named no id, and a
+            # specialist that paraphrases the record it cites is still left
+            # unmatched. Only the number used to be taken from this match, and the
+            # badge was read off ``cited`` alone: a live report printed
+            # "**[Unsourced claim]** ... [8]" -- the label saying nothing stands
+            # behind the sentence, the marker beside it naming reference 8 -- on a
+            # bullet that had quoted its record word for word.
+            grounds = cited or [
+                entry for entry in (located.get(_comparable(stated)),) if entry
+            ]
             # A gap is a statement that no evidence exists, so grounding it is not
             # a question that can be asked of it -- unless the specialist wrote the
             # gap as a citation. On a live run the record that discredited the
@@ -7595,24 +7608,15 @@ def _evidence_notes(
             # read verified or followable, and nothing on the page was the broken
             # citation the warning is about.
             badge = (
-                _grounding_badge(text, verified, known, cited)
+                _grounding_badge(text, verified, known, grounds)
                 if heading != "Evidence gaps"
-                or any(entry.status in DISCREDITED_STATUSES for entry in cited)
+                or any(entry.status in DISCREDITED_STATUSES for entry in grounds)
                 else ""
             )
-            stated = _stated_evidence(text, index, names, prefixes)
-            # Matching the printed sentence against the record's own finds the bullet
-            # that quotes its record, and a specialist that paraphrases the record it
-            # cites is left unnumbered. ``cited`` resolved the same record off the ids
-            # in the raw statement two lines up and was spent on the badge alone, so
-            # the fallback costs a lookup this function has already done.
-            #
             # Unannotated: a qualifier beside every restated bullet would spend the
             # ceiling that keeps the annotated markers rare, and the badge already on
             # the bullet says what this run thinks of the record behind it.
-            url = located.get(_comparable(stated)) or next(
-                (entry.url for entry in cited if entry.url), ""
-            )
+            url = next((entry.url for entry in grounds if entry.url), "")
             marker = record.citations.marker([url], annotate=False) if url else ""
             notes.append((heading, badge, stated, marker))
     return notes
@@ -12832,7 +12836,132 @@ def _knowledge_summary(record: ResearchRecord) -> str:
     return f"{forked}\n\n{searched}" if forked else searched
 
 
+# What the survey writes where it cites: ``[S12]`` or ``[S12, S7]``, numbered
+# against the source list the synthesis prompt handed it. Bare numbers after the
+# first are accepted because a model writing ``[S12, 7]`` means the same thing,
+# and rejecting it would silently drop the second source.
+_SURVEY_CITE_RE = re.compile(r"([ \t]*)\[\s*S\s*\d+(?:\s*,\s*S?\s*\d+)*\s*\]", re.I)
+
+
+def _survey_cited(text: str, survey: KnowledgeSurvey, record: ResearchRecord) -> str:
+    """The survey's own citations, renumbered into this report's reference list.
+
+    Three numbering schemes met here and only one may reach the reader. Each
+    search pass numbered its citations against its own source list; the
+    synthesis renumbered those into ``S`` tokens over the manifest's leads; and
+    the report numbers a lead the first time its running text cites one. This
+    resolves the middle scheme into the last, through the lead ids the survey
+    recorded, so the manifest may be revised and re-sorted afterwards without
+    moving a single citation.
+
+    A token naming a lead that is no longer in the manifest is removed with the
+    space in front of it, rather than printed as an ``S`` number pointing at a
+    list the report does not contain.
+    """
+    leads = {
+        lead.id: lead
+        for lead in (record.discovery.source_leads if record.discovery else [])
+    }
+
+    def resolve(match: re.Match[str]) -> str:
+        urls = []
+        for digits in re.findall(r"\d+", match.group(0)):
+            position = int(digits)
+            if not 1 <= position <= len(survey.sources):
+                continue
+            lead = leads.get(survey.sources[position - 1])
+            if lead is not None and lead.canonical_url:
+                urls.append(lead.canonical_url)
+        marker = record.citations.marker(urls) if urls else ""
+        return f"{match.group(1)}{marker}" if marker else ""
+
+    return _SURVEY_CITE_RE.sub(resolve, text)
+
+
+def _knowledge_survey_prose(record: ResearchRecord, survey: KnowledgeSurvey) -> str:
+    """The merged survey, as the Knowledge Base's own sections.
+
+    Everything the per-pass reproduction below said about the passes is still
+    said, because merging is what destroys it: which passes ran, which came back
+    with nothing, and what the searches went looking for and did not find are
+    facts about the literature that no amount of prose about what *was* found
+    can carry.
+    """
+    runs = record.discovery.runs if record.discovery else []
+    checked = any(
+        claim.verification_status in {"verified", "corrected"}
+        for claim in (record.evidence.claims if record.evidence else [])
+    )
+    parts: list[str] = []
+    if len(runs) > 1:
+        parts.append(
+            f"The literature was searched in {_number_word(len(runs)).lower()} "
+            "passes, each sent after a different kind of evidence. What follows "
+            "is one survey written across all of them rather than the passes "
+            "reproduced one after another, so a topic several passes touched is "
+            "in one place and the numbered citations are this report's own. "
+            "What each pass was asked, and which sources each returned, is under "
+            "Literature discovery in the appendix."
+        )
+    if not checked:
+        parts.append(
+            "No source behind this survey was opened and checked in this run, so "
+            "it reports what the searches returned rather than a finding about "
+            "the field, and the confidence in its wording is theirs."
+        )
+    silent = [
+        run.pass_number
+        for run in sorted(runs, key=lambda item: item.pass_number)
+        if not run.raw_artifact_reference
+    ]
+    if silent and len(silent) < len(runs):
+        parts.append(
+            "*"
+            + ("Pass " if len(silent) == 1 else "Passes ")
+            + _names([str(number) for number in silent])
+            + (" recorded no report" if len(silent) == 1 else " recorded no reports")
+            + " and so contributed nothing to what follows. A pass that returns "
+            "nothing is a fact about the literature, and it is the first thing "
+            "lost when reports are merged.*"
+        )
+    if survey.overview.strip():
+        parts.append(_survey_cited(survey.overview.strip(), survey, record))
+    for section in survey.sections:
+        heading = section.heading.strip()
+        if heading:
+            parts.append(f"### {heading}")
+        if section.prose.strip():
+            parts.append(_survey_cited(section.prose.strip(), survey, record))
+    if survey.contested:
+        parts.append("### Where the literature disagrees")
+        parts.append(
+            "\n".join(
+                f"- {_survey_cited(item.strip(), survey, record)}"
+                for item in survey.contested
+                if item.strip()
+            )
+        )
+    if survey.not_found:
+        parts.append("### What the searches looked for and did not find")
+        parts.append(
+            "An absence here is a result. Each of these is something a search "
+            "went after and came back without, which is a statement about the "
+            "published literature rather than about this run."
+        )
+        parts.append(
+            "\n".join(
+                f"- {_survey_cited(item.strip(), survey, record)}"
+                for item in survey.not_found
+                if item.strip()
+            )
+        )
+    return "\n\n".join(part for part in parts if part.strip())
+
+
 def _searched_knowledge_summary(record: ResearchRecord) -> str:
+    survey = record.discovery.knowledge_survey if record.discovery else None
+    if survey is not None and survey.sections:
+        return _knowledge_survey_prose(record, survey)
     narratives = [
         narrative
         for narrative in (record.discovery.narratives if record.discovery else [])

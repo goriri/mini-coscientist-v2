@@ -409,3 +409,38 @@ def test_a_statement_no_numbered_record_stands_behind_carries_no_marker():
 
     assert said == f"{STATEMENT_TEXT}."
     assert marker == ""
+
+
+def test_a_bullet_that_quotes_its_record_word_for_word_is_not_badged_unsourced():
+    """The badge and the number beside it were resolved two different ways.
+
+    A live report printed "**[Unsourced claim]** ... [8]" -- the label saying nothing
+    stands behind the sentence, the marker beside it naming reference 8. The number
+    came off a match between the printed sentence and a record's own text; the badge
+    was read off the ids written in the sentence, and a specialist that quotes its
+    record instead of naming it writes none.
+    """
+    ((_heading, badge, said, marker),) = _marked_notes(evidence_for=[CLAIM_TEXT])
+
+    assert marker == "[1]"
+    assert badge == VERIFIED_BADGE, (
+        "the bullet carries a reference number and a badge saying it has no source"
+    )
+    assert said == f"{CLAIM_TEXT}."
+
+
+def test_a_bullet_quoting_a_record_the_run_could_not_retrieve_says_so():
+    """Worst-first still holds through the text match, not only through the ids."""
+    ((_heading, badge, _said, marker),) = _marked_notes(evidence_for=[WITHDRAWN_TEXT])
+
+    assert badge == DISCREDITED_BADGE
+    assert marker == "[1]"
+
+
+def test_a_bullet_matching_no_record_at_all_is_still_unsourced():
+    ((_heading, badge, _said, marker),) = _marked_notes(
+        evidence_for=["Thicker coatings are better in every reported cell chemistry"]
+    )
+
+    assert badge == UNSOURCED_BADGE
+    assert marker == ""

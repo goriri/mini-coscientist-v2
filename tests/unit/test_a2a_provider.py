@@ -52,7 +52,7 @@ def test_the_card_follows_the_port_the_container_was_given(monkeypatch, port):
 def test_a_role_no_agent_serves_is_refused_before_the_card_is_fetched():
     """It used to surface as a 404 on a card URL, which reads as a broken deploy.
 
-    The actor-critic loop addressed ``<role>_critic``; only the seventeen
+    The actor-critic loop addressed ``<role>_critic``; only the eighteen
     specialists are published, so every session against the deployment died at
     the first stage.
     """
