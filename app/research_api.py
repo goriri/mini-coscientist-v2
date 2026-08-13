@@ -863,7 +863,16 @@ def decide_research_session(
                     _schedule_advance(
                         session_id, background_tasks, kind=_resume_kind(workflow)
                     )
-                elif workflow.pending_draft is not None:
+                elif (
+                    workflow.pending_draft is not None
+                    and workflow.approval_profile != ApprovalProfile.AUTO
+                ):
+                    # On every other profile a waiting draft belongs to whoever
+                    # is going to decide it, and resuming underneath them would
+                    # take the decision away. An unattended run has no such
+                    # person: its draft is the auto worker's own next step, and
+                    # refusing to resume is what kept three live sessions parked
+                    # at reflect with a draft nobody was ever going to accept.
                     raise ValueError("A draft is already waiting for a decision.")
                 else:
                     _schedule_advance(

@@ -246,6 +246,55 @@ def test_an_unattended_run_resumes_with_the_worker_that_answers_its_own_gates(
     assert [task.kwargs["kind"] for task in tasks.tasks] == [expected]
 
 
+def test_an_unattended_run_parked_on_a_draft_can_be_started_again(blocked):
+    """Resume refused to run while a draft was waiting, on any profile.
+
+    That guard protects a decision a person is about to make. On an unattended
+    profile there is no such person, so it protected nothing and blocked the
+    only way back: the run stayed parked on its own draft.
+    """
+    workflow = CoScientistWorkflow.load_from_ledger(blocked, research_api._ledger())
+    workflow.session.approval_profile = ApprovalProfile.AUTO
+    workflow.session.status = "active"
+    workflow.session.artifacts.append(
+        Artifact(
+            stage=workflow.stage,
+            agent="reflection",
+            content="A draft of the reviews, waiting.",
+            artifact_type="stage_bundle",
+            status=ArtifactStatus.DRAFT,
+        )
+    )
+    research_api._ledger().save(
+        workflow.session, expected_version=workflow.session.version
+    )
+
+    tasks = BackgroundTasks()
+    _decide(blocked, tasks, action="continue", actor=NAME)
+    assert [task.kwargs["kind"] for task in tasks.tasks] == ["auto"]
+
+
+def test_a_waiting_draft_still_belongs_to_the_person_deciding_it(blocked):
+    workflow = CoScientistWorkflow.load_from_ledger(blocked, research_api._ledger())
+    workflow.session.status = "active"
+    workflow.session.artifacts.append(
+        Artifact(
+            stage=workflow.stage,
+            agent="reflection",
+            content="A draft of the reviews, waiting.",
+            artifact_type="stage_bundle",
+            status=ArtifactStatus.DRAFT,
+        )
+    )
+    research_api._ledger().save(
+        workflow.session, expected_version=workflow.session.version
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        _decide(blocked, action="continue", actor=NAME)
+    assert "already waiting for a decision" in raised.value.detail
+
+
 def test_a_finding_answered_while_others_remain_does_not_resume_the_run(blocked):
     session = CoScientistWorkflow.load_from_ledger(
         blocked, research_api._ledger()
