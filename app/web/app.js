@@ -2345,8 +2345,12 @@ elements.copySession.addEventListener("click", async () => {
     toast("Session is still being prepared");
     return;
   }
-  await navigator.clipboard.writeText(state.sessionId);
-  toast("Session identifier copied");
+  // The link rather than the bare identifier: the identifier is what the person
+  // pasting it has to work out what to do with, and the answer used to be
+  // nothing.
+  const link = `${location.origin}${location.pathname}?session=${encodeURIComponent(state.sessionId)}`;
+  await navigator.clipboard.writeText(link);
+  toast("Link to this session copied");
 });
 
 elements.mobileMenu.addEventListener("click", () => {
@@ -2455,8 +2459,16 @@ if (state.mode === "conversation") {
     setConnection("error", "Could not create session"),
   );
 } else {
+  // A session lives on the server; the list of the ones you have seen lives in
+  // this browser. Anyone sent a session identifier had no way to open it here
+  // at all -- the report existed, was public, and could only be reached by
+  // calling the API by hand. Named in the address, it opens and joins this
+  // browser's history like any other.
+  const shared = new URLSearchParams(location.search).get("session");
   const currentWorkflowId = localStorage.getItem(CURRENT_WORKFLOW_KEY);
-  if (currentWorkflowId) {
+  if (shared) {
+    openResearchSession(shared);
+  } else if (currentWorkflowId) {
     openResearchSession(currentWorkflowId, { restore: true });
   } else {
     setConnection("ready", "Ready for a governed inquiry");

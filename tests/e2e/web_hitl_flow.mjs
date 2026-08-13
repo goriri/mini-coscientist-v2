@@ -894,6 +894,24 @@ try {
     15000,
   );
 
+  // A session lives on the server and the list of them lives in one browser,
+  // so a report anybody was sent the identifier of could be reached by calling
+  // the API by hand and no other way. The link opens it here, with the stored
+  // current session cleared first so nothing but the address can be restoring
+  // it.
+  await cdp.evaluate(
+    "localStorage.removeItem('coscientist.currentWorkflowId')",
+  );
+  await cdp.call("Page.navigate", {
+    url: `${baseUrl}/?session=${encodeURIComponent(workflowId)}`,
+  });
+  await waitFor(
+    cdp,
+    `document.readyState === "complete" && state.workflowId === "${workflowId}" && !!document.querySelector(".message.assistant") && document.querySelector("#currentSessionCard").hidden === false`,
+    "A link naming a session did not open it.",
+    15000,
+  );
+
   await cdp.call("Emulation.setDeviceMetricsOverride", {
     width: 390,
     height: 844,
