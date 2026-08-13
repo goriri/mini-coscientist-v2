@@ -294,78 +294,28 @@
           </button>
         </section>
 
-        <section class="composer-wrap" aria-label="Research prompt composer">
+        <!-- Only ever the start of a run, and hidden by app.js once one is
+             open. Left on screen beside a session in progress, its button still
+             read "Begin inquiry" and still meant it: pressing it abandoned the
+             run being read and started a different one. -->
+        <section
+          class="composer-wrap"
+          id="composerWrap"
+          aria-label="Research prompt composer"
+        >
           <form class="composer" id="composer">
-            <div class="workflow-controls">
-              <div
-                class="mode-switch"
-                role="group"
-                aria-label="Interaction mode"
-              >
-                <button class="active" type="button" data-mode="guided">
-                  Guided HITL
-                </button>
-                <button type="button" data-mode="conversation">
-                  Conversation
-                </button>
-              </div>
-              <label class="profile-control" for="approvalProfile">
-                Approval cadence
-                <select id="approvalProfile">
-                  <option value="milestone">Milestones</option>
-                  <option value="stage">Every stage</option>
-                  <option value="artifact">Every artifact</option>
-                  <option value="auto">Auto</option>
-                </select>
-              </label>
-              <!-- Both lists are filled from /api/research/options at load, so
-                   the markup carries no model or language names of its own. A
-                   hard-coded option here would keep being offered after the
-                   server stopped accepting it. -->
-              <label class="profile-control" for="modelChoice">
-                Reasoning model
-                <select id="modelChoice"></select>
-              </label>
-              <label class="profile-control" for="languageChoice">
-                Research language
-                <select id="languageChoice"></select>
-              </label>
-              <!-- Milestones do not gate evidence: discovery is treated as
-                   internal work and the first thing shown is the hypotheses
-                   built on it. Checked here, the run stops on the corpus
-                   instead, which is the only point at which a thin one can
-                   still be sent back cheaply. -->
-              <label class="profile-control profile-check" for="evidenceReview">
-                <input id="evidenceReview" type="checkbox" checked />
-                <span>Review the evidence base before generating</span>
-              </label>
-              <!-- A greyed control whose reason lives in a title attribute is a
-                   reason nobody on a touchscreen can reach. -->
-              <p class="profile-note" id="evidenceReviewNote" hidden>
-                An auto run accepts every stage it produces, so nothing would be
-                waiting at this gate.
-              </p>
-              <!-- Searching the literature is the long half of a run: eight Deep
-                   Research passes against one question, an hour of waiting, and
-                   a bill to match. Asking the same question again buys them a
-                   second time to arrive at the same corpus. -->
-              <label class="profile-control" for="seedEvidenceFrom">
-                Reuse an earlier run's evidence
-                <input
-                  id="seedEvidenceFrom"
-                  type="text"
-                  autocomplete="off"
-                  spellcheck="false"
-                  placeholder="session_… (optional)"
-                />
-              </label>
-              <p class="profile-note" id="seedEvidenceNote">
-                The earlier run has to have asked this same question in this same
-                language, and to have cleared its evidence stage. This run then
-                starts at idea generation, and its report says the corpus was
-                not its own.
-              </p>
+            <div class="mode-switch" role="group" aria-label="Interaction mode">
+              <button class="active" type="button" data-mode="guided">
+                Guided HITL
+              </button>
+              <button type="button" data-mode="conversation">
+                Conversation
+              </button>
             </div>
+            <!-- The question first. Six controls above it made the researcher
+                 read a page of run configuration before reaching the one field
+                 the screen exists for, and five of the six are defaults that
+                 almost every run keeps. -->
             <label for="promptInput">Research question</label>
             <textarea
               id="promptInput"
@@ -374,6 +324,71 @@
               placeholder="Describe the question, available inputs, and what a useful answer would change…"
               required
             ></textarea>
+            <details class="run-settings" id="runSettings">
+              <summary>
+                Run settings
+                <span class="run-settings-digest" id="runSettingsDigest"></span>
+              </summary>
+              <div class="workflow-controls">
+                <label class="profile-control" for="approvalProfile">
+                  Approval cadence
+                  <select id="approvalProfile">
+                    <option value="milestone">Milestones</option>
+                    <option value="stage">Every stage</option>
+                    <option value="artifact">Every artifact</option>
+                    <option value="auto">Auto</option>
+                  </select>
+                </label>
+                <!-- Both lists are filled from /api/research/options at load,
+                     so the markup carries no model or language names of its
+                     own. A hard-coded option here would keep being offered
+                     after the server stopped accepting it. -->
+                <label class="profile-control" for="modelChoice">
+                  Reasoning model
+                  <select id="modelChoice"></select>
+                </label>
+                <label class="profile-control" for="languageChoice">
+                  Research language
+                  <select id="languageChoice"></select>
+                </label>
+                <!-- Milestones do not gate evidence: discovery is treated as
+                     internal work and the first thing shown is the hypotheses
+                     built on it. Checked here, the run stops on the corpus
+                     instead, which is the only point at which a thin one can
+                     still be sent back cheaply. -->
+                <label
+                  class="profile-control profile-check"
+                  for="evidenceReview"
+                >
+                  <input id="evidenceReview" type="checkbox" checked />
+                  <span>Stop on the evidence base</span>
+                </label>
+                <!-- A greyed control whose reason lives in a title attribute is
+                     a reason nobody on a touchscreen can reach. -->
+                <p class="profile-note" id="evidenceReviewNote" hidden>
+                  An auto run accepts every stage it produces, so nothing would
+                  be waiting at this gate.
+                </p>
+                <!-- Searching the literature is the long half of a run: eight
+                     Deep Research passes against one question, an hour of
+                     waiting, and a bill to match. Asking the same question
+                     again buys them a second time to arrive at the same
+                     corpus. -->
+                <label class="profile-control" for="seedEvidenceFrom">
+                  Reuse an earlier run's evidence
+                  <input
+                    id="seedEvidenceFrom"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="session_… (optional)"
+                  />
+                </label>
+                <p class="profile-note" id="seedEvidenceNote">
+                  Same question, same language, evidence stage cleared.
+                </p>
+              </div>
+            </details>
             <div class="composer-footer">
               <div class="composer-note">
                 <span id="connectionDot"></span>

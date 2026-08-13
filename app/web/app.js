@@ -114,6 +114,9 @@ const elements = {
   evidenceReviewNote: document.querySelector("#evidenceReviewNote"),
   seedEvidenceFrom: document.querySelector("#seedEvidenceFrom"),
   seedEvidenceNote: document.querySelector("#seedEvidenceNote"),
+  composerWrap: document.querySelector("#composerWrap"),
+  runSettings: document.querySelector("#runSettings"),
+  runSettingsDigest: document.querySelector("#runSettingsDigest"),
   currentSessionCard: document.querySelector("#currentSessionCard"),
   currentSessionName: document.querySelector("#currentSessionName"),
   currentSessionState: document.querySelector("#currentSessionState"),
@@ -1114,6 +1117,11 @@ async function loadResearchOptions() {
     title: "",
     selected: item.default,
   }));
+  // The summary line is written before this lands, and until it was written
+  // again it named a cadence and then nothing: the two settings a researcher
+  // most wants confirmed without opening the panel are the two that arrive over
+  // the network.
+  syncRunSettingsDigest();
 }
 
 function notificationsAvailable() {
@@ -1399,13 +1407,24 @@ function approvalCardDraft(card) {
     };
   });
   const editor = card.querySelector(".direct-editor");
+  const editing = card.querySelector(".direct-edit-field");
   const revision = card.querySelector(".revision-field");
   return {
     findings,
     revision: revision ? revision.value : "",
     revisionFocused: active === revision,
     editorOpen: editor ? !editor.hidden : false,
-    editorText: card.querySelector(".direct-edit-field")?.value || "",
+    editorText: editing ? editing.value : "",
+    // The text was carried across a redraw and the caret was not, so a poll
+    // landing mid-sentence dropped the researcher out of the field and put the
+    // cursor at the end of fourteen lines of draft. The composer used to be the
+    // editor of last resort here; it is off screen during a run now, and this
+    // is where the rewriting happens.
+    editorFocused: active === editing,
+    editorCaret:
+      active === editing
+        ? [active.selectionStart, active.selectionEnd]
+        : [0, 0],
   };
 }
 
@@ -1418,6 +1437,12 @@ function restoreApprovalCardDraft(card, draft) {
     editor.hidden = false;
     const field = card.querySelector(".direct-edit-field");
     if (field && draft.editorText) field.value = draft.editorText;
+    if (field && draft.editorFocused) {
+      field.focus();
+      const [from, to] = draft.editorCaret;
+      const end = field.value.length;
+      field.setSelectionRange(Math.min(from, end), Math.min(to, end));
+    }
   }
   card.querySelectorAll(".governance-finding").forEach((node) => {
     const carried = draft.findings[node.dataset.reviewId];
@@ -1484,12 +1509,18 @@ function renderApprovalCard(workflow) {
   // lasts. Each answer used to tear it down and append a new card holding the
   // findings that were left, which read as the gate restarting and lost every
   // reason that was part-typed in the others.
+  // And in place for as long as the gate itself lasts, which is the second
+  // clause. A card with no governance findings was torn down and rebuilt on
+  // every poll, so an edit being typed into a draft lost its cursor every few
+  // seconds and jumped to the end of fourteen lines. The gate key carries the
+  // stage and the draft, so a genuinely new gate still gets a new card at the
+  // bottom of the transcript.
   const stageKey = `${workflow.id}:${workflow.stage}`;
   const reused =
     existing &&
     existing.dataset.stageKey === stageKey &&
-    existing.dataset.governanceGate === "true" &&
-    findings.length > 0;
+    ((existing.dataset.governanceGate === "true" && findings.length > 0) ||
+      existing.dataset.gateKey === gateKey);
   const carried = reused ? approvalCardDraft(existing) : null;
   if (existing && !reused) existing.remove();
 
@@ -1745,6 +1776,7 @@ function clearWorkflowDisplay() {
   elements.messages.replaceChildren();
   elements.messages.hidden = true;
   elements.welcome.hidden = false;
+  syncComposerVisibility();
   state.lastDraftId = null;
   state.autoFollow = true;
   elements.jumpLatest.hidden = true;
@@ -1866,6 +1898,7 @@ function renderWorkflow(workflow, pending = null, touchHistory = false) {
   state.workflow = workflow;
   state.workflowId = workflow.id;
   state.sessionId = workflow.id;
+  syncComposerVisibility();
   updateSessionIdentity(workflow);
   updateStageNavigation(workflow);
   upsertRecentSession(workflow, touchHistory);
@@ -1966,22 +1999,43 @@ function selectMode(mode) {
     .forEach((item) =>
       item.classList.toggle("active", item.dataset.mode === mode),
     );
-  elements.approvalProfile.hidden = mode === "conversation";
-  [
-    elements.approvalProfile,
-    elements.modelChoice,
-    elements.languageChoice,
-    elements.evidenceReview,
-    elements.seedEvidenceFrom,
-  ].forEach((control) => {
-    control.hidden = mode === "conversation";
-    control.closest(".profile-control").hidden = mode === "conversation";
-  });
-  // The note sits outside the control it belongs to, so hiding the field left
-  // three lines of prose about forking a corpus under a composer with nothing
-  // to fork it in.
-  elements.seedEvidenceNote.hidden = mode === "conversation";
+  // Every one of these settings configures a governed run, and a conversation
+  // is not one, so the whole disclosure goes rather than each control inside
+  // it -- which used to leave the fork note stranded under a composer with
+  // nothing to fork it in.
+  elements.runSettings.hidden = mode === "conversation";
   syncEvidenceReviewControl();
+  syncComposerVisibility();
+}
+
+/* Which run this composer would start, said while it is folded shut. */
+function describeRunSettings() {
+  const named = (select) =>
+    select.options[select.selectedIndex]?.textContent.trim() || "";
+  const parts = [
+    named(elements.approvalProfile),
+    named(elements.modelChoice),
+    named(elements.languageChoice),
+  ].filter(Boolean);
+  if (elements.seedEvidenceFrom.value.trim()) parts.push("forked evidence");
+  else if (elements.evidenceReview.checked && !elements.evidenceReview.disabled)
+    parts.push("evidence gate");
+  return parts.join(" · ");
+}
+
+function syncRunSettingsDigest() {
+  elements.runSettingsDigest.textContent = describeRunSettings();
+}
+
+// The composer starts runs and does nothing else: a guided run is driven from
+// the approval cards in the transcript, not from here. Left on screen next to
+// an open session, its one button still read "Begin inquiry" and still did
+// that -- silently abandoning the run being read. A conversation keeps it,
+// because there it is the chat input.
+function syncComposerVisibility() {
+  const launching = state.mode !== "guided" || !state.workflowId;
+  elements.composerWrap.hidden = !launching;
+  if (launching) syncRunSettingsDigest();
 }
 
 function syncEvidenceReviewControl() {
@@ -2004,8 +2058,8 @@ function syncEvidenceReviewControl() {
   elements.evidenceReviewNote.textContent = auto
     ? "An auto run accepts every stage it produces, so nothing would be waiting at this gate."
     : "A forked run does not search, so it never reaches this gate. Open the earlier run to read its evidence base.";
-  elements.evidenceReviewNote.hidden =
-    !off || state.mode === "conversation" || control.hidden;
+  elements.evidenceReviewNote.hidden = !off || state.mode === "conversation";
+  syncRunSettingsDigest();
 }
 
 async function openResearchSession(sessionId, { restore = false } = {}) {
@@ -2031,6 +2085,7 @@ async function openResearchSession(sessionId, { restore = false } = {}) {
     }
     state.workflowId = null;
     state.workflow = null;
+    syncComposerVisibility();
     updateSessionIdentity(null);
     updateStageNavigation(null);
     setConnection("error", "Saved session is unavailable on this instance");
@@ -2278,6 +2333,12 @@ document.querySelectorAll("[data-prompt]").forEach((button) => {
 
 elements.approvalProfile.addEventListener("change", syncEvidenceReviewControl);
 elements.seedEvidenceFrom.addEventListener("input", syncEvidenceReviewControl);
+// The other three do not gate anything, so they only have the summary line to
+// keep honest -- one that still named last month's model would be worse than
+// none at all.
+elements.modelChoice.addEventListener("change", syncRunSettingsDigest);
+elements.languageChoice.addEventListener("change", syncRunSettingsDigest);
+elements.evidenceReview.addEventListener("change", syncRunSettingsDigest);
 elements.newInquiry.addEventListener("click", newInquiry);
 elements.copySession.addEventListener("click", async () => {
   if (!state.sessionId) {

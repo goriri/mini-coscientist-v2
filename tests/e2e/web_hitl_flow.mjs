@@ -146,6 +146,28 @@ try {
     "Leaving auto must give the evidence gate back and take the note away.",
   );
 
+  // Folded shut, and saying what it is folded over. A researcher who has to
+  // open a disclosure to find out which model the run will use has been given
+  // no disclosure at all.
+  const runSettings = await cdp.evaluate(`(() => {
+    const panel = document.querySelector("#runSettings");
+    return {
+      open: panel.open,
+      hidden: panel.hidden,
+      digest: document.querySelector("#runSettingsDigest").textContent.trim(),
+      model: document.querySelector("#modelChoice").selectedOptions[0].textContent.trim(),
+    };
+  })()`);
+  assert(
+    !runSettings.open && !runSettings.hidden,
+    "Run settings must be offered on the launcher and folded away by default.",
+  );
+  assert(
+    runSettings.digest.includes("Milestones") &&
+      runSettings.digest.includes(runSettings.model),
+    `The folded run settings named "${runSettings.digest}", not the cadence and model in force.`,
+  );
+
   // The fork is refused unless the question matches the source run's word for
   // word, so the launcher gets this one typed into it rather than a paraphrase.
   if (seedEvidenceFrom) {
@@ -174,20 +196,13 @@ try {
   );
   const stablePolling = await cdp.evaluate(`(() => {
     const card = document.querySelector(".approval-card:not(.resolved)");
-    const input = document.querySelector("#promptInput");
-    input.disabled = false;
-    input.value = "draft question preserved during polling";
-    input.focus();
-    input.setSelectionRange(6, 14);
     const area = document.querySelector(".conversation");
     const beforeTop = area.scrollTop;
     for (let index = 0; index < 10; index += 1) renderWorkflow(state.workflow);
     const current = document.querySelector(".approval-card:not(.resolved)");
     return {
       sameNode: card === current,
-      value: input.value,
-      focused: document.activeElement === input,
-      selection: [input.selectionStart, input.selectionEnd],
+      launcherHidden: document.querySelector("#composerWrap").hidden,
       beforeTop,
       afterTop: area.scrollTop,
     };
@@ -196,28 +211,64 @@ try {
     stablePolling.sameNode,
     "Polling replaced the Specialists working card.",
   );
+  // The launcher starts runs and has no other job. Beside an open session its
+  // button still read "Begin inquiry" and still did that: one press abandoned
+  // the run on screen for a new one, with nothing said and nothing to undo.
   assert(
-    stablePolling.value === "draft question preserved during polling" &&
-      stablePolling.focused &&
-      stablePolling.selection[0] === 6 &&
-      stablePolling.selection[1] === 14,
-    "Polling did not preserve the research editor state.",
+    stablePolling.launcherHidden,
+    "The Begin inquiry card was still on screen next to an open session.",
   );
   assert(
     stablePolling.beforeTop === stablePolling.afterTop,
     "Polling changed the conversation scroll position.",
   );
-  await cdp.evaluate(`(() => {
-    const input = document.querySelector("#promptInput");
-    input.value = "";
-    input.blur();
-  })()`);
   await waitFor(
     cdp,
     "!!document.querySelector('.approval-card:not(.resolved) [data-decision=\"toggle_edit\"]')",
     "The first human approval gate did not become ready.",
     30000,
   );
+
+  // Half a paragraph into rewriting a draft is exactly when the next poll
+  // lands. The editor is in the approval card now that the launcher is not on
+  // screen during a run, and it is the card polling redraws.
+  const stableEditor = await cdp.evaluate(`(() => {
+    const card = document.querySelector(".approval-card:not(.resolved)");
+    card.querySelector('[data-decision="toggle_edit"]').click();
+    const field = card.querySelector(".direct-edit-field");
+    const held = field.value;
+    field.focus();
+    field.setSelectionRange(6, 14);
+    for (let index = 0; index < 10; index += 1) renderWorkflow(state.workflow);
+    const now = document.querySelector(".approval-card:not(.resolved) .direct-edit-field");
+    return {
+      present: !!now,
+      value: now ? now.value : "",
+      held,
+      focused: document.activeElement === now,
+      selection: now ? [now.selectionStart, now.selectionEnd] : [],
+    };
+  })()`);
+  assert(
+    stableEditor.present &&
+      stableEditor.value === stableEditor.held &&
+      stableEditor.focused &&
+      stableEditor.selection[0] === 6 &&
+      stableEditor.selection[1] === 14,
+    `Polling did not preserve the research editor state: ${JSON.stringify({
+      present: stableEditor.present,
+      kept: stableEditor.value === stableEditor.held,
+      focused: stableEditor.focused,
+      selection: stableEditor.selection,
+    })}`,
+  );
+  // Left as it was found, so the revision the gate chapter drives below starts
+  // from a closed editor rather than a second toggle that shuts it again.
+  await cdp.evaluate(`(() => {
+    const card = document.querySelector(".approval-card:not(.resolved)");
+    card.querySelector(".direct-edit-field").blur();
+    card.querySelector('[data-decision="toggle_edit"]').click();
+  })()`);
 
   const workflowId = await cdp.evaluate(
     "document.querySelector('.approval-card:not(.resolved)').dataset.workflowId",
@@ -752,6 +803,16 @@ try {
   assert(
     carriedFork === "",
     `A new inquiry kept the fork of ${carriedFork} from the run before it.`,
+  );
+  // Hidden beside an open session, and back on the screen whose whole purpose
+  // is to start one. A launcher that stayed away would leave New inquiry with
+  // no way to ask anything.
+  const launcherReturned = await cdp.evaluate(
+    "!document.querySelector('#composerWrap').hidden && !document.querySelector('#welcome').hidden",
+  );
+  assert(
+    launcherReturned,
+    "New inquiry did not bring the launcher back with the welcome screen.",
   );
   await cdp.evaluate(`(() => {
     const input = document.querySelector("#promptInput");
