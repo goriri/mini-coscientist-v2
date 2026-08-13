@@ -34,6 +34,7 @@ from coscientist.retrieval import (
     html_to_text,
     pdf_title,
     pdf_to_text,
+    searchable_title,
     titles_agree,
 )
 
@@ -252,6 +253,147 @@ async def test_a_redirect_loop_ends_in_a_reported_failure_not_a_hang():
 
     assert outcome.tier == "inaccessible"
     assert "redirects without a document" in outcome.document.error
+
+
+def _registry_handler(
+    *, converter: dict | None = None, search: dict | None = None, works: dict | None
+) -> object:
+    """A publisher that refuses everything, and the registries behind it."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "idconv" in url:
+            return httpx.Response(200, json=converter or {"records": []})
+        if "query.bibliographic" in url:
+            return httpx.Response(200, json=search or {"message": {"items": []}})
+        if request.url.host == "api.crossref.org":
+            return httpx.Response(200, json=works or {"message": {}})
+        if request.url.host.endswith(("openalex.org", "datacite.org", "nih.gov")):
+            return httpx.Response(404)
+        return httpx.Response(403, text="Access denied")
+
+    return httpx.MockTransport(handler)
+
+
+async def test_a_pmc_article_number_reaches_the_registry_its_pubmed_sibling_did():
+    """Eleven open-access papers in one run were filed as unreachable.
+
+    The ladder recognised ``pubmed.ncbi.nlm.nih.gov``, whose path is a PMID, and
+    not ``pmc.ncbi.nlm.nih.gov``, whose path is an article number. Both name a
+    paper every registry will answer for; only one of them was ever asked.
+    """
+    transport = _registry_handler(
+        converter={"records": [{"pmcid": "PMC6641259", "doi": "10.1000/pmc"}]},
+        works=_crossref("Boosting the electrochemical performance of a cathode"),
+    )
+    async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
+        outcome = await assess_source(
+            client,
+            SourceRetriever(),
+            "https://pmc.ncbi.nlm.nih.gov/articles/PMC6641259/",
+            claimed_title="Boosting the electrochemical performance of a cathode",
+        )
+
+    assert outcome.tier == "metadata_verified"
+    assert outcome.metadata.doi == "10.1000/pmc"
+
+
+async def test_a_title_finds_the_record_a_refusing_publisher_would_not_give_up():
+    """A publisher that blocks this fetcher still publishes through Crossref.
+
+    Of the forty-six sources one production run quarantined, none carried a DOI
+    in its locator and none sat on a host the ladder had a branch for, so the
+    registry tier was never entered once. All forty-six had a title.
+    """
+    title = "Ultrathin alumina coatings and lithium-ion cycle life"
+    transport = _registry_handler(
+        search={"message": {"items": [{"DOI": "10.1000/found", "title": [title]}]}},
+        works=_crossref(title),
+    )
+    async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
+        outcome = await assess_source(
+            client,
+            SourceRetriever(),
+            "https://www.researchgate.net/publication/370550704_Ultrathin",
+            claimed_title=f"{title} | ResearchGate researchgate.net",
+        )
+
+    assert outcome.tier == "metadata_verified"
+    assert outcome.metadata.doi == "10.1000/found"
+
+
+async def test_a_search_that_answers_with_a_different_paper_is_refused():
+    """A bibliographic search always returns something, and it is a real paper.
+
+    Accepting it unchecked would attach another author's DOI, year and journal
+    to this claim -- a citation that resolves, to the wrong work, which is worse
+    than the gap it fills.
+    """
+    transport = _registry_handler(
+        search={
+            "message": {
+                "items": [
+                    {
+                        "DOI": "10.1000/other",
+                        "title": ["Sodium metal anodes in carbonate electrolytes"],
+                    }
+                ]
+            }
+        },
+        works=_crossref("Sodium metal anodes in carbonate electrolytes"),
+    )
+    async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
+        outcome = await assess_source(
+            client,
+            SourceRetriever(),
+            "https://www.researchgate.net/publication/1_Ultrathin",
+            claimed_title="Ultrathin alumina coatings and lithium-ion cycle life",
+        )
+
+    assert outcome.tier == "inaccessible"
+    assert not outcome.metadata.doi
+
+
+async def test_a_title_too_thin_to_name_a_paper_is_never_searched_on():
+    searches: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "query.bibliographic" in str(request.url):
+            searches.append(str(request.url))
+        if request.url.host.endswith(("crossref.org", "openalex.org", "nih.gov")):
+            return httpx.Response(404)
+        return httpx.Response(403, text="Access denied")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), follow_redirects=False
+    ) as client:
+        outcome = await assess_source(
+            client,
+            SourceRetriever(),
+            "https://publisher.example/a",
+            claimed_title="Battery coatings",
+        )
+
+    assert searches == []
+    assert outcome.tier == "inaccessible"
+
+
+def test_a_lead_keeps_its_title_and_loses_the_site_it_was_found_on():
+    assert (
+        searchable_title("Ultrathin AlPO4 coatings | PNAS pnas.org")
+        == "Ultrathin AlPO4 coatings"
+    )
+    # The hyphens inside the words are not the separator, and a pattern that
+    # took them for one cut this title off after "diva".
+    assert (
+        searchable_title("A Self-Driving Lab for Electrolytes - DiVA diva-portal.org")
+        == "A Self-Driving Lab for Electrolytes"
+    )
+    # Nothing that looks like a host, so nothing to take off.
+    assert (
+        searchable_title("Boosting Li1.2Mn0.54O2 by ALD")
+        == "Boosting Li1.2Mn0.54O2 by ALD"
+    )
 
 
 async def test_two_claims_on_one_paper_cost_one_fetch():

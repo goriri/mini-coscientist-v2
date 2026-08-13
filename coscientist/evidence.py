@@ -777,16 +777,20 @@ def apply_retrieval_outcomes(
             retracted.append(source.id)
             continue
         ceiling = _TIER_RANK[outcome.tier]
-        if _TIER_RANK.get(source.verification_status, 0) > ceiling:
+        recorded = _TIER_RANK.get(source.verification_status, 0)
+        if recorded > ceiling:
             source.verification_status = outcome.tier
             demoted.append(source.id)
-        elif (
-            source.verification_status == "discovered_unverified"
-            and outcome.tier == "metadata_verified"
-        ):
-            # The specialist never reached a conclusion about this one, and the
-            # registry did. Recording what is known beats recording nothing.
-            source.verification_status = "metadata_verified"
+        elif recorded < ceiling:
+            # The ceiling only ever came down, and the word it was pressing on
+            # is not always a specialist's. A source already marked inaccessible
+            # -- by an earlier pass, or by a lead that carried the verdict --
+            # stayed inaccessible after this retrieval read it, while the note
+            # beside it was overwritten with the success. Five sources in one
+            # production run were published as "Unreachable" under the sentence
+            # "Retrieved 52,601 characters of text". Retrieval is the authority
+            # on how far a locator was reached, in both directions.
+            source.verification_status = outcome.tier
         elif (
             source.verification_status == "discovered_unverified"
             and outcome.tier == "inaccessible"

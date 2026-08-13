@@ -125,6 +125,26 @@ def test_a_registry_hit_promotes_a_source_the_specialist_never_reached():
     assert updated.sources[0].identifiers["doi"] == "10.1000/1"
 
 
+def test_a_source_read_in_full_is_not_left_saying_it_could_not_be_reached():
+    """The ceiling only came down, and the word underneath it was not a reader's.
+
+    A production run published five sources badged "Unreachable" under the
+    sentence "Retrieved 52,601 characters of text from ..." -- their own
+    verification note, written by the retrieval that had just read them. The
+    status had been set to inaccessible upstream, and inaccessible outranks
+    nothing, so the test that lowers a status never fired and no other test
+    raised it. Reachability is retrieval's to decide either way.
+    """
+    packet = _packet(_source(1, status="inaccessible"))
+    url = "https://doi.org/10.1000/1"
+
+    updated = apply_retrieval_outcomes(packet, {url: _outcome(url, "verified")})
+
+    assert updated.sources[0].verification_status == "verified"
+    # Not a downgrade, so the limitations do not report one against it.
+    assert not any("downgraded" in line for line in updated.limitations)
+
+
 def test_a_reading_of_the_text_survives_a_retrieval_that_also_read_it():
     """The specialist decides meaning; the sweep only decides reachability."""
     packet = _packet(_source(1, status="corrected"))

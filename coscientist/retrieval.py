@@ -80,6 +80,7 @@ _REGISTRY_HOSTS = frozenset(
         "api.openalex.org",
         "api.datacite.org",
         "eutils.ncbi.nlm.nih.gov",
+        "www.ncbi.nlm.nih.gov",
     }
 )
 
@@ -103,6 +104,24 @@ _TITLE_STOPWORDS = frozenset(
         "with",
     }
 )
+
+_PMCID_IN_URL = re.compile(r"\b(PMC\d{4,})\b", re.I)
+# A separator, then at most a few words, then something shaped like a host. The
+# separator may not be a bare hyphen: "A Self-Driving Lab ... diva-portal.org"
+# has two of those inside words, and a pattern that accepted them cut the title
+# down to "A Self-Driving Lab for Battery Electrolyte Design - DiVA Portal diva".
+_SEARCH_ENGINE_SUFFIX = re.compile(
+    "\\s*(?:[|\u2013\u2014]|\\s-)\\s*(?:[\\w&'()]+\\s+){0,3}"
+    "[a-z0-9-]+(?:\\.[a-z]{2,})+\\s*$",
+    re.I,
+)
+_TITLE_QUERY_FLOOR = 4
+"""How many content words a claimed title needs before it may be searched on.
+
+A registry search on "Battery coatings" returns a confident wrong answer, and a
+wrong DOI is worse than no DOI: it attaches a real paper's authors and year to
+somebody else's claim. Below this the source keeps its own verdict.
+"""
 
 TITLE_MATCH_THRESHOLD = 0.6
 """How much of a claimed title must survive in the registry's title to agree.
@@ -141,6 +160,22 @@ def title_tokens(title: str) -> set[str]:
         for word in _WORD.findall(title.lower())
         if word not in _TITLE_STOPWORDS and len(word) > 2
     }
+
+
+def searchable_title(title: str) -> str:
+    """A lead's title with the search engine's own furniture taken off it.
+
+    Discovery records the title as the results page rendered it, which is the
+    paper followed by where it was found: "Ultrathin AlPO4 coatings ... | PNAS
+    pnas.org". Left on, the host is two more tokens for a registry to match
+    against and it matches them against the wrong paper.
+    """
+    cleaned = " ".join(title.split())
+    while True:
+        shortened = _SEARCH_ENGINE_SUFFIX.sub("", cleaned).strip()
+        if shortened == cleaned:
+            return cleaned
+        cleaned = shortened
 
 
 def titles_agree(claimed: str, registered: str) -> bool:
@@ -529,15 +564,77 @@ class SourceRetriever:
         if cache_key in self._metadata_cache:
             return self._metadata_cache[cache_key]
         metadata = SourceMetadata(doi=extract_doi(url, hint))
+        # Four ways in, because a real lead URL is usually none of the first
+        # three. Of the forty-six sources one production run quarantined, not
+        # one carried a DOI in its locator and not one was on the PubMed host,
+        # so the registry tier -- the thing that turns a publisher's 403 into a
+        # confirmed record -- was never entered for any of them. Every one of
+        # them had a title.
+        if not metadata.doi:
+            metadata.doi = await self._doi_from_pmcid(client, url)
+        if not metadata.doi:
+            await self._fill_from_pubmed(client, metadata, url)
+        if not metadata.doi and not metadata.found:
+            metadata.doi = await self._doi_from_title(client, hint)
         if metadata.doi:
             await self._fill_from_crossref(client, metadata)
             await self._fill_from_openalex(client, metadata)
             if not metadata.registries:
                 await self._fill_from_datacite(client, metadata)
-        else:
-            await self._fill_from_pubmed(client, metadata, url)
         self._metadata_cache[cache_key] = metadata
         return metadata
+
+    async def _doi_from_pmcid(self, client: httpx.AsyncClient, url: str) -> str:
+        """The DOI behind a PMC article number, which is not one and looks like one.
+
+        ``pmc.ncbi.nlm.nih.gov/articles/PMC6641259/`` names an open-access paper
+        that any registry will answer for, but the ladder only recognised its
+        ``pubmed.`` sibling: eleven such sources in one run were filed as
+        unreachable, all eleven of them free to read. The converter maps the
+        article number to a DOI in one request.
+        """
+        if (urlsplit(url).hostname or "") not in {
+            "pmc.ncbi.nlm.nih.gov",
+            "www.ncbi.nlm.nih.gov",
+        }:
+            return ""
+        found = _PMCID_IN_URL.search(url)
+        if not found:
+            return ""
+        payload = await self._registry_json(
+            client,
+            "https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/"
+            f"?ids={quote(found.group(1).upper(), safe='')}&format=json",
+        )
+        records = payload.get("records") or []
+        if not records or not isinstance(records[0], dict):
+            return ""
+        return _strip_doi(str(records[0].get("doi") or "")).lower()
+
+    async def _doi_from_title(self, client: httpx.AsyncClient, hint: str) -> str:
+        """The DOI of the work a title names, when the locator will not say.
+
+        A publisher that refuses this fetcher still publishes through Crossref,
+        and the title is the one thing discovery always records. Accepted only
+        where the registered title agrees with the claimed one on the same test
+        the tier decision uses further down, because a search always returns
+        something and the something is a real paper by real authors.
+        """
+        query = searchable_title(hint)
+        if len(title_tokens(query)) < _TITLE_QUERY_FLOOR:
+            return ""
+        payload = await self._registry_json(
+            client,
+            "https://api.crossref.org/works?rows=1&select=DOI%2Ctitle"
+            f"&query.bibliographic={quote(query, safe='')}",
+        )
+        items = (payload.get("message") or {}).get("items") or []
+        if not items or not isinstance(items[0], dict):
+            return ""
+        titles = items[0].get("title") or []
+        if not titles or not titles_agree(query, str(titles[0])):
+            return ""
+        return _strip_doi(str(items[0].get("DOI") or "")).lower()
 
     async def _fill_from_crossref(
         self, client: httpx.AsyncClient, metadata: SourceMetadata
@@ -710,7 +807,7 @@ async def assess_source(
             ),
         )
     if metadata.found:
-        if not titles_agree(claimed_title, metadata.title):
+        if not titles_agree(searchable_title(claimed_title), metadata.title):
             return RetrievalOutcome(
                 url=url,
                 tier="inaccessible",
