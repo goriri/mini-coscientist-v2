@@ -709,6 +709,23 @@ def test_a_survey_that_cites_nothing_does_not_promise_the_reader_citations():
     assert "Five nanometres is the reported optimum." in section
 
 
+def test_a_survey_whose_citations_no_longer_resolve_says_that_and_not_the_other():
+    """Two defects print the same page and are opposites. A survey merged from
+    reports that carried no markers found no sources to cite; a survey whose every
+    marker names a lead the manifest has since dropped cited its sources and lost
+    them here. Told the first when it is the second, a reader reads a thin
+    literature off a rendering fault."""
+    section = _knowledge_summary(_survey_record(SURVEY, leads=[], ran=7))
+
+    assert "The survey below cites its sources, and this report could not match" in (
+        section
+    )
+    assert "This survey carries no citations" not in section
+    assert "the numbered citations are this report's own" not in section
+    # And the prose itself is still printed, without the markers that name nothing.
+    assert "Five nanometres is the reported optimum." in section
+
+
 def test_a_pass_whose_report_was_lost_is_not_said_to_have_found_nothing():
     """Six of a live eight recorded no report because a restart lost them, and the
     Knowledge Base told the reader a pass that returns nothing is a fact about the

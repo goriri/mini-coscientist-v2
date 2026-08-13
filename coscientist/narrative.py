@@ -11,6 +11,7 @@ the structures produced here into Markdown.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections import Counter
 from collections.abc import Callable, Container, Iterable, Mapping, Sequence
@@ -12847,6 +12848,9 @@ _SURVEY_CITE_RE = re.compile(r"([ \t]*)\[\s*S\s*\d+(?:\s*,\s*S?\s*\d+)*\s*\]", r
 _NUMBERED_CITE_RE = re.compile(r"\[\d+(?:, \d+)*\]")
 
 
+logger = logging.getLogger(__name__)
+
+
 def _survey_cited(text: str, survey: KnowledgeSurvey, record: ResearchRecord) -> str:
     """The survey's own citations, renumbered into this report's reference list.
 
@@ -12892,6 +12896,10 @@ def _knowledge_survey_prose(record: ResearchRecord, survey: KnowledgeSurvey) -> 
     can carry.
     """
     runs = record.discovery.runs if record.discovery else []
+    lead_index = {
+        lead.id: lead
+        for lead in (record.discovery.source_leads if record.discovery else [])
+    }
     checked = any(
         claim.verification_status in {"verified", "corrected"}
         for claim in (record.evidence.claims if record.evidence else [])
@@ -12933,6 +12941,44 @@ def _knowledge_survey_prose(record: ResearchRecord, survey: KnowledgeSurvey) -> 
             )
         )
     cited = any(_NUMBERED_CITE_RE.search(part) for part in body)
+    # Whether the synthesis wrote citations at all, as against whether any of
+    # them reached the page. The two failures read identically in the finished
+    # report -- prose with no numbers in it -- and they are opposite defects:
+    # one is a survey merged from reports that carried no markers, the other is
+    # a survey that cited its sources and a renderer that could not match them
+    # to the manifest. Saying which is which is the difference between a reader
+    # knowing the literature was thin and a reader being told so wrongly.
+    written = any(
+        _SURVEY_CITE_RE.search(part)
+        for part in (
+            survey.overview,
+            *(section.prose for section in survey.sections),
+            *survey.contested,
+            *survey.not_found,
+        )
+    )
+    # A survey that cited its sources and reached the page with none of them is a
+    # fault in this run, not a fact about the literature, and the page can only
+    # say that it happened. What it was -- how many leads the synthesis was
+    # offered, how many of those the manifest still holds, and how many of their
+    # locators the reference list will number -- is said here, where an operator
+    # reading a run's logs can act on it.
+    if written and not cited:
+        held = [lead_id for lead_id in survey.sources if lead_id in lead_index]
+        logger.warning(
+            "The knowledge survey cited %d sources and none of them could be "
+            "numbered: %d of those lead ids are still in the manifest, and %d of "
+            "the leads they name carry a locator this report can cite.",
+            len(survey.sources),
+            len(held),
+            len(
+                [
+                    lead_id
+                    for lead_id in held
+                    if record.citations.citable([lead_index[lead_id].canonical_url])
+                ]
+            ),
+        )
     parts: list[str] = []
     if len(runs) > 1:
         parts.append(
@@ -12950,6 +12996,11 @@ def _knowledge_survey_prose(record: ResearchRecord, survey: KnowledgeSurvey) -> 
             + (
                 " and the numbered citations are this report's own. "
                 if cited
+                else ". The survey below cites its sources, and this report "
+                "could not match a single one of those citations to a source "
+                "in its reference list, so all of them were struck: what "
+                "follows is the survey's prose without its citations. "
+                if written
                 else ". This survey carries no citations: the pass reports it was "
                 "merged from did not reach it, and the summaries that stood in "
                 "for them record no sources. "
