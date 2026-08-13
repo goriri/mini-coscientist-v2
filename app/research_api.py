@@ -43,7 +43,11 @@ from coscientist.models import (
     ArtifactStatus,
     CandidatePopulation,
 )
-from coscientist.orchestration import CoScientistWorkflow
+from coscientist.orchestration import (
+    WORKFLOW_STAGES,
+    WORKFLOW_STAGES_V1,
+    CoScientistWorkflow,
+)
 from coscientist.presentation import build_stage_presentation
 
 router = APIRouter(prefix="/api/research", tags=["research-workflow"])
@@ -704,6 +708,48 @@ def create_research_session(
     snapshot = _snapshot(workflow)
     snapshot["deletion_token"] = deletion_token
     return snapshot
+
+
+@router.get("/sessions")
+def list_research_sessions(limit: int = 50) -> dict:
+    """Every run on this server -- running, blocked and finished -- to anyone.
+
+    The history panel was a browser's own localStorage until now, so a visitor
+    arriving at the service saw an empty page however much was running on it,
+    and a researcher who opened the site on a second machine could not reach a
+    single run they had started on the first.
+
+    Nothing here is loaded through ``_load``: that builds a workflow and, for a
+    finished run, renders its whole dossier. This route answers from the six
+    scalars the ledger pulls out in SQL, so listing fifty runs costs about what
+    listing one used to.
+    """
+    ledger = _ledger()
+    listing = []
+    for entry in ledger.recent_sessions(min(max(1, limit), 200)):
+        stages = (
+            WORKFLOW_STAGES if entry["workflow_version"] >= 2 else WORKFLOW_STAGES_V1
+        )
+        position = entry["current_stage"]
+        done = position >= len(stages)
+        listing.append(
+            {
+                "id": entry["id"],
+                "question": entry["question"],
+                "status": entry["status"],
+                "stage": "report" if done else stages[position],
+                "stage_number": min(position + 1, len(stages)),
+                "stage_count": len(stages),
+                "report_available": done,
+                "created_at": entry["created_at"],
+                "updated_at": entry["updated_at"],
+                # What the run is waiting on, which is the difference between a
+                # run nobody has to touch and one parked at a gate. The panel
+                # showed neither before, because it had never heard of the run.
+                "operation": ledger.operation(entry["id"]),
+            }
+        )
+    return {"sessions": listing}
 
 
 @router.get("/sessions/{session_id}")

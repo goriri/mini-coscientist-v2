@@ -48,6 +48,11 @@ const LONG_STAGE_MILLISECONDS = 30000;
 // at the end of a silent stretch is noticed up to twelve seconds late.
 const POLL_FAST = 1400;
 const POLL_SLOW = 12000;
+// The directory of every run on the server, which moves when someone else's run
+// changes stage. Far slower than the poll above: a list of fifty runs is not
+// what anyone is sitting watching, and this one keeps ticking with no session
+// open at all.
+const DIRECTORY_POLL = 20000;
 
 // What "the answer changed" means. Not ``updated_at`` alone: that moves when the
 // stage does, and a stage is exactly the thing that stands still for the best
@@ -80,6 +85,13 @@ const state = {
   pollSignature: null,
   viewingStage: null,
   recentSessions: loadSessionHistory(),
+  // Every run on the server, whoever started it. The panel used to be this
+  // browser's localStorage and nothing else, so arriving at the address showed
+  // an empty history however much was running behind it, and a run started on
+  // one machine was unreachable from another. What this browser knows about a
+  // run -- the name typed over it, the credential that can delete it -- is
+  // still local, and is laid over this on the way to the page.
+  serverSessions: [],
   notifyStageAlerts: localStorage.getItem(NOTIFY_KEY) !== "off",
   operationStartedAt: null,
   notifiedGateKey: null,
@@ -734,6 +746,22 @@ function stageLabel(stage) {
   return stage === "meta_review" ? "Meta-review" : humanizeKey(stage);
 }
 
+// A stage name alone said the same thing about a run parked at a gate for a day
+// and a run that had finished and printed its dossier: both read "Meta-review".
+const HISTORY_STATES = {
+  ready_for_report: "Report ready",
+  governance_blocked: "Blocked on governance",
+  evidence_required: "Waiting on evidence",
+  input_required: "Waiting for input",
+  stopped: "Stopped",
+};
+
+function historyState(item) {
+  if (item.stage === "report") return "Report ready";
+  const waiting = HISTORY_STATES[item.status];
+  return waiting ? `${stageLabel(item.stage)} · ${waiting}` : stageLabel(item.stage);
+}
+
 function relativeTime(value) {
   const timestamp = Date.parse(value || "");
   if (!Number.isFinite(timestamp)) return "recently";
@@ -796,10 +824,18 @@ function markSessionUnavailable(sessionId) {
   renderSessionHistory();
 }
 
-function removeRecentSession(sessionId) {
+function removeRecentSession(sessionId, { deleted = false } = {}) {
   state.recentSessions = state.recentSessions.filter(
     (item) => item.id !== sessionId,
   );
+  // A run deleted from the server leaves the directory too, without waiting
+  // for the next poll to say so -- otherwise it sits on the list for another
+  // twenty seconds after the confirmation that it is gone.
+  if (deleted) {
+    state.serverSessions = state.serverSessions.filter(
+      (item) => item.id !== sessionId,
+    );
+  }
   saveSessionHistory();
   if (localStorage.getItem(CURRENT_WORKFLOW_KEY) === sessionId) {
     localStorage.removeItem(CURRENT_WORKFLOW_KEY);
@@ -834,23 +870,107 @@ async function deleteCloudSession(sessionId) {
     throw new Error(detail);
   }
   const wasCurrent = sessionId === state.workflowId;
-  removeRecentSession(sessionId);
+  removeRecentSession(sessionId, { deleted: true });
   if (wasCurrent) await newInquiry();
   toast("Cloud session permanently deleted");
 }
 
+// The directory is a fact about the server and the history is a fact about this
+// browser, and the panel shows one list. A run in both is the server's for what
+// it is doing and this browser's for what it is called: the stage and the status
+// go stale in localStorage the moment the tab is closed, and the name and the
+// deletion credential are not on the server to begin with.
+function mergedSessions() {
+  const local = new Map(state.recentSessions.map((item) => [item.id, item]));
+  const merged = state.serverSessions.map((entry) => {
+    const mine = local.get(entry.id);
+    local.delete(entry.id);
+    return {
+      ...(mine || {}),
+      id: entry.id,
+      title: mine?.title || deriveSessionName(entry.question),
+      customTitle: mine?.customTitle || null,
+      query: entry.question,
+      status: entry.status,
+      stage: entry.stage,
+      createdAt: entry.created_at,
+      updatedAt: entry.updated_at,
+      lastOpenedAt: mine?.lastOpenedAt || entry.updated_at,
+      unavailable: false,
+      // A run this browser did not start is one it cannot delete: the
+      // credential was handed out once, to whoever created it.
+      deleteToken: mine?.deleteToken || null,
+      mine: Boolean(mine),
+    };
+  });
+  // What is left is a run this browser remembers that is not in the directory.
+  // It is left exactly as it is, and in particular is not marked unavailable
+  // on that evidence: the directory is capped, and it is empty until the first
+  // response lands. Inferring from it disabled every card on the page for the
+  // first twenty seconds after load. Unavailable is what opening a run and
+  // being refused says, and that is still the only thing that sets it.
+  for (const mine of local.values()) {
+    merged.push({ ...mine, mine: true });
+  }
+  return merged.sort((left, right) => historyRank(right) - historyRank(left));
+}
+
+// Most recently opened or updated, which are two different claims on the top of
+// the list: a run somebody else's browser is driving moves when it changes
+// stage, and a finished run this browser just opened has not moved for hours.
+function historyRank(item) {
+  return Math.max(
+    Date.parse(item.updatedAt || "") || 0,
+    Date.parse(item.lastOpenedAt || "") || 0,
+  );
+}
+
+// A name typed over a run has to live somewhere, and the server holds no name
+// for a run at all -- so renaming one this browser only knows from the directory
+// takes a copy of it first. Opening a run does the same thing through
+// ``upsertRecentSession``; this is the path for renaming without opening.
+function adoptDirectorySession(sessionId) {
+  const entry = state.serverSessions.find((item) => item.id === sessionId);
+  if (!entry) return null;
+  upsertRecentSession({
+    id: entry.id,
+    question: entry.question,
+    status: entry.status,
+    stage: entry.stage,
+    created_at: entry.created_at,
+    updated_at: entry.updated_at,
+  });
+  return state.recentSessions.find((item) => item.id === sessionId) || null;
+}
+
+async function refreshSessionDirectory() {
+  try {
+    const response = await fetch("/api/research/sessions?limit=50");
+    if (!response.ok) return;
+    const payload = await response.json();
+    state.serverSessions = Array.isArray(payload.sessions)
+      ? payload.sessions
+      : [];
+    renderSessionHistory();
+  } catch {
+    // Offline, or a proxy in the way. The panel keeps showing what this
+    // browser remembers rather than emptying itself over a failed poll.
+  }
+}
+
 function renderSessionHistory() {
-  elements.sessionCount.textContent = `${state.recentSessions.length} saved`;
-  if (!state.recentSessions.length) {
+  const sessions = mergedSessions();
+  elements.sessionCount.textContent = `${sessions.length} on this server`;
+  if (!sessions.length) {
     elements.sessionHistory.innerHTML = `
       <div class="history-empty">
         <span>∅</span>
-        <strong>No saved research yet</strong>
-        <p>Guided inquiries created in this browser will appear here.</p>
+        <strong>No research on this server yet</strong>
+        <p>Every inquiry run here appears in this list, whoever started it.</p>
       </div>`;
     return;
   }
-  elements.sessionHistory.innerHTML = state.recentSessions
+  elements.sessionHistory.innerHTML = sessions
     .map(
       (item) => `
         <article class="session-history-item ${item.id === state.workflowId ? "current" : ""} ${
@@ -860,7 +980,7 @@ function renderSessionHistory() {
             item.unavailable ? "disabled" : ""
           } title="${escapeHtml(item.query || item.title)}">
             <strong>${escapeHtml(historyTitle(item))}</strong>
-            <span>${item.unavailable ? "Unavailable on this instance" : `${escapeHtml(stageLabel(item.stage))} · ${escapeHtml(relativeTime(item.updatedAt))}`}</span>
+            <span>${item.unavailable ? "Unavailable on this instance" : `${escapeHtml(historyState(item))} · ${escapeHtml(relativeTime(item.updatedAt))}`}</span>
           </button>
           <div class="session-history-actions">
             <button class="session-rename" type="button" aria-label="Rename ${escapeHtml(historyTitle(item))}" title="Rename this session">✎</button>
@@ -869,7 +989,14 @@ function renderSessionHistory() {
                 ? `<button class="session-delete-cloud" type="button" aria-label="Permanently delete ${escapeHtml(historyTitle(item))} from Google Cloud" title="Permanently delete from Google Cloud">⌫</button>`
                 : ""
             }
-            <button class="session-remove" type="button" aria-label="Remove ${escapeHtml(historyTitle(item))} from this browser" title="Remove from this browser">×</button>
+            ${
+              // Nothing for this browser to remove from a run it never started:
+              // the list is the server's, and the entry would be back on the
+              // next poll looking like a button that does not work.
+              item.mine
+                ? `<button class="session-remove" type="button" aria-label="Remove ${escapeHtml(historyTitle(item))} from this browser" title="Remove from this browser">×</button>`
+                : ""
+            }
           </div>
         </article>`,
     )
@@ -920,7 +1047,9 @@ function renderSessionTitle(workflow = state.workflow) {
 }
 
 function beginRename(sessionId = state.workflowId) {
-  const entry = state.recentSessions.find((item) => item.id === sessionId);
+  const entry =
+    state.recentSessions.find((item) => item.id === sessionId) ||
+    adoptDirectorySession(sessionId);
   if (!entry) return;
   state.renamingId = sessionId;
   elements.sessionTitleInput.value = historyTitle(entry);
@@ -2423,6 +2552,8 @@ elements.sessionTitleInput.addEventListener("keydown", (event) => {
 elements.sessionTitleInput.addEventListener("blur", () => endRename(true));
 elements.historyButton.addEventListener("click", () => {
   document.body.classList.add("history-open");
+  // Opening the drawer is the one moment the list is definitely being read.
+  refreshSessionDirectory();
 });
 elements.closeHistory.addEventListener("click", () => {
   document.body.classList.remove("history-open");
@@ -2461,6 +2592,8 @@ renderSessionTitle(null);
 renderNotifyControl();
 selectMode(state.mode);
 renderSessionHistory();
+refreshSessionDirectory();
+window.setInterval(refreshSessionDirectory, DIRECTORY_POLL);
 updateStageNavigation(null);
 if (state.mode === "conversation") {
   createSession().catch(() =>

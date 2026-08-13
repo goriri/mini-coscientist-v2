@@ -859,6 +859,43 @@ try {
     "Recent sessions must be ordered by most recently opened or updated.",
   );
 
+  // The panel used to be this browser's localStorage and nothing else, so
+  // someone arriving at the address saw an empty history however much was
+  // running behind it, and a run started on one machine could not be reached
+  // from another. Forgetting both runs locally must not lose either of them.
+  await cdp.evaluate(`(() => {
+    window.__history = state.recentSessions;
+    state.recentSessions = [];
+    renderSessionHistory();
+  })()`);
+  await waitFor(
+    cdp,
+    "refreshSessionDirectory().then(() => document.querySelectorAll('.session-history-item').length === 2)",
+    "A browser holding no history of its own saw none of the server's sessions.",
+  );
+  const strangerSees = await cdp.evaluate(
+    "[...document.querySelectorAll('.session-history-item')].map(item => [item.dataset.sessionId, !!item.querySelector('.session-delete-cloud'), item.querySelector('.session-history-open strong').textContent])",
+  );
+  assert(
+    strangerSees.map(([id]) => id).includes(workflowId),
+    "The public directory left out a run this browser had forgotten.",
+  );
+  assert(
+    strangerSees.every(([, deletable]) => deletable === false),
+    "A run this browser holds no deletion credential for offered a delete button.",
+  );
+  assert(
+    strangerSees.some(([, , title]) => title.includes("protective coating")),
+    "A directory entry was listed without a name derived from its question.",
+  );
+  // Handed back, because the deletion credential is in there: the server never
+  // had it, which is the whole reason a stranger's card carries no delete
+  // button, and losing it here would make the test below untestable.
+  await cdp.evaluate(`(() => {
+    state.recentSessions = window.__history;
+    renderSessionHistory();
+  })()`);
+
   await cdp.evaluate(
     `document.querySelector('.session-history-item[data-session-id="${workflowId}"] .session-history-open').click()`,
   );

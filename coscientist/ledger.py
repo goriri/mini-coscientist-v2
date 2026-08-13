@@ -26,6 +26,31 @@ class ConcurrentSessionUpdate(RuntimeError):
     """Raised when a stale process attempts to overwrite a newer session."""
 
 
+def _session_row(row: Any) -> dict[str, Any]:
+    """One listing entry, from the columns both backends select in that order.
+
+    ``current_stage`` and ``workflow_version`` are handed on as they are stored
+    rather than resolved to a stage name here: which stages a run has is the
+    workflow's to say, and the workflow is the layer above this one.
+    """
+    return {
+        "id": row[0],
+        "question": row[1] or "",
+        "status": row[2] or "active",
+        "current_stage": int(row[3] or 0),
+        "workflow_version": int(row[4] or 2),
+        "created_at": _as_text(row[5]),
+        "updated_at": _as_text(row[6]),
+    }
+
+
+def _as_text(value: Any) -> str:
+    """SQLite stores these timestamps as text and Postgres as ``timestamptz``."""
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).isoformat()
+    return str(value or "")
+
+
 class ResearchLedger:
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -168,6 +193,34 @@ class ResearchLedger:
         if row is None:
             raise KeyError(f"Unknown session: {session_id}")
         return Session.from_dict(json.loads(row[0]))
+
+    def recent_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
+        """What every run on this server is, without loading any of them.
+
+        The history panel used to be a browser's own localStorage, so a visitor
+        arriving at the service saw an empty page whatever was running on it,
+        and a researcher who opened the site in a second browser lost every run
+        they had started in the first.
+
+        The fields come out in SQL rather than through ``load``: a stored
+        session runs to about a megabyte once it carries a corpus, and this
+        list wants six scalars from each of fifty of them.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id,
+                       json_extract(payload, '$.question'),
+                       json_extract(payload, '$.status'),
+                       json_extract(payload, '$.current_stage'),
+                       json_extract(payload, '$.workflow_version'),
+                       json_extract(payload, '$.created_at'),
+                       updated_at
+                FROM sessions ORDER BY updated_at DESC LIMIT ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+        return [_session_row(row) for row in rows]
 
     def events(self, session_id: str) -> list[AuditEvent]:
         with self._connect() as connection:
@@ -588,6 +641,25 @@ class PostgresResearchLedger:
             raise KeyError(f"Unknown session: {session_id}")
         payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
         return Session.from_dict(payload)
+
+    def recent_sessions(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Every run this deployment holds, newest first. See the SQLite twin."""
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id,
+                       payload ->> 'question',
+                       payload ->> 'status',
+                       payload ->> 'current_stage',
+                       payload ->> 'workflow_version',
+                       payload ->> 'created_at',
+                       updated_at
+                FROM research_sessions ORDER BY updated_at DESC LIMIT %s
+                """,
+                (max(1, limit),),
+            )
+            rows = cursor.fetchall()
+        return [_session_row(row) for row in rows]
 
     def events(self, session_id: str) -> list[AuditEvent]:
         with self._connect() as connection, connection.cursor() as cursor:
