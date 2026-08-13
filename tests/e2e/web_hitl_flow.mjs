@@ -168,6 +168,30 @@ try {
     `The folded run settings named "${runSettings.digest}", not the cadence and model in force.`,
   );
 
+  // Every one of those settings configures a governed run. A conversation is
+  // not one, and the button that sends a chat turn spent a while calling it an
+  // inquiry.
+  const conversationComposer = await cdp.evaluate(`(() => {
+    document.querySelector('[data-mode="conversation"]').click();
+    const seen = {
+      settingsHidden: document.querySelector("#runSettings").hidden,
+      send: document.querySelector("#sendLabel").textContent.trim(),
+    };
+    document.querySelector('[data-mode="guided"]').click();
+    return {
+      ...seen,
+      restoredSend: document.querySelector("#sendLabel").textContent.trim(),
+      restoredSettings: !document.querySelector("#runSettings").hidden,
+    };
+  })()`);
+  assert(
+    conversationComposer.settingsHidden &&
+      conversationComposer.send === "Send" &&
+      conversationComposer.restoredSend === "Begin inquiry" &&
+      conversationComposer.restoredSettings,
+    "Conversation mode must drop the run settings and stop calling a chat turn an inquiry.",
+  );
+
   // The fork is refused unless the question matches the source run's word for
   // word, so the launcher gets this one typed into it rather than a paraphrase.
   if (seedEvidenceFrom) {

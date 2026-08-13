@@ -115,6 +115,8 @@ const elements = {
   seedEvidenceFrom: document.querySelector("#seedEvidenceFrom"),
   seedEvidenceNote: document.querySelector("#seedEvidenceNote"),
   composerWrap: document.querySelector("#composerWrap"),
+  promptLabel: document.querySelector("#promptLabel"),
+  sendLabel: document.querySelector("#sendLabel"),
   runSettings: document.querySelector("#runSettings"),
   runSettingsDigest: document.querySelector("#runSettingsDigest"),
   currentSessionCard: document.querySelector("#currentSessionCard"),
@@ -2004,6 +2006,12 @@ function selectMode(mode) {
   // it -- which used to leave the fork note stranded under a composer with
   // nothing to fork it in.
   elements.runSettings.hidden = mode === "conversation";
+  // A conversation turn is not an inquiry, and the button said it was. Now that
+  // this card only ever launches a guided run, the one place it does something
+  // else is the one place it has to say so.
+  const chatting = mode === "conversation";
+  elements.promptLabel.textContent = chatting ? "Message" : "Research question";
+  elements.sendLabel.textContent = chatting ? "Send" : "Begin inquiry";
   syncEvidenceReviewControl();
   syncComposerVisibility();
 }
