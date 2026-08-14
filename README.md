@@ -474,6 +474,17 @@ time in the browser and holds that each settles in place on the same card —
 carrying its verdict, adjudicator and reason — while the reasons typed into the
 findings that are still open survive untouched.
 
+A run outlives the browser that started it, so the landing screen has its own
+check:
+
+```bash
+node tests/e2e/web_landing_resumes_work.mjs
+```
+
+It visits the page twice with the browser's memory cleared each time — once
+against an idle server, once with a run in progress — and holds that the first
+is offered the launcher and the second is shown the run instead.
+
 ## A2A endpoints
 
 | Endpoint | Purpose |
@@ -522,11 +533,14 @@ node tests/e2e/web_hitl_flow.mjs
 # Three fatal flaws answered one at a time, on one card that survives.
 node tests/e2e/web_governance_card.mjs
 
+# A first visit lands on the work in progress, not on an empty form.
+node tests/e2e/web_landing_resumes_work.mjs
+
 # Desktop and phone screenshots into /tmp/coscientist-shots.
 node tests/e2e/web_screenshots.mjs
 ```
 
-The first two finish in well under a minute between them, which puts them in
+The first three finish in well under a minute between them, which puts them in
 the same loop as `pytest` rather than in a pre-deploy checklist. Both own a
 port pair and refuse to start when either is taken, so they can run at once;
 the screenshot script takes no such care and shares a debugging port with the

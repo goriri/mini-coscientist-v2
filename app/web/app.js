@@ -2300,6 +2300,52 @@ async function openResearchSession(sessionId, { restore = false } = {}) {
   }
 }
 
+// A run that has not finished, ranked by how much it wants a person. A stage
+// waiting on a decision is stalled until someone answers it; an active one is
+// only being watched.
+const UNFINISHED_RANK = {
+  input_required: 0,
+  evidence_required: 0,
+  governance_blocked: 0,
+  active: 1,
+};
+
+// What the deployment is doing, in place of an empty form. A run outlives the
+// browser that started it -- it is hours of Deep Research on a server, and any
+// browser may watch it -- so a tab opened while four runs were mid-evidence
+// still headed itself "New inquiry" and offered to start a fifth. One of those
+// four was blocked on governance and had been since the tab before it closed,
+// with nothing on the landing screen to say so. The launcher is the right
+// screen only when there is no work to show.
+function ongoingRun() {
+  const unfinished = state.serverSessions.filter(
+    (entry) => entry.status in UNFINISHED_RANK,
+  );
+  if (!unfinished.length) return null;
+  // Waiting beats running, and within either the one that moved last: that is
+  // the run a person coming back to this page is coming back to.
+  unfinished.sort(
+    (left, right) =>
+      UNFINISHED_RANK[left.status] - UNFINISHED_RANK[right.status] ||
+      String(right.updated_at).localeCompare(String(left.updated_at)),
+  );
+  return unfinished[0];
+}
+
+async function resumeOngoingRun() {
+  setConnection("ready", "Ready for a governed inquiry");
+  // The poll that fills the directory is already in flight from the boot
+  // sequence; this is the same request, awaited, because the decision needs
+  // its answer rather than the empty list that precedes it.
+  await refreshSessionDirectory();
+  const run = ongoingRun();
+  if (!run) return;
+  // Not if the question has since been answered here: a person who pressed New
+  // inquiry between the request going out and coming back means it.
+  if (state.workflowId || state.mode !== "guided") return;
+  await openResearchSession(run.id, { restore: true });
+}
+
 async function handleDecisionClick(event) {
   const button = event.target.closest("[data-decision]");
   if (!button || state.busy || !state.workflowId) return;
@@ -2683,6 +2729,9 @@ if (state.mode === "conversation") {
   } else if (currentWorkflowId) {
     openResearchSession(currentWorkflowId, { restore: true });
   } else {
-    setConnection("ready", "Ready for a governed inquiry");
+    // Nothing named and nothing remembered, which is every first visit. If the
+    // server has a run going, that is the screen; the launcher is what is left
+    // when it has not.
+    resumeOngoingRun();
   }
 }
