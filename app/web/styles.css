@@ -2569,7 +2569,35 @@ body.history-preview .composer .send-button {
 }
 
 .session-history-section .section-heading {
-  justify-content: flex-end;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.operator-key {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease;
+}
+
+.operator-key:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+/* Held is a state worth seeing at a glance: every run in the list below is
+   deletable while it is on. */
+.operator-key.held {
+  border-color: var(--coral-ink);
+  color: var(--coral-ink);
 }
 
 .session-history-list {

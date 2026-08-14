@@ -831,14 +831,36 @@ def download_research_report(session_id: str, report_format: str) -> Response:
     )
 
 
+def _is_operator(token: str) -> bool:
+    """Whether this credential is the deployment's own, rather than a session's.
+
+    Set ``COSCIENTIST_ADMIN_TOKEN`` on the service and whoever holds it may
+    delete any run on it. Unset -- which is every local run and every test --
+    there is no operator and the per-session token is the only key there is.
+    """
+    admin = os.environ.get("COSCIENTIST_ADMIN_TOKEN", "")
+    return bool(admin) and secrets.compare_digest(token, admin)
+
+
 @router.delete("/sessions/{session_id}", status_code=204)
 def delete_research_session(
     session_id: str,
     deletion_token: str | None = Header(default=None, alias="X-Session-Delete-Token"),
 ) -> None:
-    """Permanently delete a bearer-owned research session."""
+    """Permanently delete a research session, by its own token or the operator's.
+
+    The per-session token is handed out once, to the browser that created the
+    run, and nothing hands it out again. So a run started on another machine,
+    from the command line, or before this service issued tokens showed no
+    delete button at all -- the reason a live deployment reached sixty-nine
+    sessions with no way to clear any of them.
+    """
     if not deletion_token:
         raise HTTPException(status_code=401, detail="Deletion token required.")
+    if _is_operator(deletion_token):
+        if not _ledger().delete_session(session_id, "", administrative=True):
+            raise HTTPException(status_code=404, detail="No such session.")
+        return
     token_hash = hashlib.sha256(deletion_token.encode()).hexdigest()
     if not _ledger().delete_session(session_id, token_hash):
         raise HTTPException(status_code=403, detail="Invalid deletion token.")

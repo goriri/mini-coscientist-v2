@@ -252,12 +252,32 @@ class ResearchLedger:
             if cursor.rowcount != 1:
                 raise KeyError(f"Unknown session: {session_id}")
 
-    def delete_session(self, session_id: str, token_hash: str) -> bool:
+    def delete_session(
+        self, session_id: str, token_hash: str, *, administrative: bool = False
+    ) -> bool:
+        """Remove a run and everything recorded against it.
+
+        The token is the one handed to whoever created the session, and holding
+        it is normally the whole of the authority to delete: a run belongs to
+        the browser that started it.
+
+        ``administrative`` is the operator's way past that, and it exists
+        because the credential is handed out exactly once. A run started from a
+        second machine, from the command line, or before this service kept
+        tokens at all can be reached by nobody -- so the sixty-nine runs on the
+        live deployment had, between them, no way to be deleted from the page
+        that lists them. The caller above decides who counts as the operator;
+        this only agrees to skip the check.
+        """
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT delete_token_hash FROM sessions WHERE id = ?", (session_id,)
             ).fetchone()
-            if row is None or not row[0] or not hmac.compare_digest(row[0], token_hash):
+            if row is None:
+                return False
+            if not administrative and (
+                not row[0] or not hmac.compare_digest(row[0], token_hash)
+            ):
                 return False
             connection.execute(
                 "DELETE FROM workflow_operations WHERE session_id = ?", (session_id,)
@@ -696,7 +716,10 @@ class PostgresResearchLedger:
             if cursor.rowcount != 1:
                 raise KeyError(f"Unknown session: {session_id}")
 
-    def delete_session(self, session_id: str, token_hash: str) -> bool:
+    def delete_session(
+        self, session_id: str, token_hash: str, *, administrative: bool = False
+    ) -> bool:
+        """See the SQLite twin."""
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -706,7 +729,11 @@ class PostgresResearchLedger:
                 (session_id,),
             )
             row = cursor.fetchone()
-            if row is None or not row[0] or not hmac.compare_digest(row[0], token_hash):
+            if row is None:
+                return False
+            if not administrative and (
+                not row[0] or not hmac.compare_digest(row[0], token_hash)
+            ):
                 return False
             cursor.execute(
                 """

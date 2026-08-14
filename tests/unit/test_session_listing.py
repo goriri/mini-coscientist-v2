@@ -14,12 +14,13 @@ go through the loader, which builds a workflow and renders its whole dossier.
 from __future__ import annotations
 
 import pytest
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, HTTPException
 
 from app import research_api
 from app.research_api import (
     CreateResearchSession,
     create_research_session,
+    delete_research_session,
     list_research_sessions,
 )
 from coscientist.ledger import ResearchLedger
@@ -129,3 +130,57 @@ def test_a_request_for_more_than_the_ceiling_gets_the_ceiling(ledger):
     list_research_sessions(limit=0)
 
     assert calls == [200, 1]
+
+
+def test_a_run_this_browser_did_not_start_can_be_deleted_by_the_operator(
+    ledger, monkeypatch
+):
+    """The per-session credential is handed out once, to whoever created the run.
+
+    Nothing hands it out again, so a run started on another machine, from the
+    command line, or before this service issued tokens at all could be deleted
+    by nobody -- and the live deployment reached sixty-nine sessions with no way
+    to clear one of them from the page that lists them.
+    """
+    monkeypatch.setenv("COSCIENTIST_ADMIN_TOKEN", "operator-secret")
+    snapshot = create_research_session(
+        CreateResearchSession(question=QUESTION), BackgroundTasks()
+    )
+    # The credential this run was born with, gone the way it goes in practice.
+    ledger.set_delete_token_hash(snapshot["id"], "")
+
+    with pytest.raises(HTTPException) as refused:
+        delete_research_session(snapshot["id"], "not-the-operator")
+    assert refused.value.status_code == 403
+
+    delete_research_session(snapshot["id"], "operator-secret")
+
+    assert list_research_sessions()["sessions"] == []
+
+
+def test_without_an_operator_key_configured_only_the_session_token_deletes(
+    ledger, monkeypatch
+):
+    """Local runs and tests set no key, and an empty one must not become a
+    password that any empty header matches."""
+    monkeypatch.delenv("COSCIENTIST_ADMIN_TOKEN", raising=False)
+    snapshot = create_research_session(
+        CreateResearchSession(question=QUESTION), BackgroundTasks()
+    )
+
+    for credential in ("", "anything"):
+        with pytest.raises(HTTPException):
+            delete_research_session(snapshot["id"], credential)
+
+    delete_research_session(snapshot["id"], snapshot["deletion_token"])
+
+    assert list_research_sessions()["sessions"] == []
+
+
+def test_the_operator_is_told_when_the_run_is_already_gone(ledger, monkeypatch):
+    monkeypatch.setenv("COSCIENTIST_ADMIN_TOKEN", "operator-secret")
+
+    with pytest.raises(HTTPException) as missing:
+        delete_research_session("session_none", "operator-secret")
+
+    assert missing.value.status_code == 404

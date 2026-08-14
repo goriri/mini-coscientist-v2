@@ -12,10 +12,18 @@ const RESEARCH_STAGES = [
   "meta_review",
 ];
 
+// As many runs as the directory itself will answer with, so that the two lists
+// the panel merges are capped at the same place. At twenty, a browser that had
+// started more research than that quietly forgot the oldest of it -- and the
+// forgetting happened on the next click, because saving the history is what
+// applies the cap. Opening one run from the list made five others vanish from
+// it, which is what a researcher with sixty-nine runs on the server saw.
+const SESSION_HISTORY_LIMIT = 200;
+
 function loadSessionHistory() {
   try {
     const saved = JSON.parse(localStorage.getItem(SESSION_HISTORY_KEY) || "[]");
-    return Array.isArray(saved) ? saved.slice(0, 20) : [];
+    return Array.isArray(saved) ? saved.slice(0, SESSION_HISTORY_LIMIT) : [];
   } catch {
     return [];
   }
@@ -138,6 +146,7 @@ const elements = {
   sessionHistory: document.querySelector("#sessionHistory"),
   sessionCount: document.querySelector("#sessionCount"),
   historyButton: document.querySelector("#historyButton"),
+  operatorKey: document.querySelector("#operatorKey"),
   closeHistory: document.querySelector("#closeHistory"),
   notifySection: document.querySelector("#notifySection"),
   notifyEnabled: document.querySelector("#notifyEnabled"),
@@ -777,7 +786,7 @@ function relativeTime(value) {
 }
 
 function saveSessionHistory() {
-  state.recentSessions = state.recentSessions.slice(0, 20);
+  state.recentSessions = state.recentSessions.slice(0, SESSION_HISTORY_LIMIT);
   localStorage.setItem(
     SESSION_HISTORY_KEY,
     JSON.stringify(state.recentSessions),
@@ -843,21 +852,61 @@ function removeRecentSession(sessionId, { deleted = false } = {}) {
   renderSessionHistory();
 }
 
+// The deployment's own credential, kept in this browser so it is typed once
+// rather than once per session. Whoever holds it may delete any run on the
+// server; without it a browser can only delete the runs it started itself.
+const OPERATOR_KEY = "coscientist.operatorKey";
+
+function operatorKey() {
+  return localStorage.getItem(OPERATOR_KEY) || "";
+}
+
+function renderOperatorKey() {
+  const held = Boolean(operatorKey());
+  elements.operatorKey.classList.toggle("held", held);
+  elements.operatorKey.textContent = held ? "Operator key held" : "Operator key";
+  elements.operatorKey.title = held
+    ? "Every run on this server can be deleted from here. Click to give the key up."
+    : "Hold the operator key for this deployment to delete runs this browser did not start";
+}
+
+function promptForOperatorKey() {
+  if (operatorKey()) {
+    localStorage.removeItem(OPERATOR_KEY);
+    renderOperatorKey();
+    renderSessionHistory();
+    toast("Operator key given up");
+    return;
+  }
+  const typed = window.prompt(
+    "Operator key for this deployment. It stays in this browser and unlocks " +
+      "deletion for every run on the server.",
+  );
+  if (typed === null) return;
+  const trimmed = typed.trim();
+  if (!trimmed) return;
+  localStorage.setItem(OPERATOR_KEY, trimmed);
+  renderOperatorKey();
+  renderSessionHistory();
+  toast("Operator key held in this browser");
+}
+
 async function deleteCloudSession(sessionId) {
-  const session = state.recentSessions.find((item) => item.id === sessionId);
-  if (!session?.deleteToken) {
+  const session = mergedSessions().find((item) => item.id === sessionId);
+  const credential = session?.deleteToken || operatorKey();
+  if (!credential) {
     toast("This browser does not hold the deletion credential");
     return;
   }
   const confirmed = window.confirm(
-    `Permanently delete “${session.title}” and its cloud research record? This cannot be undone.`,
+    `Permanently delete “${historyTitle(session)}” and its cloud research record? This cannot be undone.`,
   );
   if (!confirmed) return;
   const response = await fetch(
     `/api/research/sessions/${encodeURIComponent(sessionId)}`,
     {
       method: "DELETE",
-      headers: { "X-Session-Delete-Token": session.deleteToken },
+      headers: { "X-Session-Delete-Token": credential },
     },
   );
   if (!response.ok) {
@@ -945,7 +994,12 @@ function adoptDirectorySession(sessionId) {
 
 async function refreshSessionDirectory() {
   try {
-    const response = await fetch("/api/research/sessions?limit=50");
+    // Everything the route will answer with. Asked for fifty, the panel headed
+    // itself "50 on this server" while the server held sixty-nine, and the
+    // nineteen oldest runs could not be reached from the page at all.
+    const response = await fetch(
+      `/api/research/sessions?limit=${SESSION_HISTORY_LIMIT}`,
+    );
     if (!response.ok) return;
     const payload = await response.json();
     state.serverSessions = Array.isArray(payload.sessions)
@@ -985,7 +1039,9 @@ function renderSessionHistory() {
           <div class="session-history-actions">
             <button class="session-rename" type="button" aria-label="Rename ${escapeHtml(historyTitle(item))}" title="Rename this session">✎</button>
             ${
-              item.deleteToken
+              // Its own credential, or the operator's, which stands in for
+              // every credential this browser was never given.
+              item.deleteToken || operatorKey()
                 ? `<button class="session-delete-cloud" type="button" aria-label="Permanently delete ${escapeHtml(historyTitle(item))} from Google Cloud" title="Permanently delete from Google Cloud">⌫</button>`
                 : ""
             }
@@ -2550,6 +2606,7 @@ elements.sessionTitleInput.addEventListener("keydown", (event) => {
   if (event.key === "Escape") endRename(false);
 });
 elements.sessionTitleInput.addEventListener("blur", () => endRename(true));
+elements.operatorKey.addEventListener("click", promptForOperatorKey);
 elements.historyButton.addEventListener("click", () => {
   document.body.classList.add("history-open");
   // Opening the drawer is the one moment the list is definitely being read.
@@ -2590,6 +2647,7 @@ document.addEventListener("click", (event) => {
 state.optionsReady = loadResearchOptions();
 renderSessionTitle(null);
 renderNotifyControl();
+renderOperatorKey();
 selectMode(state.mode);
 renderSessionHistory();
 refreshSessionDirectory();

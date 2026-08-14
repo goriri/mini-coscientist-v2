@@ -431,6 +431,17 @@
         <section class="context-section session-history-section">
           <div class="section-heading">
             <span id="sessionCount">Loading sessions…</span>
+            <!-- The per-session deletion credential is handed out once, to the
+                 browser that started the run, so most of this list can never be
+                 deleted from it. An operator key unlocks the rest. -->
+            <button
+              class="operator-key"
+              id="operatorKey"
+              type="button"
+              title="Hold the operator key for this deployment"
+            >
+              Operator key
+            </button>
           </div>
           <div class="session-history-list" id="sessionHistory">
             <div class="history-empty">
