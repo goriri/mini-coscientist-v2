@@ -893,7 +893,12 @@ function promptForOperatorKey() {
 
 async function deleteCloudSession(sessionId) {
   const session = mergedSessions().find((item) => item.id === sessionId);
-  const credential = session?.deleteToken || operatorKey();
+  // The operator's key first, because it opens every run and a session's own
+  // token opens one. Taking the session's token first let a stale one shadow
+  // the key: rows this browser remembered for runs already deleted elsewhere
+  // still carried a token, so the request went out under it, came back 403,
+  // and the key sitting in localStorage was never tried.
+  const credential = operatorKey() || session?.deleteToken;
   if (!credential) {
     toast("This browser does not hold the deletion credential");
     return;
@@ -909,6 +914,14 @@ async function deleteCloudSession(sessionId) {
       headers: { "X-Session-Delete-Token": credential },
     },
   );
+  // Already gone is the outcome the click asked for. A row can outlive the run
+  // it names -- deleted from another browser, or from the command line -- and
+  // treating that as a failure left it on the list to be clicked again.
+  if (response.status === 404) {
+    removeRecentSession(sessionId, { deleted: true });
+    toast("That run is no longer on the server");
+    return;
+  }
   if (!response.ok) {
     let detail = `Deletion failed (${response.status})`;
     try {

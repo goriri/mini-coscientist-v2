@@ -184,3 +184,39 @@ def test_the_operator_is_told_when_the_run_is_already_gone(ledger, monkeypatch):
         delete_research_session("session_none", "operator-secret")
 
     assert missing.value.status_code == 404
+
+
+def test_a_run_that_is_not_here_says_so_whatever_credential_is_offered(
+    ledger, monkeypatch
+):
+    """A row can outlive the run it names, and the answer has to say which it is.
+
+    The ledger reports "no such session" and "wrong token" as the same false, so
+    both used to come back 403 -- and a browser holding a stale token for a run
+    deleted somewhere else read that as "you may not", kept the row, and offered
+    the button again. One row on the live deployment was refused eight times in
+    ninety seconds. Which sessions exist is on the public listing, so answering
+    404 here tells a caller nothing it could not already read.
+    """
+    monkeypatch.delenv("COSCIENTIST_ADMIN_TOKEN", raising=False)
+
+    with pytest.raises(HTTPException) as missing:
+        delete_research_session("session_none", "a-token-from-a-run-long-gone")
+
+    assert missing.value.status_code == 404
+
+
+def test_a_wrong_token_for_a_run_that_is_here_is_still_refused(ledger, monkeypatch):
+    """Saying 404 for what is absent must not soften what is present."""
+    monkeypatch.delenv("COSCIENTIST_ADMIN_TOKEN", raising=False)
+    snapshot = create_research_session(
+        CreateResearchSession(question=QUESTION), BackgroundTasks()
+    )
+
+    with pytest.raises(HTTPException) as refused:
+        delete_research_session(snapshot["id"], "not-this-run's-token")
+
+    assert refused.value.status_code == 403
+    assert [entry["id"] for entry in list_research_sessions()["sessions"]] == [
+        snapshot["id"]
+    ]

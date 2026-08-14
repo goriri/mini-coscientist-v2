@@ -854,9 +854,21 @@ def delete_research_session(
     from the command line, or before this service issued tokens showed no
     delete button at all -- the reason a live deployment reached sixty-nine
     sessions with no way to clear any of them.
+
+    A run that is not here answers 404 whatever credential is offered. The
+    ledger reports "no such session" and "wrong token" as the same false, and
+    reporting both as 403 stranded rows the browser kept for runs the server
+    had already dropped: the page called them undeletable and offered the
+    button again, so one row was refused eight times in ninety seconds. Which
+    sessions exist is on the public listing anyway, so saying so tells a caller
+    nothing it could not already read.
     """
     if not deletion_token:
         raise HTTPException(status_code=401, detail="Deletion token required.")
+    try:
+        _ledger().load(session_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="No such session.") from error
     if _is_operator(deletion_token):
         if not _ledger().delete_session(session_id, "", administrative=True):
             raise HTTPException(status_code=404, detail="No such session.")
