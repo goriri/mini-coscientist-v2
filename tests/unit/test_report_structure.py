@@ -7497,6 +7497,86 @@ def test_a_claim_is_caught_by_what_it_carries_not_by_the_verb_it_reached_for():
         )
 
 
+def test_a_long_sentence_case_title_is_a_name_and_is_printed_as_one():
+    """Four of the forty-four entries of a live reference list read "Untitled source
+    on pmc.ncbi.nlm.nih.gov" and the like, and every one of them had a perfectly good
+    name stored on the lead. The guard above discarded them: it read ten words with a
+    clause verb in sentence case, or twenty-five words of anything, as a claim, and a
+    biomedical title is routinely both. Checked over the thirteen hundred titles the
+    runs have recorded, that rule threw away eighty-three real papers.
+    """
+    from coscientist.narrative import _reference_title
+
+    for lead, expected in (
+        (
+            SourceLead(
+                canonical_url="https://pmc.ncbi.nlm.nih.gov/articles/PMC12937536/",
+                title=(
+                    "Immune-related deubiquitylation spectrum of microsatellite "
+                    "stability colorectal cancer reveals USP7 as a potential "
+                    "immunotherapeutic target - PMC nih.gov"
+                ),
+            ),
+            "Immune-related deubiquitylation spectrum of microsatellite stability "
+            "colorectal cancer reveals USP7 as a potential immunotherapeutic target",
+        ),
+        (
+            SourceLead(
+                canonical_url="https://pubs.acs.org/doi/10.1021/acsptsci.4c00374",
+                title=(
+                    "New Potent Inhibitor of Transforming Growth Factor-Beta (TGFβ) "
+                    "Signaling that is Efficacious against Microsatellite Stable "
+                    "Colorectal Cancer Metastasis in Combination with Immune "
+                    "Checkpoint Therapy in Mice - ACS Publications acs.org"
+                ),
+            ),
+            "New Potent Inhibitor of Transforming Growth Factor-Beta (TGFβ) "
+            "Signaling that is Efficacious against Microsatellite Stable Colorectal "
+            "Cancer Metastasis in Combination with Immune Checkpoint Therapy in Mice",
+        ),
+        (
+            SourceLead(
+                canonical_url=(
+                    "https://www.frontiersin.org/journals/oncology/articles/"
+                    "10.3389/fonc.2023.1274487/full"
+                ),
+                title=(
+                    "Regorafenib alone or in combination with high/low-dose "
+                    "radiotherapy plus toripalimab as third-line treatment in "
+                    "patients with metastatic colorectal cancer: protocol for a "
+                    "prospective, randomized, controlled phase II clinical trial "
+                    "(SLOT) - Frontiers frontiersin.org"
+                ),
+            ),
+            "Regorafenib alone or in combination with high/low-dose radiotherapy "
+            "plus toripalimab as third-line treatment in patients with metastatic "
+            "colorectal cancer: protocol for a prospective, randomized, controlled "
+            "phase II clinical trial (SLOT)",
+        ),
+    ):
+        assert _reference_title(lead) == expected
+
+
+def test_a_retraction_notice_is_not_read_as_prose_by_the_journal_it_cites():
+    """The retracted paper's own reference sits in brackets on the end of the notice,
+    and every abbreviation in it closes on a full stop. Read as sentence breaks, they
+    made "Retraction notice to ..." an untitled source on researchgate.net."""
+    from coscientist.narrative import _reference_title
+
+    notice = (
+        "Retraction notice to “High density conductive LiFePO4 cathode with "
+        "enhanced high-rate and high temperature performance” "
+        "[Mater. Chem. Phys. 232 (2019) 367-373]"
+    )
+
+    assert (
+        _reference_title(
+            SourceLead(canonical_url="https://www.researchgate.net/x", title=notice)
+        )
+        == notice
+    )
+
+
 def test_an_entry_that_has_only_the_authors_says_it_has_no_title():
     """ "22. Zhao et al." was a whole reference entry: the authors came out of a table
     cell in a pass report and the title stayed in the next column."""

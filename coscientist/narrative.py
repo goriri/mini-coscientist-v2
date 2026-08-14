@@ -759,23 +759,21 @@ _AUTHORS_ONLY = re.compile(
     r"\s+et\.?\s*al\.?(?:,?\s*\(?(?:19|20)\d{2}\)?)?$"
 )
 
-# A finding recorded where a title should be. Entry 11 of a live report read "The
-# most critical failure point in the available scientific literature is the sample
-# size requirement." -- the claim, printed a second time as though it were the name
-# of the paper it was drawn from, and entry 20 was a forty-word sentence about
-# electrolyte formulations. Both came in from the evidence stage, where a statement
-# and the source it cites are recorded side by side.
-#
-# Three conditions together, because any one of them alone catches real titles: a
-# clause verb of the kind a title has no room for, ten words or more, and sentence
-# case rather than the title case a journal sets a name in. Checked against the
-# sixty-three titles that run recorded, they select those two and nothing else.
+# A verb that carries a clause, as against the participles and gerunds a noun phrase
+# is built from.
 _CLAUSE_VERB = re.compile(
     r"\b(?:is|are|was|were|has|have|had|utilizes?|confirms?|shows?|reveals?"
     r"|demonstrates?|suggests?|indicates?|requires?|verifies|verify|reports?)\b",
     re.IGNORECASE,
 )
 
+# A finding recorded where a title should be. Entry 11 of a live report read "The
+# most critical failure point in the available scientific literature is the sample
+# size requirement." -- the claim, printed a second time as though it were the name
+# of the paper it was drawn from, and entry 20 was a forty-word Facebook post about
+# coatings. Both came in from the evidence stage, where a statement and the source
+# it cites are recorded side by side.
+#
 # The pass's own markup for the pipeline, left on the end of a statement that was
 # stored where a title goes: a facet tag and the URL it was recorded against. The
 # Knowledge Base strips this from every sentence it prints and the reference list
@@ -793,27 +791,73 @@ _PROSE_OPENER = re.compile(
     re.IGNORECASE,
 )
 
+# A full stop where the title ends. A journal sets a name without one; a sentence
+# lifted out of a report brings its own. Four letters in front of the stop so that
+# an entry ending on an abbreviation -- "Zhao et al.", "Sandia Natl. Lab." -- is not
+# read as a closed sentence.
+_CLOSING_STOP = re.compile(r"[A-Za-z]{4,}\.\s*$")
+
+# A second sentence starting inside the field. One paper has one name, so a stop
+# with another sentence behind it means what was stored is prose: a live entry ran
+# "A protective coating just one nanometer thick could help unlock better
+# solid-state batteries. Argonne researchers identified magnesium oxide as a
+# promising candidate..." -- a Facebook post, printed as a reference.
+#
+# The word in front of the stop must be four letters or more and the word behind it
+# must carry on in lower case, which is what keeps a journal's own abbreviations off
+# the rule: "vs. MRI", "Dr. Tashko", "p. G12C", "Life Sci. 328".
+_SECOND_SENTENCE = re.compile(r"[A-Za-z]{4,}\.\s+[\"'“(]?[A-Z][a-z]")
+
+# What a bibliographic aside puts in brackets, stops and all. Cut before the rule
+# above looks for a second sentence, so that the two stops inside "[Mater. Chem.
+# Phys. 232 (2019) 367-373]" do not make a retraction notice read as prose.
+_BRACKETED_ASIDE = re.compile(r"\[[^\]]*\]|\([^)]*\)")
+
+# Subject, copula, and a noun phrase for a predicate -- "The most critical failure
+# point ... is the sample size requirement". This is the shape of a statement of
+# fact and not of a name: a title that reaches for a copula puts a participle after
+# it ("... is mediated by increased copy number of multiple beta-lactamase genes"),
+# and a title is not built as a determiner-led subject in the first place.
+_PREDICATE_NOMINATIVE = re.compile(
+    r"^(?:the|this|these|those|a|an|our)\b.*"
+    r"\b(?:is|are|was|were)\s+(?:the|a|an|no|not|one|its|their)\b",
+    re.IGNORECASE,
+)
+
 
 def _states_a_claim(title: str) -> bool:
     """Whether what was stored as a title is a sentence about the field.
 
-    The verb list was tuned against the sixty-three titles of one run, and the next
-    run's statements reached for verbs that were not on it -- confirm, verifies,
-    requires -- so three claims went into the reference list as the names of papers.
-    A wider list is still a guess about wording, so the two signals that do not
-    depend on any word choice are checked first: markup no title ever carries, and
-    a sentence opener no title ever uses.
+    Every rule here is about sentence structure, because wording and length were
+    tried and neither holds. The verb list was tuned against the sixty-three titles
+    of one run, and the next run's statements reached for verbs that were not on it
+    -- confirm, verifies, requires. Widening it and falling back on "twenty-five
+    words or more" then threw away eighty-three real papers out of the thirteen
+    hundred titles the runs have recorded since, because a biomedical title runs
+    long and is set in sentence case with a verb in it: "Immune-related
+    deubiquitylation spectrum of microsatellite stability colorectal cancer reveals
+    USP7 as a potential immunotherapeutic target" is a name, and the reference list
+    printed "Untitled source on pmc.ncbi.nlm.nih.gov" in its place.
+
+    What is left selects one title in that corpus that is really a name, against the
+    claims, the boilerplate and the social-media post it is there to keep out.
     """
     if _STATEMENT_MARKUP.search(title) or _PROSE_OPENER.match(title):
         return True
-    words = title.split()
-    if len(words) < 10 or title.rstrip().endswith("?"):
+    text = title.strip()
+    words = text.split()
+    # Too short to be a sentence anyone would mistake for prose, and a question is a
+    # shape titles do use: "Is KRAS (G12C) inhibitor monotherapy ... possible?".
+    if len(words) < 10 or text.endswith("?"):
         return False
-    # Long enough that no paper is named this way, whatever verb it reached for.
-    if len(words) >= 25:
+    if _CLOSING_STOP.search(text) or _SECOND_SENTENCE.search(
+        _BRACKETED_ASIDE.sub(" ", text)
+    ):
         return True
     capitalised = sum(1 for word in words if word[:1].isupper())
-    return bool(_CLAUSE_VERB.search(title)) and capitalised / len(words) < 0.4
+    # Sentence case as a second condition, not on its own: most journals now set
+    # titles that way, and it is only the copula clause that makes this one prose.
+    return bool(_PREDICATE_NOMINATIVE.match(text)) and capitalised / len(words) < 0.4
 
 
 # Words a title has and an identifier has not. A path segment carrying one was
