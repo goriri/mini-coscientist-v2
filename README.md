@@ -533,16 +533,18 @@ node tests/e2e/web_hitl_flow.mjs
 # Three fatal flaws answered one at a time, on one card that survives.
 node tests/e2e/web_governance_card.mjs
 
-# A first visit lands on the work in progress, not on an empty form.
+# A first visit lands on the work in progress, not on an empty form. It runs
+# the last two of its three visits over a throttled, uncached connection, so it
+# is the slow one of the three -- half a minute, most of it spent waiting.
 node tests/e2e/web_landing_resumes_work.mjs
 
 # Desktop and phone screenshots into /tmp/coscientist-shots.
 node tests/e2e/web_screenshots.mjs
 ```
 
-The first three finish in well under a minute between them, which puts them in
-the same loop as `pytest` rather than in a pre-deploy checklist. Both own a
-port pair and refuse to start when either is taken, so they can run at once;
+The first three finish in about a minute between them, which puts them in the
+same loop as `pytest` rather than in a pre-deploy checklist. Each owns a port
+pair and refuses to start when either is taken, so they can run at once;
 the screenshot script takes no such care and shares a debugging port with the
 governance card.
 

@@ -100,6 +100,9 @@ const state = {
   // run -- the name typed over it, the credential that can delete it -- is
   // still local, and is laid over this on the way to the page.
   serverSessions: [],
+  // Set while a first visit is asking the server whether anything is running,
+  // and read by the composer so it shows neither answer until there is one.
+  resolvingLanding: false,
   notifyStageAlerts: localStorage.getItem(NOTIFY_KEY) !== "off",
   operationStartedAt: null,
   notifiedGateKey: null,
@@ -2239,7 +2242,11 @@ function syncRunSettingsDigest() {
 // that -- silently abandoning the run being read. A conversation keeps it,
 // because there it is the chat input.
 function syncComposerVisibility() {
-  const launching = state.mode !== "guided" || !state.workflowId;
+  const launching =
+    // Not while the landing screen is still asking the server what is running.
+    // Offered early and withdrawn a few seconds later, the launcher is a wrong
+    // answer shown long enough to be acted on.
+    !state.resolvingLanding && (state.mode !== "guided" || !state.workflowId);
   elements.composerWrap.hidden = !launching;
   if (launching) syncRunSettingsDigest();
 }
@@ -2332,18 +2339,42 @@ function ongoingRun() {
   return unfinished[0];
 }
 
+// The landing question has an answer now, whichever way it went. Until this
+// runs the composer shows neither screen; after it, it shows what it is told.
+// It runs even when the run failed to open -- a shared link to a session that
+// is no longer there leaves the launcher as the only screen left.
+function settleLanding() {
+  state.resolvingLanding = false;
+  syncComposerVisibility();
+}
+
 async function resumeOngoingRun() {
-  setConnection("ready", "Ready for a governed inquiry");
-  // The poll that fills the directory is already in flight from the boot
-  // sequence; this is the same request, awaited, because the decision needs
-  // its answer rather than the empty list that precedes it.
-  await refreshSessionDirectory();
-  const run = ongoingRun();
-  if (!run) return;
-  // Not if the question has since been answered here: a person who pressed New
-  // inquiry between the request going out and coming back means it.
-  if (state.workflowId || state.mode !== "guided") return;
-  await openResearchSession(run.id, { restore: true });
+  // Nothing until the answer comes back. Showing the launcher first and
+  // swapping it out is worse than a moment of neither: against the deployment
+  // the directory and the run behind it took between three and twelve seconds
+  // to arrive, and for all of it the page said "New inquiry" over four runs in
+  // progress -- which is the reading it is wrong about, held long enough to
+  // start typing into. The boot sequence has already set this for the first
+  // visit it decided to hand here; set again for any later caller.
+  state.resolvingLanding = true;
+  syncComposerVisibility();
+  setConnection("", "Looking for research in progress");
+  try {
+    // The poll that fills the directory is already in flight from the boot
+    // sequence; this is the same request, awaited, because the decision needs
+    // its answer rather than the empty list that precedes it.
+    await refreshSessionDirectory();
+    const run = ongoingRun();
+    // Not if the question has been answered here in the meantime: a person who
+    // pressed New inquiry while the request was out means it.
+    if (run && !state.workflowId && state.mode === "guided") {
+      await openResearchSession(run.id, { restore: true });
+      return;
+    }
+  } finally {
+    settleLanding();
+  }
+  if (!state.workflowId) setConnection("ready", "Ready for a governed inquiry");
 }
 
 async function handleDecisionClick(event) {
@@ -2703,6 +2734,23 @@ document.addEventListener("click", (event) => {
   }
 });
 
+// A session lives on the server; the list of the ones you have seen lives in
+// this browser. Anyone sent a session identifier had no way to open it here at
+// all -- the report existed, was public, and could only be reached by calling
+// the API by hand. Named in the address, it opens and joins this browser's
+// history like any other.
+const sharedSessionId = new URLSearchParams(location.search).get("session");
+const rememberedWorkflowId = localStorage.getItem(CURRENT_WORKFLOW_KEY);
+// Every guided visit begins not knowing which screen it is, and says so until
+// it does. All three answers below need a round trip -- the run named in the
+// address, the run this browser was last reading, the run the server has going
+// -- and the first render happens before any of them come back. Set here
+// rather than inside the branch that asks, because that render unhides the
+// launcher on its way past and the browser paints it: a shared link opened
+// over a slow connection read "New inquiry" for a second and a half before the
+// run it names arrived.
+state.resolvingLanding = state.mode === "guided";
+
 state.optionsReady = loadResearchOptions();
 renderSessionTitle(null);
 renderNotifyControl();
@@ -2717,17 +2765,12 @@ if (state.mode === "conversation") {
     setConnection("error", "Could not create session"),
   );
 } else {
-  // A session lives on the server; the list of the ones you have seen lives in
-  // this browser. Anyone sent a session identifier had no way to open it here
-  // at all -- the report existed, was public, and could only be reached by
-  // calling the API by hand. Named in the address, it opens and joins this
-  // browser's history like any other.
-  const shared = new URLSearchParams(location.search).get("session");
-  const currentWorkflowId = localStorage.getItem(CURRENT_WORKFLOW_KEY);
-  if (shared) {
-    openResearchSession(shared);
-  } else if (currentWorkflowId) {
-    openResearchSession(currentWorkflowId, { restore: true });
+  if (sharedSessionId) {
+    openResearchSession(sharedSessionId).finally(settleLanding);
+  } else if (rememberedWorkflowId) {
+    openResearchSession(rememberedWorkflowId, { restore: true }).finally(
+      settleLanding,
+    );
   } else {
     // Nothing named and nothing remembered, which is every first visit. If the
     // server has a run going, that is the screen; the launcher is what is left

@@ -23,7 +23,7 @@ Start with 1-2 eval cases, run `agents-cli eval generate`, then `agents-cli eval
 ### Phase 4: Pre-Deployment Tests
 Run `uv run pytest tests/unit tests/integration`. Fix issues until all tests pass.
 
-Anything that touches the workspace also needs `node tests/e2e/web_hitl_flow.mjs`, `node tests/e2e/web_governance_card.mjs` and `node tests/e2e/web_landing_resumes_work.mjs`. They start their own offline server, cost nothing, and finish in under a minute — run them on every change rather than saving them for a deployment. See **Verify the project** in the README.
+Anything that touches the workspace also needs `node tests/e2e/web_hitl_flow.mjs`, `node tests/e2e/web_governance_card.mjs` and `node tests/e2e/web_landing_resumes_work.mjs`. They start their own offline server, cost nothing, and finish in about a minute between them — run them on every change rather than saving them for a deployment. See **Verify the project** in the README.
 
 ### Phase 5: Deploy to Dev
 **Requires explicit human approval.** Run `agents-cli deploy` only after user confirms. See the **Deployment Guide** for details.

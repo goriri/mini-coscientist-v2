@@ -297,11 +297,18 @@
         <!-- Only ever the start of a run, and hidden by app.js once one is
              open. Left on screen beside a session in progress, its button still
              read "Begin inquiry" and still meant it: pressing it abandoned the
-             run being read and started a different one. -->
+             run being read and started a different one.
+
+             Hidden here, and shown by app.js once it knows whether there is a
+             run to show instead. Visible in the markup it painted before the
+             script had even been fetched, so a slow connection got "New
+             inquiry" over four runs in progress for as long as the load took --
+             the wrong screen, up first and up longest. -->
         <section
           class="composer-wrap"
           id="composerWrap"
           aria-label="Research prompt composer"
+          hidden
         >
           <form class="composer" id="composer">
             <div class="mode-switch" role="group" aria-label="Interaction mode">
