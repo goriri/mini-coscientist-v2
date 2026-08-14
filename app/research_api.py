@@ -72,17 +72,6 @@ OPERATION_HEARTBEAT_SECONDS = 60
 """How often the heartbeat renews. Well inside the lease, so a missed beat is
 survivable and only a stopped worker actually expires."""
 
-OPERATION_LEASE_SECONDS = 300
-"""How long a worker owns a session before it is presumed dead.
-
-Short on purpose. A crashed instance costs a researcher this much waiting, and
-a worker that is alive keeps the lease by renewing it rather than by having
-asked for a long one up front.
-"""
-
-OPERATION_HEARTBEAT_SECONDS = 60
-"""How often a working worker renews. Five renewals to a lease."""
-
 
 class CreateResearchSession(BaseModel):
     question: str = Field(min_length=3, max_length=12000)
@@ -173,6 +162,27 @@ def _set_operation(
 
 def _operation(session_id: str) -> dict[str, str]:
     return _ledger().operation(session_id)
+
+
+def _reported_status(status: str, operation: dict) -> str:
+    """What the run is, once the worker that was driving it has stopped.
+
+    A worker that dies records the reason against the operation and leaves the
+    session alone, because the session is still exactly where the failure left
+    it and a retry has to be able to pick it up from there. Nothing then said
+    so: the run stayed ``active`` and the workspace read "Workflow active" over
+    a run that had ended hours earlier. Four runs on the live deployment sat
+    like that -- three of them killed by a specialist closing its event stream
+    without answering -- and the landing screen, which now opens whatever is
+    running, opened one of them and watched a spinner that would never move.
+
+    Read here rather than written back, so a retry that requeues the operation
+    puts the run back to active by itself, and so the four already stranded are
+    told the truth the next time they are asked without anything editing them.
+    """
+    if status == "active" and operation.get("status") == "failed":
+        return "failed"
+    return status
 
 
 def _artifact_summary(
@@ -330,12 +340,13 @@ def _snapshot(workflow: CoScientistWorkflow) -> dict:
         }
         for item in session.decisions[-12:]
     ]
+    operation = _operation(session.id)
     return {
         "id": session.id,
         "question": session.question,
         "created_at": session.created_at,
         "updated_at": session.updated_at,
-        "status": session.status,
+        "status": _reported_status(session.status, operation),
         "stage": workflow.stage,
         "stage_number": min(session.current_stage + 1, len(workflow.workflow_stages)),
         "stage_count": len(workflow.workflow_stages),
@@ -373,7 +384,7 @@ def _snapshot(workflow: CoScientistWorkflow) -> dict:
         ),
         "stage_previews": _stage_preview_metadata(workflow),
         "report_available": workflow.done,
-        "operation": _operation(session.id),
+        "operation": operation,
         "report": workflow.render_report() if workflow.done else None,
         "report_presentation": (
             build_stage_presentation(session, "meta_review") if workflow.done else None
@@ -727,6 +738,7 @@ def list_research_sessions(limit: int = 50) -> dict:
     ledger = _ledger()
     listing = []
     for entry in ledger.recent_sessions(min(max(1, limit), 200)):
+        operation = ledger.operation(entry["id"])
         stages = (
             WORKFLOW_STAGES if entry["workflow_version"] >= 2 else WORKFLOW_STAGES_V1
         )
@@ -736,7 +748,7 @@ def list_research_sessions(limit: int = 50) -> dict:
             {
                 "id": entry["id"],
                 "question": entry["question"],
-                "status": entry["status"],
+                "status": _reported_status(entry["status"], operation),
                 "stage": "report" if done else stages[position],
                 "stage_number": min(position + 1, len(stages)),
                 "stage_count": len(stages),
@@ -746,7 +758,7 @@ def list_research_sessions(limit: int = 50) -> dict:
                 # What the run is waiting on, which is the difference between a
                 # run nobody has to touch and one parked at a gate. The panel
                 # showed neither before, because it had never heard of the run.
-                "operation": ledger.operation(entry["id"]),
+                "operation": operation,
             }
         )
     return {"sessions": listing}

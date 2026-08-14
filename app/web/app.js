@@ -762,6 +762,9 @@ function stageLabel(stage) {
 // and a run that had finished and printed its dossier: both read "Meta-review".
 const HISTORY_STATES = {
   ready_for_report: "Report ready",
+  // A run whose worker died reads as a run in progress otherwise, and the
+  // stage name it stopped in is the same stage name it would be working in.
+  failed: "Stopped by a failure",
   governance_blocked: "Blocked on governance",
   evidence_required: "Waiting on evidence",
   input_required: "Waiting for input",
@@ -1460,6 +1463,10 @@ function workflowStatusCopy(workflow) {
   if (workflow.status === "stopped_by_researcher")
     return "Stopped by researcher";
   if (workflow.status === "ready_for_report") return "Dossier ready";
+  // Named, because the fallthrough below reads "Workflow active" -- which is
+  // what a run that had ended hours earlier said about itself, over a stage
+  // that was never going to finish. What went wrong is on the card below this.
+  if (workflow.status === "failed") return "Stopped by a failure";
   if (workflow.requires_human_approval) return "Human decision required";
   return "Workflow active";
 }

@@ -21,6 +21,7 @@ from app.research_api import (
     CreateResearchSession,
     create_research_session,
     delete_research_session,
+    get_research_session,
     list_research_sessions,
 )
 from coscientist.ledger import ResearchLedger
@@ -220,3 +221,56 @@ def test_a_wrong_token_for_a_run_that_is_here_is_still_refused(ledger, monkeypat
     assert [entry["id"] for entry in list_research_sessions()["sessions"]] == [
         snapshot["id"]
     ]
+
+
+def test_a_run_whose_worker_died_stops_calling_itself_active(ledger):
+    """A worker records why it stopped and leaves the session where it was.
+
+    Nothing said so. The run stayed ``active``, the workspace headed it
+    "Workflow active", and the history panel offered it as work in progress --
+    four runs on the live deployment sat like that for hours, three of them
+    killed by a specialist closing its event stream without answering. The
+    landing screen then opened one of them and watched a spinner that had
+    nothing behind it.
+    """
+    snapshot = create_research_session(
+        CreateResearchSession(question=QUESTION, approval_profile="milestone"),
+        BackgroundTasks(),
+    )
+    ledger.set_operation(
+        snapshot["id"], "failed", "The specialist closed its stream.", "next"
+    )
+
+    ((entry,),) = (list_research_sessions()["sessions"],)
+    assert entry["status"] == "failed"
+    assert get_research_session(snapshot["id"], BackgroundTasks())["status"] == (
+        "failed"
+    )
+
+
+def test_a_run_picked_back_up_is_active_again(ledger):
+    """The failure is read, never written, so a retry needs nothing undone."""
+    snapshot = create_research_session(
+        CreateResearchSession(question=QUESTION, approval_profile="milestone"),
+        BackgroundTasks(),
+    )
+    ledger.set_operation(snapshot["id"], "failed", "Gone.", "next")
+    ledger.set_operation(snapshot["id"], "queued", "Trying again.", "next")
+
+    ((entry,),) = (list_research_sessions()["sessions"],)
+    assert entry["status"] == "active"
+
+
+def test_a_finished_run_is_not_relabelled_by_a_failure_behind_it(ledger):
+    """Only a run that still claims to be running is corrected.
+
+    A run stopped by a researcher, or one holding a finished dossier, says
+    something the operation cannot improve on -- and an export that failed
+    after the fact must not turn a readable report into a failure.
+    """
+    flow = _finished(ledger, QUESTION)
+    ledger.set_operation(flow.session.id, "failed", "The PDF export died.", "export")
+
+    ((entry,),) = (list_research_sessions()["sessions"],)
+    assert entry["status"] == flow.session.status
+    assert entry["status"] != "failed"
