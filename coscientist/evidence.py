@@ -16,8 +16,6 @@ from typing import Any, Protocol
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-from pydantic import ValidationError
-
 from .model_catalog import (
     DEFAULT_LANGUAGE,
     language_clause,
@@ -217,6 +215,64 @@ def resolve_vertex_project() -> str | None:
     return project_id or None
 
 
+VERTEX_ATTEMPTS = max(1, int(os.environ.get("COSCIENTIST_VERTEX_ATTEMPTS", "4")))
+VERTEX_BACKOFF_SECONDS = 5
+_TRANSIENT_VERTEX_CODES = frozenset({408, 429, 499, 500, 502, 503, 504})
+
+
+def _transient_vertex(error: Exception) -> bool:
+    """Whether Vertex refused this call for a reason that will pass.
+
+    A 503 is the service saying "not now"; a 429 is the quota saying "not this
+    second". Neither is anything about what was asked, so asking again is the
+    whole of the fix. A 400 on a schema and a 403 on a project are this caller's
+    own errors, and repeating them three times over buys three identical
+    refusals and a minute of waiting.
+    """
+    import httpx
+
+    try:
+        from google.genai.errors import APIError
+    except ImportError:  # pragma: no cover - the offline package has no genai
+        APIError = ()  # type: ignore[assignment]
+
+    if APIError and isinstance(error, APIError):
+        return error.code in _TRANSIENT_VERTEX_CODES
+    return isinstance(error, httpx.TransportError)
+
+
+def call_vertex(what: str, call: Callable[[], Any]) -> Any:
+    """Make one Vertex call, and make it again while the refusal is transient.
+
+    Every Vertex call in discovery used to be a single attempt, and a run is
+    hours long and made of hundreds of them, so the odds of meeting one bad
+    second were never small. One did: the normalizer read the seventh completed
+    Deep Research report of a live run, Vertex answered ``503 UNAVAILABLE``, and
+    that sentence travelled all the way out to the worker and failed the run --
+    seven passes fetched, paid for and thrown away over a second of somebody
+    else's downtime.
+
+    ``what`` names the call in the log, because these retries are otherwise
+    invisible and the difference between "Vertex is having a moment" and "Vertex
+    is down" is how many of these lines there are.
+    """
+    for attempt in range(1, VERTEX_ATTEMPTS):
+        try:
+            return call()
+        except Exception as error:
+            if not _transient_vertex(error):
+                raise
+            logger.warning(
+                "Vertex refused %s on attempt %d of %d (%s); asking again.",
+                what,
+                attempt,
+                VERTEX_ATTEMPTS,
+                error,
+            )
+            time.sleep(VERTEX_BACKOFF_SECONDS * attempt)
+    return call()
+
+
 class GeminiDeepResearchTransport:
     """Small Interactions API adapter kept separate for deterministic tests.
 
@@ -264,26 +320,37 @@ class GeminiDeepResearchTransport:
             self._client = genai.Client(api_key=resolved_key)
 
     def start(self, *, prompt: str, pass_number: int, session_id: str) -> dict:
-        interaction = self._client.interactions.create(
-            agent=DEEP_RESEARCH_AGENT,
-            input=prompt,
-            agent_config={
-                "type": "deep-research",
-                "thinking_summaries": "none",
-                "visualization": "off",
-                "collaborative_planning": False,
-            },
-            background=True,
-            store=True,
-            labels={
-                "coscientist_session": session_id[-32:],
-                "evidence_pass": str(pass_number),
-            },
+        # Asked again on a transient refusal, at the risk of a pass this run
+        # never polls: a 503 can in principle land after the interaction was
+        # accepted. That risk is three dollars. Not asking again costs the facet
+        # -- the wave goes on with a stated hole in it and coverage is scored
+        # against six angles instead of seven.
+        interaction = call_vertex(
+            f"the start of discovery pass {pass_number}",
+            lambda: self._client.interactions.create(
+                agent=DEEP_RESEARCH_AGENT,
+                input=prompt,
+                agent_config={
+                    "type": "deep-research",
+                    "thinking_summaries": "none",
+                    "visualization": "off",
+                    "collaborative_planning": False,
+                },
+                background=True,
+                store=True,
+                labels={
+                    "coscientist_session": session_id[-32:],
+                    "evidence_pass": str(pass_number),
+                },
+            ),
         )
         return interaction.model_dump(mode="json", exclude_none=True)
 
     def get(self, interaction_id: str) -> dict:
-        interaction = self._client.interactions.get(interaction_id)
+        interaction = call_vertex(
+            f"a poll of interaction {interaction_id}",
+            lambda: self._client.interactions.get(interaction_id),
+        )
         return interaction.model_dump(mode="json", exclude_none=True)
 
 
@@ -313,18 +380,21 @@ class GeminiEvidenceNormalizer:
     def __call__(self, prompt: str) -> str:
         from google.genai import types
 
-        response = self._client.models.generate_content(
-            model=self.model_id,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0,
-                response_mime_type="application/json",
-                response_schema=DiscoveryNarrative,
-                thinking_config=types.ThinkingConfig(
-                    thinking_level=types.ThinkingLevel.HIGH,
-                    include_thoughts=False,
+        response = call_vertex(
+            "the extraction of a discovery narrative",
+            lambda: self._client.models.generate_content(
+                model=self.model_id,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0,
+                    response_mime_type="application/json",
+                    response_schema=DiscoveryNarrative,
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level=types.ThinkingLevel.HIGH,
+                        include_thoughts=False,
+                    ),
+                    tools=None,
                 ),
-                tools=None,
             ),
         )
         return response.text or ""
@@ -1698,7 +1768,19 @@ def normalize_report(
             start, end = raw.find("{"), raw.rfind("}")
             if start >= 0 and end > start:
                 narrative = DiscoveryNarrative.model_validate_json(raw[start : end + 1])
-        except (ValueError, ValidationError, json.JSONDecodeError):
+        except Exception as error:
+            # Every way this can fail, not only the three ways it fails at
+            # parsing. The fallback below reads the same report without a model
+            # and is the designed answer to "the extractor gave us nothing
+            # usable" -- it does not care why. Narrower, this clause let a
+            # Vertex ``503 UNAVAILABLE`` past it and out through the wave: the
+            # run died holding seven completed reports it had already paid for,
+            # any one of which this line would have read.
+            logger.warning(
+                "Reading pass %d fell back to the deterministic extractor (%s).",
+                pass_number,
+                error,
+            )
             narrative = None
     if narrative is None:
         narrative = _fallback_narrative(question, report, pass_number, cited)
@@ -2367,7 +2449,24 @@ class IterativeEvidenceDiscovery:
             for run in wave:
                 if str(payloads[run.interaction_id].get("status")) in self._TERMINAL:
                     continue
-                payloads[run.interaction_id] = self.transport.get(run.interaction_id)
+                try:
+                    payloads[run.interaction_id] = self.transport.get(
+                        run.interaction_id
+                    )
+                except Exception as exc:
+                    # Guarded like the first poll above, which has always been.
+                    # A poll that cannot be answered says nothing about the
+                    # interaction behind it: it is still running on Vertex,
+                    # still being paid for, and the next tick asks again. Raised
+                    # through, one unanswered poll took the whole wave with it
+                    # while every pass in it carried on to completion unread.
+                    run.error = run.error or f"{type(exc).__name__}: {exc}"
+                    logger.warning(
+                        "Could not poll pass %d; keeping its last known status.",
+                        run.pass_number,
+                        exc_info=exc,
+                    )
+                    continue
                 run.poll_count += 1
                 run.status = str(
                     payloads[run.interaction_id].get("status") or "in_progress"
