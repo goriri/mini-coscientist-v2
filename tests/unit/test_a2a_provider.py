@@ -6,9 +6,13 @@ from a2a.client.errors import A2AClientHTTPError
 
 from app.app_utils.a2a import default_app_url
 from coscientist.agents import (
+    A2A_QUOTA_REDIAL_SECONDS,
+    A2A_REDIAL_SECONDS,
     A2A_TRANSPORT_ATTEMPTS,
+    UPSTREAM_ERROR_CEILING,
     A2AProvider,
     EmptyA2AStream,
+    UpstreamModelError,
     _as_empty_stream,
     _worth_redialling,
 )
@@ -261,3 +265,85 @@ def test_an_empty_stream_is_retried_and_the_stage_survives_it(monkeypatch):
 
     assert provider.complete(role="ranking", prompt="x") == "the specialist's answer"
     assert len(calls) == 2
+
+
+# --- a turn that came back holding the model API's refusal --------------------
+
+# The four hundred characters a live reflect stage was handed where a ReviewSet
+# should have been, off the deployment's logs for session_234cadee58fd40e3.
+QUOTA_REFUSAL = (
+    "no JSON object found in the specialist response\n"
+    "On how to mitigate this issue, please refer to:\n"
+    "https://google.github.io/adk-docs/agents/models/google-gemini/"
+    "#error-code-429-resource_exhausted\n"
+    "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Resource "
+    "exhausted. Please try again later.', 'status': 'RESOURCE_EXHAUSTED'}}"
+)
+
+
+def test_a_turn_carrying_the_model_apis_refusal_is_not_an_answer(monkeypatch):
+    """The live reflect failure, at the boundary where it should have stopped.
+
+    Returned as content, it went to the parser -- which rejected it, correctly,
+    for having no JSON in it -- and then to a repair prompt, which asked a model
+    to fix somebody else's error message and got back a review of a candidate
+    named ``pending_recovery`` that matched nothing in the session. The run died
+    at reflect with a full evidence stage behind it.
+    """
+    provider = _streaming(monkeypatch, QUOTA_REFUSAL)
+
+    with pytest.raises(UpstreamModelError, match="returned its model API's failure"):
+        asyncio.run(provider._complete(role="reflection", prompt="Review these."))
+
+
+def test_the_model_apis_refusal_is_dialled_again_and_the_stage_survives_it(
+    monkeypatch,
+):
+    provider, calls = _dialled(
+        monkeypatch,
+        UpstreamModelError("429 came back instead of a review"),
+        '{"reviews": []}',
+    )
+
+    assert provider.complete(role="reflection", prompt="x") == '{"reviews": []}'
+    assert len(calls) == 2
+
+
+def test_a_refused_turn_waits_longer_than_a_dropped_one(monkeypatch):
+    """A quota window is minutes wide. Three dials inside fifteen seconds are
+    three refusals, so the wait owed to a 429 is its own."""
+    import time
+
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", slept.append)
+
+    async def _complete(self, *, role, prompt):
+        raise UpstreamModelError("429 again")
+
+    monkeypatch.setattr(A2AProvider, "_complete", _complete)
+    provider = A2AProvider(base_url="https://example.invalid")
+
+    with pytest.raises(UpstreamModelError):
+        provider.complete(role="reflection", prompt="x")
+    assert slept == [
+        A2A_QUOTA_REDIAL_SECONDS * attempt
+        for attempt in range(1, A2A_TRANSPORT_ATTEMPTS)
+    ]
+    assert min(slept) > A2A_REDIAL_SECONDS
+
+
+def test_an_answer_that_merely_discusses_rate_limiting_is_kept(monkeypatch):
+    """A specialist may write the phrase. What it will not do is write four
+    hundred characters that are nothing else, so the length is half the test."""
+    review = (
+        '{"reviews": [{"id": "r1", "candidate_id": "c1", "findings": ["The '
+        "service returned 429 RESOURCE_EXHAUSTED. {'error': quota} under load, "
+        'which the paper reports as the throughput ceiling."], '
+        f'"note": "{"padding to clear the ceiling. " * 70}"}}]}}'
+    )
+    assert len(review) > UPSTREAM_ERROR_CEILING
+    provider = _streaming(monkeypatch, review)
+
+    assert asyncio.run(provider._complete(role="reflection", prompt="Review.")) == (
+        review
+    )

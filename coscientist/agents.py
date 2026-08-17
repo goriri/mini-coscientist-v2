@@ -379,6 +379,16 @@ A2A_TRANSPORT_ATTEMPTS = max(1, int(os.environ.get("COSCIENTIST_A2A_ATTEMPTS", "
 A2A_REDIAL_SECONDS = float(os.environ.get("COSCIENTIST_A2A_REDIAL_SECONDS", "5"))
 """The wait before the second attempt; the third waits twice as long again."""
 
+A2A_QUOTA_REDIAL_SECONDS = float(
+    os.environ.get("COSCIENTIST_A2A_QUOTA_REDIAL_SECONDS", "30")
+)
+"""The longer wait owed to a model API that said it was out of capacity.
+
+Five seconds is right for a dropped connection, which is over the moment it
+happens. A quota window is measured in minutes, and dialling back into one three
+times in fifteen seconds is three more refusals.
+"""
+
 
 class EmptyA2AStream(RuntimeError):
     """A specialist's turn ended with no answer of its own kept from it.
@@ -389,6 +399,58 @@ class EmptyA2AStream(RuntimeError):
     nothing. A turn that opened, sent its task-status events and then died is the
     same nothing as a turn that never opened.
     """
+
+
+class UpstreamModelError(EmptyA2AStream):
+    """The specialist's turn came back holding the model API's refusal, not an answer.
+
+    An ADK agent that cannot reach its model writes the failure into the turn as
+    text, and the A2A stream carries it back looking exactly like an answer. A
+    live reflect stage was handed this, four hundred characters of ``429
+    RESOURCE_EXHAUSTED`` where a ReviewSet should have been:
+
+    - the parser rejected it, correctly, as containing no JSON object;
+    - the repair prompt then asked a model to fix a payload that was somebody
+      else's error message, so it invented a review of a candidate named
+      ``pending_recovery`` -- which matched no candidate in the session and was
+      rejected in turn;
+    - and the run died at reflect, a full evidence stage behind it.
+
+    Nothing of the turn is worth keeping, which makes it the same nothing its
+    parent class is named for, and dialling again duplicates none of it.
+    """
+
+
+# What a model API's own failure looks like when it is handed back as prose. The
+# genai client renders an error as "<code> <STATUS>. <details-dict>", and ADK
+# appends its help link for the quota case; neither belongs in a specialist's
+# answer, and a real one has no reason to reproduce them character for
+# character.
+_UPSTREAM_ERROR_MARKERS = (
+    "adk-docs/agents/models/google-gemini/#error-code-429",
+    "RESOURCE_EXHAUSTED. {'error'",
+    "UNAVAILABLE. {'error'",
+    "INTERNAL. {'error'",
+    "DEADLINE_EXCEEDED. {'error'",
+)
+
+UPSTREAM_ERROR_CEILING = 2000
+"""Above this many characters, a marker is a quotation rather than the whole answer.
+
+A specialist reviewing a paper on rate limiting may well write the phrase. What
+it will not do is write four hundred characters that are nothing else.
+"""
+
+
+def _upstream_error(role: str, content: str) -> UpstreamModelError | None:
+    if len(content) > UPSTREAM_ERROR_CEILING:
+        return None
+    if not any(marker in content for marker in _UPSTREAM_ERROR_MARKERS):
+        return None
+    return UpstreamModelError(
+        f"A2A specialist '{role}' returned its model API's failure instead of an "
+        f"answer, so nothing was kept from it: {content.strip()[:400]}"
+    )
 
 
 def _as_empty_stream(role: str, error: RuntimeError) -> EmptyA2AStream | None:
@@ -533,6 +595,12 @@ class A2AProvider:
                 f"A2A specialist '{role}' ended its turn without returning an "
                 "answer of its own, so nothing was kept from it."
             )
+        # Checked alongside empty, because it is the same nothing wearing an
+        # answer's clothes -- and worse, because an empty turn at least fails
+        # here where it can be dialled again. This one used to travel on into
+        # the parser as if it were content.
+        if upstream := _upstream_error(role, content):
+            raise upstream
         if resolved:
             content += "\n\nGrounding URLs (resolved to the document each one opens):\n"
             content += "\n".join(f"- {url}" for url in resolved)
@@ -612,7 +680,12 @@ class A2AProvider:
                     A2A_TRANSPORT_ATTEMPTS,
                     error,
                 )
-                time.sleep(A2A_REDIAL_SECONDS * attempt)
+                wait = (
+                    A2A_QUOTA_REDIAL_SECONDS
+                    if isinstance(error, UpstreamModelError)
+                    else A2A_REDIAL_SECONDS
+                )
+                time.sleep(wait * attempt)
         return asyncio.run(self._complete(role=role, prompt=prompt))
 
 
