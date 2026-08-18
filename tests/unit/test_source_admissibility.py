@@ -20,6 +20,7 @@ import pytest
 
 from coscientist.evidence import could_be_literature, merge_leads
 from coscientist.models import SourceLead
+from coscientist.narrative import CitationRegistry
 
 RIMWORLD = "https://steamcommunity.com/app/294100/discussions/0/6274121610030307411/"
 HALO = "https://www.reddit.com/r/halo/comments/r09txw/pro_tip_the_razorback_can/"
@@ -75,9 +76,7 @@ def test_the_merge_every_lead_passes_through_drops_the_ones_it_cannot_cite():
 
 
 def test_a_corpus_already_holding_one_loses_it_on_the_next_merge():
-    """The eight reports on the deployed service were written before this rule.
-    A run resumed against them re-merges its leads, and the reference list it
-    computes afterwards should be the corrected one, not the stored one."""
+    """A run that merges again -- a revision, a gap pass -- drops what it holds."""
     stored = [
         SourceLead(canonical_url=HALO, title="PRO TIP: The Razorback can hold"),
         SourceLead(canonical_url=ACS, title="Alumina interphases"),
@@ -86,3 +85,50 @@ def test_a_corpus_already_holding_one_loses_it_on_the_next_merge():
     merged = merge_leads(stored, [])
 
     assert [lead.canonical_url for lead in merged] == [ACS]
+
+
+def test_the_reference_list_refuses_one_the_stored_corpus_still_holds():
+    """The merge governs what a run collects from here on. It does nothing for a
+    corpus collected before the rule existed, and re-rendering does not re-merge:
+    eight live dossiers went on printing a Steam discussion of RimWorld, an
+    r/halo thread, a flypast on YouTube and four Scribd uploads after the merge
+    was fixed, because a report is computed on demand from what was stored."""
+    registry = CitationRegistry(
+        [
+            SourceLead(canonical_url=ACS, title="Alumina interphases"),
+            SourceLead(canonical_url=HALO, title="PRO TIP: The Razorback can hold"),
+            SourceLead(canonical_url=RIMWORLD, title="Diabolus and combat extended"),
+        ]
+    )
+
+    assert registry.marker([ACS]) == "[1]"
+    assert [citation.url for citation in registry.references()] == [ACS]
+    assert registry.refused_sources == 2
+
+
+def test_a_body_citing_a_refused_source_prints_no_marker_for_it():
+    """Two of the six reached the body of a report as citations. Dropping the
+    entry and leaving "[12]" pointing into a list that no longer has a twelfth
+    line would be the worse half of a fix."""
+    registry = CitationRegistry(
+        [SourceLead(canonical_url=HALO, title="PRO TIP: The Razorback can hold")]
+    )
+
+    assert registry.number(HALO) is None
+    assert registry.citable([HALO]) is False
+    assert registry.references() == []
+
+
+def test_a_refused_lead_is_not_reported_as_a_duplicate_of_something():
+    """The fold's sentence says the leads "named a document another lead had
+    already named", which is true of a duplicate and false of a Reddit thread.
+    The two counts stay apart so the sentence stays true."""
+    registry = CitationRegistry(
+        [
+            SourceLead(canonical_url=ACS, title="Alumina interphases"),
+            SourceLead(canonical_url=HALO, title="PRO TIP: The Razorback can hold"),
+        ]
+    )
+
+    assert registry.folded_duplicates == 0
+    assert registry.refused_sources == 1

@@ -2436,7 +2436,16 @@ def _carried_from_the_evidence_stage(record: ResearchRecord, leads: int) -> list
     that would have made the two sources carried in look like one.
     """
     _, documents = record.citations.verification_standing
-    corpus = documents + record.citations.folded_duplicates
+    # Refused leads counted back in for the same reason folded ones are: this
+    # compares the registry's population against the search's raw total, and a
+    # lead the registry held back is one the search still returned. Left out,
+    # every page dropped as uncitable would have been reported here as a source
+    # the evidence stage carried in from somewhere else.
+    corpus = (
+        documents
+        + record.citations.folded_duplicates
+        + record.citations.refused_sources
+    )
     carried = corpus - leads
     if carried <= 0:
         return []

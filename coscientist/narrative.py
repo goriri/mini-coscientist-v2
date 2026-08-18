@@ -29,7 +29,7 @@ from .citations import (
     resolve_population,
 )
 from .debate import standalone_opening
-from .evidence import GROUNDING_REDIRECT_MARKER, unread_passes
+from .evidence import GROUNDING_REDIRECT_MARKER, could_be_literature, unread_passes
 from .governance import REHEARSAL_ADJUDICATOR, open_blockers
 from .models import (
     EVIDENCE_FACETS,
@@ -242,7 +242,24 @@ class CitationRegistry:
         *,
         annotations: dict[str, str] | None = None,
     ) -> None:
-        self._leads = {lead.canonical_url: lead for lead in leads if lead.canonical_url}
+        # Refused here as well as at the merge that admits them, because the two
+        # act on different populations. The merge governs what a run collects
+        # from here on; this governs what a report prints, and a report is
+        # computed on demand from a corpus that was collected before the rule
+        # existed. Eight live dossiers were carrying a Steam discussion of
+        # RimWorld, an r/halo thread, a national day flypast on YouTube and four
+        # Scribd uploads in their reference lists, two of them cited in the body
+        # as the source of a finding, and nothing about re-rendering those
+        # reports would have dropped one of them.
+        self._leads: dict[str, SourceLead] = {}
+        self._refused = 0
+        for lead in leads:
+            if not lead.canonical_url:
+                continue
+            if not could_be_literature(lead.canonical_url):
+                self._refused += 1
+                continue
+            self._leads[lead.canonical_url] = lead
         self._returned = len(self._leads)
         self._canonical = self._folded_by_title()
         self._annotations = annotations or {}
@@ -345,6 +362,18 @@ class CitationRegistry:
         chapters apart and neither saying what became of the other eight.
         """
         return self._returned - len(self._leads)
+
+    @property
+    def refused_sources(self) -> int:
+        """How many leads were held back as pages no finding can have come from.
+
+        Counted apart from the fold rather than added to it. The sentence the
+        fold prints says the leads "named a document another lead had already
+        named", which is true of a duplicate and false of a Reddit thread, and
+        the arithmetic the provenance appendix does against the search's own
+        total needs both numbers to come out right either way.
+        """
+        return self._refused
 
     @property
     def verification_standing(self) -> tuple[int, int]:
@@ -10613,13 +10642,27 @@ def _reference_standing(record: ResearchRecord) -> str:
     # many words -- so crediting the whole of it to the search put "the literature
     # search returned eighty-five leads" here and "returned 83 source leads" there.
     folded = record.citations.folded_duplicates
-    reconciled = (
-        f" The corpus holds {_bare_count(total + folded)} "
-        f"leads to reach {'them' if total != 1 else 'it'}: "
-        f"{_plural(folded, 'lead')} named a document another lead had already named."
-        if folded
-        else ""
-    )
+    refused = record.citations.refused_sources
+    # The two reasons the corpus is larger than the list, named separately. A
+    # lead that duplicated another and a lead no finding can have come from are
+    # different things to have happened, and one clause covering both would tell
+    # a reader that four Scribd uploads were duplicates of something.
+    accounted = []
+    if folded:
+        accounted.append(
+            f"{_plural(folded, 'lead')} named a document another lead had already named"
+        )
+    if refused:
+        accounted.append(
+            f"{_plural(refused, 'lead')} named a page no finding can be taken from"
+        )
+    reconciled = ""
+    if accounted:
+        reconciled = (
+            f" The corpus holds {_bare_count(total + folded + refused)} "
+            f"leads to reach {'them' if total != 1 else 'it'}: "
+            f"{' and '.join(accounted)}."
+        )
     # Spelled in full only where it opens the sentence, which is the one count here
     # that does. Spelling the rest to match it was the older rule, and it bought
     # consistency inside this paragraph at the price of consistency with the rest of

@@ -2048,6 +2048,67 @@ def test_the_leads_behind_the_documents_are_credited_to_the_corpus_not_to_the_se
     assert f"The corpus holds {_number_word(corpus).lower()} leads" in report
 
 
+def test_a_lead_no_finding_can_come_from_is_reconciled_as_itself(
+    rich_session: Session,
+):
+    """The corpus is larger than the reference list for two different reasons
+    now, and one clause covering both would tell a reader that four Scribd
+    uploads were duplicates of something. The fold's own sentence has to stay
+    true of the leads it is still counting."""
+    from coscientist.narrative import _bare_count, _plural, load_record
+
+    discovery = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "DiscoveryManifest"
+    )
+    thread = "https://www.reddit.com/r/halo/comments/r09txw/pro_tip_the_razorback/"
+    # The sentence sits in the branch where something was checked, as the fold's
+    # own test next door records.
+    discovery.payload["source_leads"][1]["verification_status"] = "verified"
+    discovery.payload["source_leads"].append(
+        {
+            **discovery.payload["source_leads"][0],
+            "canonical_url": thread,
+            "title": "PRO TIP: The Razorback can hold the flag!",
+        }
+    )
+    # And one source the search never returned, so the provenance appendix's own
+    # arithmetic is live: it subtracts the search's raw total from the registry's
+    # population, and a lead the registry refused is still one the search
+    # returned. Left out of that sum, every page dropped as uncitable reads there
+    # as a source the evidence stage carried in from somewhere else.
+    packet = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "EvidencePacket"
+    )
+    packet.payload["sources"].append(
+        {
+            "id": "source_carried",
+            "url": "https://example.org/carried-by-the-evidence-stage",
+            "title": "A Paper The Search Did Not Return",
+            "verification_status": "verified",
+        }
+    )
+
+    citations = load_record(rich_session).citations
+    report = compile_dossier(rich_session)
+
+    assert citations.refused_sources == 1
+    assert citations.folded_duplicates == 0
+    assert f"{_plural(1, 'lead')} named a page no finding can be taken from" in report
+    assert "named a document another lead had already named" not in report
+    # The refused lead counted into the total the clause reconciles, so the
+    # figure matches the corpus the appendix four chapters below reports.
+    corpus = citations.verification_standing[1] + 1
+    assert f"The corpus holds {_bare_count(corpus)} leads" in report
+    assert "one further source was carried in from the evidence stage" in report
+    # And it is gone from the list, not merely explained in the prose above it.
+    assert thread not in report
+    assert "reddit.com" not in report
+
+
 def test_a_search_that_found_the_whole_corpus_is_not_told_it_found_less(
     rich_session: Session,
 ):
