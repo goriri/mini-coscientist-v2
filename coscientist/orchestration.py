@@ -36,6 +36,7 @@ from .evidence import (
     audit_coverage,
     discovered_corpus,
     discovery_angles,
+    discovery_progress_sentence,
     downgrade_unlocatable_sources,
     evaluate_evidence_floor,
     merge_evidence_packets,
@@ -227,6 +228,7 @@ class CoScientistWorkflow:
         # attaches a writer here; left unset -- a test, the CLI -- the run says
         # nothing and behaves identically. See ``_note``.
         self.progress: Callable[[str], None] | None = None
+        self._last_note = ""
         if session is None:
             if approval_profile is not None:
                 resolved_profile = ApprovalProfile(approval_profile)
@@ -478,21 +480,30 @@ class CoScientistWorkflow:
         """Say what this stage is doing, while it is still doing it.
 
         A stage is one call, and the line the workspace shows is written by the
-        caller on either side of that call. Discovery escapes this because every
-        Deep Research poll returns through the caller and rewrites the line on
-        the way past; verification does not. A live run opened fifty-six sources
-        after its eighth pass, and for the twenty-five minutes that took, the
-        page held the sentence the last poll had left -- "Deep Research is still
-        running; next status check in 60 seconds" -- over a stage that had
-        finished searching. Nothing was wrong with the run, and nothing on the
-        screen could have told a reader that.
+        caller on either side of that call. Where a task queue drives evidence,
+        each Deep Research poll returns through that caller and rewrites the
+        line on the way past; where one is not configured the stage is a single
+        call from the scope gate to the verified corpus, and the two halves of
+        it were silent in different ways. A live run opened fifty-six sources
+        after its eighth pass and held "Deep Research is still running; next
+        status check in 60 seconds" for the twenty-five minutes that took; the
+        run after it sat nine minutes on "Specialists are preparing the next
+        research gate." while three of eight searches were already back.
+        Nothing was wrong with either run, and nothing on the screen could have
+        told a reader that.
+
+        Repeats are dropped, because the caller that speaks on a clock -- the
+        discovery poll loop, every fifteen seconds -- has the same thing to say
+        most times it is asked, and a sentence that has not changed is not news.
+        The lease is renewed by the heartbeat and does not depend on this.
 
         Narration, and narration only. A writer that raises has failed to update
         a sentence, which is not a reason to lose an hour of research, so the
         failure is logged and the stage carries on.
         """
-        if self.progress is None:
+        if self.progress is None or detail == self._last_note:
             return
+        self._last_note = detail
         try:
             self.progress(detail)
         except Exception:
@@ -1095,6 +1106,10 @@ class CoScientistWorkflow:
                     self._evidence_summary(updated), updated.model_dump(mode="json")
                 )
                 self._persist()
+                # The only thing inside discovery that runs on a clock. Every
+                # fifteen seconds the poll loop hands the manifest back here to
+                # be written down, and a sentence about it costs the same trip.
+                self._note(discovery_progress_sentence(updated))
 
             normalizer = None
             if isinstance(controller.transport, GeminiDeepResearchTransport):

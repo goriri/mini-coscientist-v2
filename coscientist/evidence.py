@@ -2489,6 +2489,46 @@ def build_research_prompt(
     )
 
 
+_DISCOVERY_IN_FLIGHT = frozenset({"queued", "in_progress", "requires_action"})
+
+
+def discovery_progress_sentence(manifest: DiscoveryManifest) -> str:
+    """What to tell a reader while the searches are still out.
+
+    Where a task queue drives the stage, every poll returns through the API
+    layer and the workspace is rewritten on the way past. Where one is not
+    configured -- which is the deployed service -- the whole of discovery is a
+    single call, and the page held "Specialists are preparing the next research
+    gate." for the nine minutes this sentence was written in, over a stage that
+    was three searches into eight and had a corpus to show for it.
+
+    Counted by what is still in flight rather than by what has finished, because
+    a pass that timed out or was refused is over, is not in ``_TERMINAL``, and
+    would otherwise be reported as still searching for the rest of the run.
+
+    The source count is the corpus as it stands, which is the previous waves'
+    leads: a wave's findings are folded in after every pass in it is terminal.
+    Hence "so far", and hence no number at all on the branch that fires in the
+    gap between the last pass going terminal and the fold that follows it.
+    """
+    runs = manifest.runs
+    if not runs:
+        return "Choosing which searches to run."
+    total = len(runs)
+    running = sum(1 for run in runs if run.status in _DISCOVERY_IN_FLIGHT)
+    searches = "search" if total == 1 else "searches"
+    if not running:
+        if total == 1:
+            return "The search is back; folding what it found in."
+        return f"All {total} searches are back; folding what they found in."
+    held = len(manifest.source_leads)
+    sources = "source" if held == 1 else "sources"
+    return (
+        f"Deep Research has finished {total - running} of {total} {searches}; "
+        f"{held} {sources} so far."
+    )
+
+
 @dataclass
 class PlannedPass:
     """One Deep Research interaction the controller has decided to start."""
