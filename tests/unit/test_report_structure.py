@@ -476,9 +476,13 @@ def _assert_no_record_ids(body: str) -> None:
         line for line in body.splitlines() if not line.startswith(warning)
     )
     prose = re.sub(r"`[^`\n]*`", "", prose)
+    # The pass prefix and the number written straight onto the word, both of which
+    # this missed: "pass4_stmt2" has no word boundary in front of its "stmt" and no
+    # underscore after it, so a live Correctness review carried one past the audit.
     leaked = re.findall(
-        r"\b(?:candidate|cand|claim|source|src|review|rev|hypothesis|lead|stmt"
-        r"|statement)[0-9]*_\w+\b",
+        r"\b(?:pass[0-9]*_)?"
+        r"(?:candidate|cand|claim|source|src|review|rev|hypothesis|lead|stmt"
+        r"|statement)(?:[0-9]+(?:_\w+)?|_\w+)\b",
         prose,
     )
     assert not leaked, f"internal record ids reached the body: {sorted(set(leaked))}"
@@ -2727,6 +2731,28 @@ def test_an_id_capitalised_at_the_start_of_a_sentence_still_resolves(
     assert "The unverified claim drawn from" in body, (
         "the sentence lost its opening capital"
     )
+
+
+def test_an_id_spelled_without_its_underscore_does_not_reach_the_reader_bare(
+    rich_session: Session,
+):
+    """A specialist quoting an id from memory writes the number straight onto the
+    word, and the trailing underscore group the pattern required is the one thing
+    that spelling leaves out: a live Correctness review read "The idea correctly
+    cites pass4_stmt2 for metabolic reprogramming", the only chapter of the report
+    that still printed a raw identifier at a reader."""
+    from coscientist.narrative import _RECORD_ID
+
+    body = _findings(
+        rich_session, "The idea correctly cites pass4_stmt2 for metabolic rewiring"
+    )
+
+    assert "cites `pass4_stmt2` for" in body
+    # And the widening stops at the closed list of words in front of the number.
+    # Al2O3, LiPF6 and NCM811 are this shape and are what the ideas are about.
+    assert _RECORD_ID.fullmatch("claim11")
+    assert not _RECORD_ID.fullmatch("Al2O3")
+    assert not _RECORD_ID.fullmatch("NCM811")
 
 
 def _findings(session: Session, *findings: str) -> str:

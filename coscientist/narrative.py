@@ -2659,7 +2659,13 @@ _RECORD_ID = re.compile(
     # other chapter named the finding.
     r"\b(?:pass[0-9]*_)?"
     r"(?:claim|source|src|candidate|cand|review|rev|hypothesis|lead|stmt|statement)"
-    r"[0-9]*(?:_[0-9a-zA-Z]+)+\b",
+    # The number written straight onto the word, which is how a specialist spells an
+    # id it is quoting from memory: a live Correctness review read "The idea correctly
+    # cites pass4_stmt2 for metabolic reprogramming", and the trailing underscore
+    # group this required is the one thing that spelling leaves out. Widening it is
+    # safe only because the word in front is one of the ones above -- Al2O3 and NCM811
+    # are this shape and are what the ideas are about.
+    r"(?:[0-9]+(?:_[0-9a-zA-Z]+)*|(?:_[0-9a-zA-Z]+)+)\b",
     # A reviewer that opens a sentence with an id capitalises it, and "Claim_1 and
     # the source ... already explore dry-coating methods" reached a live report.
     re.IGNORECASE,
