@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -222,6 +223,10 @@ class CoScientistWorkflow:
         self.provider = provider or DeterministicProvider()
         self.ledger = ledger
         self.evidence_discovery = evidence_discovery
+        # What the page says while a stage is inside one long call. The API layer
+        # attaches a writer here; left unset -- a test, the CLI -- the run says
+        # nothing and behaves identically. See ``_note``.
+        self.progress: Callable[[str], None] | None = None
         if session is None:
             if approval_profile is not None:
                 resolved_profile = ApprovalProfile(approval_profile)
@@ -468,6 +473,30 @@ class CoScientistWorkflow:
     @property
     def agent_cards(self):
         return self.task_bus.agent_cards
+
+    def _note(self, detail: str) -> None:
+        """Say what this stage is doing, while it is still doing it.
+
+        A stage is one call, and the line the workspace shows is written by the
+        caller on either side of that call. Discovery escapes this because every
+        Deep Research poll returns through the caller and rewrites the line on
+        the way past; verification does not. A live run opened fifty-six sources
+        after its eighth pass, and for the twenty-five minutes that took, the
+        page held the sentence the last poll had left -- "Deep Research is still
+        running; next status check in 60 seconds" -- over a stage that had
+        finished searching. Nothing was wrong with the run, and nothing on the
+        screen could have told a reader that.
+
+        Narration, and narration only. A writer that raises has failed to update
+        a sentence, which is not a reason to lose an hour of research, so the
+        failure is logged and the stage carries on.
+        """
+        if self.progress is None:
+            return
+        try:
+            self.progress(detail)
+        except Exception:
+            logger.exception("Could not report progress for %s", self.session.id)
 
     def _event(
         self,
@@ -811,18 +840,34 @@ class CoScientistWorkflow:
             for item in SPECIALISTS_BY_STAGE["evidence"]
             if item.role == "source_verification"
         )
-        dispatched = await asyncio.gather(
-            *(
-                self.task_bus.dispatch_stage(
-                    temporary,
-                    verifier_definition,
-                    feedback=self._verification_feedback(
-                        feedback, batch, index, len(batches), stated_corpus
-                    ),
-                    revision=revision,
-                )
-                for index, batch in enumerate(batches, start=1)
+        # Counted as they land rather than at the end, because the end is the
+        # thing that is far away: the sources are opened one at a time inside a
+        # batch, the batches run together, and the whole fan-out is the longest
+        # silence in the run. A reader watching it is owed the count.
+        opening = sum(len(batch) for batch in batches)
+        noun = "source" if opening == 1 else "sources"
+        self._note(f"Opening {opening} {noun} to check what the documents say.")
+        checked = 0
+
+        async def verified(batch: list[SourceLead], index: int):
+            group = await self.task_bus.dispatch_stage(
+                temporary,
+                verifier_definition,
+                feedback=self._verification_feedback(
+                    feedback, batch, index, len(batches), stated_corpus
+                ),
+                revision=revision,
             )
+            nonlocal checked
+            checked += len(batch)
+            self._note(
+                f"Checked {checked} of {opening} {noun} "
+                f"against what the document actually says."
+            )
+            return group
+
+        dispatched = await asyncio.gather(
+            *(verified(batch, index) for index, batch in enumerate(batches, start=1))
         )
         results = [result for group in dispatched for result in group]
         verified_packets: list[EvidencePacket] = []

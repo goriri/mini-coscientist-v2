@@ -69,9 +69,17 @@ try {
   await waitForServer(baseUrl);
   await waitForDebugging(debuggingPort);
   const cdp = await openPage(debuggingPort, baseUrl);
+  // The two selects the launcher offers are empty in the markup and filled from
+  // /api/research/options. On a local server that lands inside the same tick as
+  // the load event; against the deployed service it is a round trip, and this
+  // run read the model list before it arrived -- an uncaught TypeError on
+  // selectedOptions[0], forty lines further down, reported as a page defect
+  // when the page was still doing exactly what it promises.
   await waitFor(
     cdp,
-    "document.readyState === 'complete' && !!document.querySelector('#composer')",
+    "document.readyState === 'complete' && !!document.querySelector('#composer')" +
+      " && document.querySelector('#modelChoice').options.length > 0" +
+      " && document.querySelector('#languageChoice').options.length > 0",
     "The research workspace did not load.",
   );
 

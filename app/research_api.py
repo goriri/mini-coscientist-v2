@@ -483,6 +483,31 @@ def _advance_in_background(session_id: str, *, kind: str, feedback: str = "") ->
         stop_heartbeat.set()
 
 
+def _progress_writer(session_id: str, owner: str, kind: str):
+    """Let a stage rewrite the line the workspace is showing while it runs.
+
+    Through ``renew_operation`` and not ``set_operation``: the second clears the
+    lease columns, so a stage narrating its own progress would hand its session
+    to the expiry sweep and have a second worker started beside it. The first
+    holds the lease it is already holding and replaces only the sentence -- the
+    heartbeat's write with a message attached.
+
+    The lease going away means this worker is no longer the one on the session,
+    and the right thing to do about a sentence nobody asked us for is nothing.
+    """
+
+    def write(detail: str) -> None:
+        _ledger().renew_operation(
+            session_id,
+            owner,
+            detail=detail,
+            lease_seconds=OPERATION_LEASE_SECONDS,
+        )
+        logger.info("%s: %s (%s)", session_id, detail, kind)
+
+    return write
+
+
 def _hold_operation_lease(session_id: str, owner: str, stop: threading.Event) -> None:
     """Renew the lease for as long as the worker is still on the session.
 
@@ -524,6 +549,7 @@ def _run_advance(
         try:
             with _lock_for(session_id):
                 workflow = _load(session_id)
+                workflow.progress = _progress_writer(session_id, owner, kind)
                 if kind == "auto" and evidence_tasks_configured():
                     while (
                         not workflow.done

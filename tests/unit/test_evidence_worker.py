@@ -237,3 +237,54 @@ def test_a_worker_stops_beating_once_its_stage_is_done(ledger, monkeypatch):
     before = ledger.operation(session_id)["lease_expires_at"]
     time.sleep(0.3)
     assert ledger.operation(session_id)["lease_expires_at"] == before
+
+
+def test_a_stage_narrating_its_progress_keeps_the_lease_it_is_holding(ledger):
+    """Through ``renew_operation``, and the distinction is the whole test.
+
+    ``set_operation`` clears ``lease_owner`` and ``lease_expires_at`` on its way
+    past. A stage that used it to say "Checked 12 of 28 sources" would, with
+    that sentence, hand its own session to the expiry sweep -- and the sweep
+    starts a second worker on an evidence stage that is forty minutes and
+    twenty-four dollars into the first one.
+    """
+    flow = CoScientistWorkflow("Question", ledger=ledger)
+    session_id = flow.session.id
+    ledger.set_operation(session_id, "queued", "Waiting", "evidence")
+    assert ledger.claim_operation(session_id, "worker-a", detail="Polling pass 8")
+
+    research_api._progress_writer(session_id, "worker-a", "evidence")(
+        "Checked 12 of 28 sources against what the document actually says."
+    )
+
+    operation = ledger.operation(session_id)
+    assert operation["detail"] == (
+        "Checked 12 of 28 sources against what the document actually says."
+    )
+    assert operation["lease_owner"] == "worker-a"
+    assert operation["lease_expires_at"]
+
+
+def test_the_stage_the_worker_drives_is_given_a_way_to_speak(ledger, monkeypatch):
+    """The writer is attached to the workflow the worker loaded, or the stage
+    holds whatever sentence the last caller left over a stage that has moved
+    on -- twenty-five minutes of "Deep Research is still running" on a live run
+    that had finished searching."""
+    flow = CoScientistWorkflow("Question", ledger=ledger)
+    session_id = flow.session.id
+    ledger.set_operation(session_id, "queued", "Waiting", "next")
+
+    def drafts(workflow):
+        workflow._note("Opening 28 sources to check what the documents say.")
+
+    monkeypatch.setattr(research_api, "_draft_next_gate", drafts)
+    seen: list[str] = []
+    monkeypatch.setattr(
+        research_api,
+        "_set_operation",
+        lambda *args, **kwargs: seen.append(ledger.operation(session_id)["detail"]),
+    )
+
+    research_api._advance_in_background(session_id, kind="next")
+
+    assert seen == ["Opening 28 sources to check what the documents say."]
