@@ -20,7 +20,7 @@ import json
 
 import pytest
 
-from coscientist.agents import DeterministicProvider
+from coscientist.agents import SPECIALISTS_BY_STAGE, DeterministicProvider
 from coscientist.evidence import (
     EVIDENCE_FACETS,
     EvidenceArtifactStore,
@@ -29,6 +29,7 @@ from coscientist.evidence import (
 )
 from coscientist.models import (
     VERIFICATION_BATCH_SIZE,
+    ApprovalProfile,
     Artifact,
     DeepResearchRun,
     DiscoveryManifest,
@@ -384,6 +385,9 @@ def test_the_poll_loop_narrates_the_wave_it_is_waiting_on():
     # not a poll stands over a stretch that was silent after it started writing:
     # a model call per report, then two more over the whole corpus.
     assert said == [
+        # The scope stage this run opened with, which is one specialist and so
+        # says what it is doing rather than counting itself.
+        "Working on scoping the goal.",
         *(
             f"Deep Research has finished {done} of {total} searches; 0 sources so far."
             for done in range(total)
@@ -400,6 +404,56 @@ def test_the_poll_loop_narrates_the_wave_it_is_waiting_on():
         "Merging 2 sets of findings into one corpus.",
         "Writing the knowledge survey over 2 sources.",
     ]
+
+
+def _at_stage(stage: str) -> tuple[CoScientistWorkflow, list[str]]:
+    """A workflow stopped at ``stage``, with a fresh transcript of what it says.
+
+    v1 skips the Deep Research evidence gate, which the offline suite has no way
+    to satisfy. What is under test here is the fan-out every stage after
+    evidence shares, and that is the same call on either version.
+    """
+    flow = CoScientistWorkflow(
+        QUESTION,
+        DeterministicProvider(),
+        approval_profile=ApprovalProfile.AUTO,
+        workflow_version=1,
+    )
+    while flow.stage != stage and not flow.done:
+        flow.accept(flow.preview(), automatic=True)
+    said: list[str] = []
+    flow.progress = said.append
+    return flow, said
+
+
+def test_a_fanned_out_stage_counts_the_specialists_that_have_answered():
+    """Reflect is five reviewers gathered into one await. Nothing was written
+    between the stage starting and the slowest of them finishing, so the page
+    showed whatever the previous stage had last said -- one live run carried
+    "Writing the knowledge survey over 52 sources." through generate, reflect
+    and rank, nine minutes of a sentence about a stage that had ended."""
+    flow, said = _at_stage("reflect")
+
+    flow.preview()
+
+    reviewers = len(SPECIALISTS_BY_STAGE["reflect"])
+    assert reviewers > 1
+    assert said[0] == f"{reviewers} specialists are working on independent review."
+    assert said[1:] == [
+        f"{answered} of {reviewers} specialists have answered."
+        for answered in range(1, reviewers + 1)
+    ]
+
+
+def test_a_stage_of_one_specialist_says_what_it_is_doing_instead_of_counting():
+    """ "1 of 1 specialists have answered" is a sentence about arithmetic. The
+    tournament is one specialist and can take minutes, so it gets the name of
+    the work rather than a count of the people doing it."""
+    flow, said = _at_stage("rank")
+
+    flow.preview()
+
+    assert said == ["Working on tournament ranking."]
 
 
 class _RedirectedTransport(_StaggeredTransport):

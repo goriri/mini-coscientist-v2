@@ -9,6 +9,7 @@ without pretending that an in-process call crossed a network.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from .agents import DeterministicProvider, Provider, Specialist
@@ -123,13 +124,27 @@ class LocalA2ATaskBus:
         *,
         feedback: str = "",
         revision: int = 1,
+        on_result: Callable[[Specialist], None] | None = None,
     ) -> list[TaskResult]:
+        """``on_result`` is told which specialist has answered, as each does.
+
+        The fan-out is the whole of a stage and it is gathered, so the caller
+        learns nothing until the slowest of five reviewers is finished. A live
+        run held one sentence -- and it was the evidence stage's, three stages
+        stale -- across generate, reflect and rank.
+        """
         # One per dispatch, so it belongs to the loop that is about to use it.
         # The bound is on a single stage's fan-out and the bus runs one stage at
         # a time, so nothing is lost by scoping it to the call.
         semaphore = asyncio.Semaphore(self.max_concurrency)
 
         async def dispatch(specialist: Specialist) -> TaskResult:
+            result = await _dispatched(specialist)
+            if on_result:
+                on_result(specialist)
+            return result
+
+        async def _dispatched(specialist: Specialist) -> TaskResult:
             async with semaphore:
                 key = (
                     f"{session.id}:{specialist.stage}:{specialist.role}:"

@@ -100,6 +100,7 @@ from .models import (
     SourceLead,
     utc_now,
 )
+from .narrative import stage_name
 from .normalization import (
     validate_candidate_comprehensiveness,
     validate_candidate_distinctness,
@@ -585,11 +586,33 @@ class CoScientistWorkflow:
             if item.stage == stage and item.artifact_type == "stage_bundle"
         ]
         revision = len(earlier_bundles) + 1
+        # Every stage but evidence is this one call, and it is gathered, so
+        # nothing was written between the stage starting and the slowest of its
+        # specialists finishing. The page therefore showed whatever the previous
+        # stage had last said: a live run carried "Writing the knowledge survey
+        # over 52 sources." through generate, reflect and rank, nine minutes of
+        # a sentence about a stage that had ended.
+        total = len(definitions)
+        work = stage_name(stage)
+        self._note(
+            f"Working on {work}."
+            if total == 1
+            else f"{total} specialists are working on {work}."
+        )
+        answered = 0
+
+        def landed(specialist) -> None:
+            nonlocal answered
+            answered += 1
+            if total > 1:
+                self._note(f"{answered} of {total} specialists have answered.")
+
         results = await self.task_bus.dispatch_stage(
             self.session,
             definitions,
             feedback=feedback,
             revision=revision,
+            on_result=landed,
         )
         output_ids = []
         for result in results:
