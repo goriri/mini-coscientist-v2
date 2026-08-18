@@ -164,15 +164,36 @@ try {
   await waitForServer(baseUrl);
   await waitForDebugging(debuggingPort);
 
-  const empty = await landing(await firstVisit());
-  assert(
-    empty.launcher,
-    "With nothing running, the landing screen must still offer the launcher.",
+  // The idle half asserts a precondition this script cannot create. Against a
+  // local server it started itself, with its own state directory, nothing is
+  // running by construction; against the shared deployment that is true only
+  // when it happens to be. A run reported "With nothing running, the landing
+  // screen must still offer the launcher" as a failure while the page it was
+  // looking at was correctly reopening an hour-old evidence stage -- the other
+  // half of this same test, passing. So the precondition is read rather than
+  // assumed, and a half that could not be checked says so instead of failing.
+  const directory = await fetch(`${baseUrl}/api/research/sessions?limit=200`);
+  assert(directory.ok, `Could not read the running work: ${directory.status}.`);
+  const listed = await directory.json();
+  const busy = (Array.isArray(listed) ? listed : listed.sessions || []).filter(
+    (row) =>
+      row.operation && ["queued", "running"].includes(row.operation.status),
   );
-  assert(
-    empty.title === "New inquiry",
-    `An idle deployment should head itself "New inquiry", not "${empty.title}".`,
-  );
+
+  let empty = `not checked: ${busy.map((row) => row.id).join(", ")} in flight`;
+  if (busy.length) {
+    console.log(`Idle landing screen ${empty}.`);
+  } else {
+    empty = await landing(await firstVisit());
+    assert(
+      empty.launcher,
+      "With nothing running, the landing screen must still offer the launcher.",
+    );
+    assert(
+      empty.title === "New inquiry",
+      `An idle deployment should head itself "New inquiry", not "${empty.title}".`,
+    );
+  }
 
   const question =
     "Which host factors determine severity of respiratory syncytial virus?";
