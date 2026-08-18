@@ -398,7 +398,14 @@ def _consume_paragraph(lines: list[str], index: int) -> tuple[int, str]:
 FIGURE_INDEX_HEADING = "## Index of Figures and Tables"
 CONTENTS_HEADING = "## Table of Contents"
 
-_SLUG_STRIP = re.compile(r"[^a-z0-9\s-]")
+# Punctuation goes and letters stay, whatever alphabet they are in. Restricted to
+# ASCII this dropped every letter GitHub keeps: "PGC-1α Activation to Preserve Muscle
+# Quality" was indexed at "#pgc-1-activation-to-preserve-muscle-quality" and the
+# heading answers to "#pgc-1α-activation-to-preserve-muscle-quality", so the entry
+# went nowhere. A report written in Chinese loses the heading entirely -- every
+# anchor in it comes out empty, and the contents list then sends the whole document
+# to "", "-1", "-2".
+_SLUG_STRIP = re.compile(r"[^\w\s-]")
 
 
 def _anchor(text: str) -> str:

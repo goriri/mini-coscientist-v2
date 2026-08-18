@@ -1149,9 +1149,27 @@ def test_the_covers_two_criterion_lists_open_and_close_their_lines_alike():
     )
 
 
+def test_a_criterion_whose_first_word_ends_a_clause_is_opened_like_the_rest():
+    """The comma is punctuation, not part of the word, and only the opening marks
+    were taken off before the test -- so the fifth of the five comparison criteria
+    failed it on its own comma and printed lower case under four capitals. All eight
+    reports of a live run set "- safety, ethics, privacy, and unresolved fatal
+    flaws" that way."""
+    from coscientist.narrative import _labelled_bullets
+
+    assert _labelled_bullets(
+        ["safety, ethics, privacy, and unresolved fatal flaws"]
+    ) == ("- Safety, ethics, privacy, and unresolved fatal flaws")
+
+
 @pytest.mark.parametrize(
     "written",
-    ["pH window at the cathode surface", "n-hexane carryover into the cell"],
+    [
+        "pH window at the cathode surface",
+        "n-hexane carryover into the cell",
+        # The comma no longer hides the case the word carries, either.
+        "pH, temperature, and state of charge",
+    ],
 )
 def test_a_criterion_whose_first_word_carries_case_keeps_it(written):
     """Opening it on a capital would make the word a different word."""

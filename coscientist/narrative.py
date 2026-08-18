@@ -8723,8 +8723,15 @@ _CASE_SAYS_NOTHING = re.compile(r"[a-z]{2,}(?:-[a-z]+)*")
 
 
 def _opened(text: str) -> str:
-    """A bullet opened on a capital, unless its first word carries case of its own."""
-    first = text.split(" ", 1)[0].strip("*_([\"'")
+    """A bullet opened on a capital, unless its first word carries case of its own.
+
+    The punctuation after the word is not part of it. Only the opening marks were
+    taken off, so a bullet whose first word ends a clause failed the test on its own
+    comma: every one of eight live reports set the fifth comparison criterion as
+    "- safety, ethics, privacy, and unresolved fatal flaws", the one lower-case line
+    in a list of five, an inch below the success criteria it is set to match.
+    """
+    first = text.split(" ", 1)[0].strip("*_([\"'").rstrip(",;:.)]\"'")
     return text[:1].upper() + text[1:] if _CASE_SAYS_NOTHING.fullmatch(first) else text
 
 

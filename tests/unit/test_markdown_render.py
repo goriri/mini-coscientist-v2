@@ -172,3 +172,22 @@ def test_a_table_with_no_column_labels_is_still_named():
     )
 
     assert "**Table 1.** Open Questions." in numbered
+
+
+def test_a_heading_keeps_the_letters_github_keeps_when_it_slugs_one():
+    """The slug dropped everything outside ASCII, so the contents entry and the
+    heading disagreed: a live report indexed "PGC-1α Activation to Preserve Muscle
+    Quality" at "#pgc-1-activation-to-preserve-muscle-quality" and the heading
+    answers to the slug with the alpha still in it. A report written in Chinese is
+    worse off than one broken link -- every heading in it slugs to the empty string,
+    so the whole contents list points at the same nothing."""
+    from coscientist.markdown_render import _anchor
+
+    assert _anchor("PGC-1α Activation to Preserve Muscle Quality") == (
+        "pgc-1α-activation-to-preserve-muscle-quality"
+    )
+    assert _anchor("研究目标详情") == "研究目标详情"
+    # And punctuation still goes, which is the half of the rule that worked.
+    assert _anchor("4E-BP1 (S65) Hyperphosphorylation") == (
+        "4e-bp1-s65-hyperphosphorylation"
+    )

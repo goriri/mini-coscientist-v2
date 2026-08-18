@@ -55,6 +55,9 @@ extend-exclude = [".tools", ".venv", ".agents-cli-scripts", "artifacts"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "RUF"]
 ignore = ["E501", "B006"]
+# Nothing this run reports on is called after a Latin "a" where it means the Greek
+# letter: PGC-1alpha is spelled PGC-1α in the headings the anchor rule has to slug.
+allowed-confusables = ["α"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app", "coscientist"]
