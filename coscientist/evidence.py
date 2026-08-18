@@ -120,6 +120,13 @@ caveat: an angle whose literature genuinely does not exist reports that instead.
 _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _URL_RE = re.compile(r"https?://[^\s<>()\[\]\"']+")
 _DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.I)
+# Anchored on the host, so the number needs no shape of its own -- and it has
+# none to insist on: PMIDs run from one digit to eight.
+_PMID_RE = re.compile(r"pubmed\.ncbi\.nlm\.nih\.gov/(\d{1,9})")
+_PMCID_RE = re.compile(r"/(PMC\d{5,9})\b", re.I)
+_ARXIV_RE = re.compile(
+    r"arxiv\.org/(?:abs|pdf|html)/([a-z-]+(?:\.[a-z]{2})?/\d{7}|\d{4}\.\d{4,5})", re.I
+)
 _LIST_MARKER_RE = re.compile(r"^[\s\-*#>]*(?:\d+[.)])?\s*")
 _REDIRECTOR_HOST = "vertexaisearch.cloud.google.com"
 """The grounding redirector, which a report prints as a link's title when it has
@@ -1828,8 +1835,23 @@ def stated_identifiers(url: str) -> dict[str, str]:
     lead: same document, same address, two rows -- see ``lead_identity``, which
     matches on the DOI where there is one and on the address where there is not.
     """
-    match = _DOI_RE.search(url)
-    return {"doi": match.group(0).rstrip(".").lower()} if match else {}
+    stated = {}
+    if match := _DOI_RE.search(url):
+        stated["doi"] = match.group(0).rstrip(".").lower()
+    # The registry numbers, for the same reason and for one more: a DOI is
+    # rarely in the address of a record that has one of these, so without them
+    # two PubMed records are told apart only by their paths -- and a title match
+    # between two of them would read as one paper at two addresses. See
+    # ``_same_work``.
+    if match := _PMID_RE.search(url):
+        stated["pmid"] = match.group(1)
+    if match := _PMCID_RE.search(url):
+        stated["pmcid"] = match.group(1).upper()
+    if match := _ARXIV_RE.search(url):
+        # Without the version, because v1 and v2 are one paper: arXiv assigns
+        # the identifier to the work and the suffix to the upload.
+        stated["arxiv"] = match.group(1).lower()
+    return stated
 
 
 def lead_identity(lead: SourceLead) -> str:
@@ -1851,14 +1873,92 @@ def lead_identity(lead: SourceLead) -> str:
     return lead.canonical_url
 
 
+_WORK_TITLE_MINIMUM_WORDS = 6
+"""How much of a title has to be there before it may stand for the work itself.
+
+Long enough that two documents do not share one by accident. Page furniture is
+what a short title usually is -- "PDF", "Home", "Cell Reports Medicine",
+"Untitled source on mdpi.com" -- and merging on one of those would put two
+unrelated papers in one reference.
+"""
+
+
+def work_identity(lead: SourceLead) -> str | None:
+    """The work this lead is a copy of, where its title is enough to say.
+
+    ``lead_identity`` answers "the same document", and two addresses holding one
+    paper are not that. A live reference list printed entries 39 and 40 as
+    separate references -- "KRAS Secondary Mutations That Confer Acquired
+    Resistance to KRAS G12C Inhibitors, Sotorasib and Adagrasib", word for word
+    the same title -- because one was a scraped copy on academia.edu and the
+    other the PubMed record. Neither address carries a DOI, so nothing in the
+    identity above could see they were one paper, and the reader was shown the
+    same study twice under two numbers. The same pair came back in a second run.
+
+    ``None`` where the title cannot carry the claim, which leaves the lead
+    matched on its address alone, exactly as before.
+    """
+    title = " ".join(lead.title.split()).strip().rstrip(".").casefold()
+    if len(title.split()) < _WORK_TITLE_MINIMUM_WORDS:
+        return None
+    return f"work:{title}"
+
+
+def _same_work(current: SourceLead, lead: SourceLead) -> bool:
+    """Whether a title match may stand, given what else the two leads carry.
+
+    Two registry numbers of the same kind that disagree are two records however
+    the titles read -- a preprint and its published version, a paper and the
+    erratum reprinting its name, or seven PubMed records a search returned under
+    one line of its own prose, which is what a title is when the search gave the
+    document none and the ingest took the sentence around the link instead.
+    Collapsing any of those deletes a source from the corpus.
+    """
+    for field, ours in current.identifiers.items():
+        theirs = lead.identifiers.get(field)
+        if theirs and ours and theirs.strip().lower() != ours.strip().lower():
+            return False
+    return True
+
+
+_SCRAPED_COPY_HOSTS = ("academia.edu", "researchgate.net", "scribd.com")
+"""Sites that hold other people's papers, and are never the record of one.
+
+Not judged by ``_AUTHORITATIVE_HOST_MARKERS``, which reads academia.edu as
+authoritative on the strength of its ``.edu``. That marker is about a domain
+being institutional and is right for what it is used for; it cannot tell a
+university's own publication list from a site whose whole business is copies.
+"""
+
+
+def _scraped_copy(url: str) -> bool:
+    host = urlsplit(url).hostname or ""
+    return any(marker in host for marker in _SCRAPED_COPY_HOSTS)
+
+
 def merge_leads(
     existing: list[SourceLead], additions: list[SourceLead]
 ) -> list[SourceLead]:
     merged = {lead_identity(lead): lead.model_copy(deep=True) for lead in existing}
+    # The second index is what catches one paper held at two addresses. It maps
+    # a title onto the key the copy of it already in hand is filed under, so a
+    # match here merges into that entry rather than adding a row beside it.
+    by_work: dict[str, str] = {}
+    for identity, lead in merged.items():
+        if work := work_identity(lead):
+            by_work.setdefault(work, identity)
     for lead in additions:
-        current = merged.get(lead_identity(lead))
+        identity = lead_identity(lead)
+        current = merged.get(identity)
+        work = work_identity(lead)
+        if current is None and work:
+            sibling = merged.get(by_work.get(work, ""))
+            if sibling is not None and _same_work(sibling, lead):
+                current = sibling
         if current is None:
-            merged[lead_identity(lead)] = lead.model_copy(deep=True)
+            merged[identity] = lead.model_copy(deep=True)
+            if work:
+                by_work.setdefault(work, identity)
             continue
         # A redirector says which search found the paper; the resolved link says
         # which paper. Whichever copy carries the second one is the locator to
@@ -1866,6 +1966,15 @@ def merge_leads(
         if (
             GROUNDING_REDIRECT_MARKER in current.canonical_url
             and GROUNDING_REDIRECT_MARKER not in lead.canonical_url
+        ):
+            current.canonical_url = lead.canonical_url
+        # Two copies of one paper are two addresses, and the reference list can
+        # print one of them. The live pair was a scrape on academia.edu and the
+        # PubMed record: merging on whichever arrived first would have given the
+        # reader the scrape half the time, which is a worse citation than either
+        # of the two duplicated entries it replaced.
+        elif _scraped_copy(current.canonical_url) and not _scraped_copy(
+            lead.canonical_url
         ):
             current.canonical_url = lead.canonical_url
         current.originating_passes = list(

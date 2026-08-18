@@ -12,7 +12,7 @@ had been recorded, and a distinguishing clause saying the search had returned th
 from __future__ import annotations
 
 from coscientist.dossier import _reference_line, _reference_lines
-from coscientist.evidence import lead_identity, merge_leads
+from coscientist.evidence import lead_identity, merge_leads, stated_identifiers
 from coscientist.models import SourceLead
 from coscientist.narrative import Citation, _reference_title
 
@@ -85,6 +85,127 @@ def test_the_same_document_reached_two_ways_merges_on_its_doi():
     # the copy that was read settles the status for the document.
     assert merged[0].canonical_url.startswith("https://pubs.rsc.org/")
     assert merged[0].verification_status == "verified"
+
+
+KRAS = (
+    "KRAS Secondary Mutations That Confer Acquired Resistance to KRAS G12C "
+    "Inhibitors, Sotorasib and Adagrasib"
+)
+SCRAPE = "https://www.academia.edu/90000574/KRAS_Secondary_Mutations"
+RECORD = "https://pubmed.ncbi.nlm.nih.gov/33971321/"
+
+
+def test_one_paper_held_at_two_addresses_is_one_reference():
+    """Entries 39 and 40 of a live reference list were this one paper.
+
+    One was a scrape on academia.edu and the other the PubMed record, under a
+    title the two shared word for word. Neither address carries a DOI, so the
+    document identity could not see they were the same study and the reader was
+    shown it twice under two numbers. A second run printed the same pair.
+    """
+    merged = merge_leads(
+        [],
+        [
+            _lead(SCRAPE, title=KRAS, facets=["supporting"]),
+            _lead(RECORD, title=KRAS, facets=["replication"]),
+        ],
+    )
+
+    assert len(merged) == 1
+    assert merged[0].facets == ["supporting", "replication"]
+
+
+def test_the_reference_keeps_whichever_address_is_the_record():
+    """A merge that kept the scrape would cite worse than either duplicate did."""
+    scrape_first = merge_leads(
+        [], [_lead(SCRAPE, title=KRAS), _lead(RECORD, title=KRAS)]
+    )
+    record_first = merge_leads(
+        [], [_lead(RECORD, title=KRAS), _lead(SCRAPE, title=KRAS)]
+    )
+
+    assert scrape_first[0].canonical_url == RECORD
+    assert record_first[0].canonical_url == RECORD
+
+
+def test_a_copy_with_no_identifier_joins_the_registered_record_it_belongs_to():
+    merged = merge_leads(
+        [],
+        [
+            _lead(
+                "https://pubs.rsc.org/en/content/articlelanding/2014/ta/c4ta00001a",
+                title=PAPER,
+                identifiers={"doi": "10.1039/c4ta00001a"},
+            ),
+            _lead("https://www.researchgate.net/publication/299544966", title=PAPER),
+        ],
+    )
+
+    assert len(merged) == 1
+    assert merged[0].identifiers["doi"] == "10.1039/c4ta00001a"
+
+
+def test_two_registered_records_stay_two_however_their_titles_read():
+    """A preprint and its published version are two documents, and so is an erratum
+    that reprints the paper's name -- which the corrections facet exists to find."""
+    merged = merge_leads(
+        [],
+        [
+            _lead("https://a.org/x", title=PAPER, identifiers={"doi": "10.1039/a"}),
+            _lead("https://b.org/y", title=PAPER, identifiers={"doi": "10.1039/b"}),
+        ],
+    )
+
+    assert len(merged) == 2
+
+
+def test_a_title_too_short_to_name_a_paper_merges_nothing():
+    """Page furniture is what a short title usually is, and two sites share it."""
+    merged = merge_leads(
+        [],
+        [
+            _lead("https://a.org/x", title="Cell Reports Medicine"),
+            _lead("https://b.org/y", title="Cell Reports Medicine"),
+        ],
+    )
+
+    assert len(merged) == 2
+
+
+def test_two_records_in_one_registry_survive_a_title_the_search_wrote():
+    """Where the search returns no title, the ingest reads the prose around the link.
+
+    That sentence is not the document's name and several passes can share it, so a
+    title match between two records of one registry proves nothing. Seven PubMed
+    records of a seven-pass fan-out arrived under one such line.
+    """
+    merged = merge_leads(
+        [],
+        [
+            _lead(
+                f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                title="Supporting contradictory negative null replication methods",
+                identifiers={"pmid": pmid},
+            )
+            for pmid in ("1", "2", "3")
+        ],
+    )
+
+    assert len(merged) == 3
+
+
+def test_a_registry_number_is_read_off_the_locator_that_states_it():
+    assert stated_identifiers("https://pubmed.ncbi.nlm.nih.gov/33971321/") == {
+        "pmid": "33971321"
+    }
+    assert stated_identifiers("https://ncbi.nlm.nih.gov/pmc/articles/PMC8137619/") == {
+        "pmcid": "PMC8137619"
+    }
+    # v1 and v2 are one paper: arXiv assigns the identifier to the work and the
+    # suffix to the upload, so an abstract page and a versioned PDF are one lead.
+    assert stated_identifiers("https://arxiv.org/abs/2401.12345") == stated_identifiers(
+        "https://arxiv.org/pdf/2401.12345v2"
+    )
 
 
 def test_a_redirect_and_a_publisher_link_are_told_apart_by_identity():
