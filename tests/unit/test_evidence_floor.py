@@ -390,10 +390,54 @@ def test_the_floor_names_the_kinds_of_evidence_that_are_missing_in_prose():
 
     assert floor.facets_met is False
     shortfall = next(line for line in floor.shortfalls if "evidence facets" in line)
-    assert f"1 of {EVIDENCE_FLOOR_FACETS} required" in shortfall
+    assert f"1 of the {EVIDENCE_FLOOR_FACETS} required" in shortfall
     # The facet tokens are an enum; a researcher reads the phrases.
     assert "negative or null results" in shortfall
     assert "negative_null" not in shortfall
+
+
+def test_the_facet_shortfall_does_not_read_as_its_own_contradiction():
+    """Four facets are required of seven, so more are uncovered than are needed.
+
+    A live rehearsal report printed "2 of 4 required evidence facets have a
+    verified source. Missing:" and then named five kinds of evidence. The
+    arithmetic is sound -- four is the floor, five of the seven are uncovered --
+    but a reader has to reconstruct it before the sentence stops looking like a
+    mistake. The shortfall says how many of the ones it names would clear the
+    gate.
+    """
+    packet, manifest = _wide_corpus()
+    two_facets = _packet(
+        *[
+            source
+            for source in packet.sources
+            if source.facet in {"supporting", "methods"}
+        ]
+    )
+
+    floor = evaluate_evidence_floor(two_facets, manifest)
+
+    assert len(floor.facets_covered) == 2
+    assert len(floor.facets_missing) == 5
+    shortfall = next(line for line in floor.shortfalls if "evidence facets" in line)
+    assert "2 more are needed, from the 5 still uncovered" in shortfall
+    assert "Missing:" not in shortfall
+
+
+def test_a_shortfall_of_one_facet_is_written_in_the_singular():
+    packet, manifest = _wide_corpus()
+    three_facets = _packet(
+        *[
+            source
+            for source in packet.sources
+            if source.facet in {"supporting", "methods", "replication"}
+        ]
+    )
+
+    floor = evaluate_evidence_floor(three_facets, manifest)
+
+    shortfall = next(line for line in floor.shortfalls if "evidence facets" in line)
+    assert "1 more is needed, from the 4 still uncovered" in shortfall
 
 
 def test_a_quarantined_source_earns_no_credit_and_covers_no_facet():

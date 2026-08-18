@@ -26,7 +26,6 @@ from .models import (
     CREDITED_STATUSES,
     EVIDENCE_FACETS,
     EVIDENCE_FLOOR_CREDIT,
-    EVIDENCE_FLOOR_FACETS,
     FACET_PHRASES,
     MAX_DISCOVERY_PASSES,
     MAX_VERIFICATION_BATCHES,
@@ -1041,14 +1040,21 @@ def evaluate_evidence_floor(
             "unreadable, which count for half each."
         )
     if not floor.facets_met:
+        # Four are required of seven, so the uncovered list is always longer
+        # than the shortfall. A live report printed "2 of 4 required evidence
+        # facets have a verified source. Missing:" and then named five, which is
+        # arithmetically fine and reads as a contradiction. Say how many of the
+        # named ones would actually clear the gate and the numbers stop fighting.
+        needed = floor.required_facets - len(floor.facets_covered)
+        uncovered = [
+            FACET_PHRASES.get(facet, facet.replace("_", " "))
+            for facet in floor.facets_missing
+        ]
         floor.shortfalls.append(
-            f"{len(floor.facets_covered)} of {EVIDENCE_FLOOR_FACETS} required "
-            "evidence facets have a verified source. Missing: "
-            + ", ".join(
-                FACET_PHRASES.get(facet, facet.replace("_", " "))
-                for facet in floor.facets_missing
-            )
-            + "."
+            f"{len(floor.facets_covered)} of the {floor.required_facets} "
+            f"required evidence facets have a verified source; {needed} more "
+            f"{'is' if needed == 1 else 'are'} needed, from the "
+            f"{len(uncovered)} still uncovered: " + ", ".join(uncovered) + "."
         )
     if not disconfirming and not searched:
         # Soft only once the search has happened. "We found none" is a finding
