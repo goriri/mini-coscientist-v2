@@ -87,9 +87,11 @@ def _database_url() -> str:
 # is closed when it is handed back.
 #
 # What this still does not do is bound instances times pool. Nothing in the
-# process knows how many instances are up, maxScale is ten, and three at peak
-# would be twenty-four. These are shares of the server's budget: raise them with
-# its max_connections, not before it.
+# process knows how many instances are up, so the bound is enforced outside:
+# maxScale is four and the instance's max_connections is a hundred, which makes
+# the worst case four times eight, thirty-two, against a hundred. These are
+# shares of the server's budget: raise them with its max_connections, and raise
+# maxScale with it too, not before either.
 _ENGINE_POOL = {
     "pool_size": 2,
     "max_overflow": 3,
