@@ -235,6 +235,39 @@ def test_a_statement_id_carrying_its_pass_number_is_named_like_any_other():
     )
 
 
+def test_a_finding_read_out_of_the_index_leaves_the_passs_own_numbers_behind():
+    """A live bullet read "**[Literature Lead]** When researchers utilized dual
+    inhibitors ... 4E-BP1 was successfully dephosphorylated [cite: 70, 71, 72] [6]".
+
+    Only the [6] is a reference this report has. The other three are indices into a
+    source list one search pass kept to itself, and they were struck everywhere the
+    same statement is printed except here, because this block reads the statement out
+    of the evidence index rather than off the page that prints it.
+    """
+    record = _record(evidence_against=["pass4_stmt_5"])
+    statement = record.discovery.narratives[0].statements[0]
+    statement.text = f"{STATEMENT_TEXT} [cite: 70, 71, 72]"
+
+    ((_heading, badge, said, *_rest),) = _evidence_notes(record, record.candidates[0])
+
+    assert badge == LEAD_BADGE
+    assert "cite:" not in said
+    assert said == f"{STATEMENT_TEXT}."
+
+
+def test_a_claim_read_out_of_the_index_leaves_them_behind_too():
+    """The claims are the other half of the index, and a claim is extracted from the
+    same pass report the statements come from -- markers and all."""
+    record = _record(evidence_for=["claim_1"])
+    record.evidence.claims[0].claim = f"{CLAIM_TEXT} [cite: 12]"
+
+    ((_heading, badge, said, *_rest),) = _evidence_notes(record, record.candidates[0])
+
+    assert badge == VERIFIED_BADGE
+    assert "cite:" not in said
+    assert said == f"{CLAIM_TEXT}."
+
+
 def test_a_prefix_that_names_no_record_is_left_where_the_specialist_put_it():
     """ "Cycle_life: retention held" is a phrase with a colon after it, not a citation.
     Only a prefix the run can resolve is furniture the report may cut."""

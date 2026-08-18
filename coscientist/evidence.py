@@ -1575,6 +1575,55 @@ def citation_spans(
     return spans
 
 
+# How far from the offsets a marker may sit and still be the one they meant. Four
+# characters in one live pass report and six in another, which is what put
+# "[cit[cite: 1, 2, 3]ile heavily theorized" into a Knowledge Base: the pass's own
+# bracket left standing, the run's marker spliced into the middle of it, and the two
+# letters of "While" the cut swallowed gone for good. Sixty-four is wider than any
+# drift a run has shown and narrower than the prose between two markers.
+_MARKER_DRIFT = 64
+# The marker itself, without the space in front of it that ``CITE_SPAN`` takes. A
+# realigned span replaces what the annotation meant to point at, and the space before
+# it belongs to the sentence: swept up with the marker it leaves "polyclonal[S1]".
+_MARKER_RE = re.compile(r"\[cite:[^\]\n]{0,120}\]")
+
+
+def _next_boundary(text: str, index: int) -> int:
+    """The nearest place from ``index`` on where a marker will not split a word."""
+    position = min(max(index, 0), len(text))
+    while position < len(text) and not text[position].isspace():
+        position += 1
+    return position
+
+
+def aligned_span(text: str, start: int, end: int) -> tuple[int, int]:
+    """The marker an annotation's offsets meant, which is not always where they point.
+
+    Deep Research gives each citation as offsets into the part's own text, and on live
+    runs those offsets sit a few characters to the right of the marker they belong to.
+    Cutting at them halves the marker and eats the words behind it, so they are read as
+    a place to look rather than as the place to cut: what gets rewritten is a marker,
+    or nothing is.
+
+    Where no marker is near, the number is inserted at the next word boundary instead
+    of replacing whatever prose lies under the offsets. A citation a few words out of
+    place is a poor reference; a sentence with a hole in it is a lost finding.
+    """
+    if CITE_SPAN.fullmatch(text[start:end]):
+        return start, end
+    offset = max(0, start - _MARKER_DRIFT)
+    window = text[offset : min(len(text), end + _MARKER_DRIFT)]
+    nearest = min(
+        _MARKER_RE.finditer(window),
+        key=lambda match: abs(offset + match.start() - start),
+        default=None,
+    )
+    if nearest is not None:
+        return offset + nearest.start(), offset + nearest.end()
+    point = _next_boundary(text, end)
+    return point, point
+
+
 def renumber_report(
     payload: dict, token_of: Callable[[dict], str], *, prefix: str = ""
 ) -> str:
@@ -1599,6 +1648,9 @@ def renumber_report(
     pieces: list[str] = []
     written = 0
     for start, end, group in citation_spans(part.get("annotations") or [], len(text)):
+        start, end = aligned_span(text, start, end)
+        if start < written:
+            continue
         tokens: list[str] = []
         for annotation in group:
             token = token_of(annotation)
@@ -1609,9 +1661,10 @@ def renumber_report(
         # a citation span, and a sweep at the end takes back every number this
         # just resolved. The space in front of a struck span goes with it --
         # left behind, the sentence it closed reads "Onset is early ." on the
-        # page.
+        # page. Only where something was struck: an insertion point cuts nothing,
+        # and the space before it is the prose's own.
         before = CITE_SPAN.sub("", text[written:start])
-        pieces.append(before if tokens else before.rstrip(" \t"))
+        pieces.append(before if tokens or end == start else before.rstrip(" \t"))
         if tokens:
             pieces.append("[" + prefix + ", ".join(tokens) + "]")
         written = end

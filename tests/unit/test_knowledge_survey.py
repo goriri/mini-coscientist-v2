@@ -153,6 +153,67 @@ def test_a_span_nested_inside_another_does_not_cut_the_report_twice():
     )
 
 
+def test_offsets_that_point_past_the_marker_still_rewrite_the_marker():
+    """A live pass's offsets sat four characters right of the marker they meant.
+
+    Cutting at them left the pass's own bracket standing, spliced the run's number
+    into the middle of it and swallowed the words behind it: the Knowledge Base read
+    "outcomes [cit[cite: 1, 2, 3]ile heavily theorized", which is a broken marker and
+    a lost "While" in one sentence.
+    """
+    text = "Resistance is polyclonal [cite: 1, 4]. Onset is early.\n"
+    marker = text.index("[cite: 1, 4]")
+    payload = _payload(
+        text,
+        [
+            _annotation(
+                RESISTANCE,
+                f"{REDIRECT}aaa",
+                marker + 4,
+                marker + 4 + len("[cite: 1, 4]"),
+            )
+        ],
+    )
+
+    assert renumber_report(payload, SourceIndex(LEADS).token) == (
+        "Resistance is polyclonal [S1]. Onset is early."
+    )
+
+
+def test_offsets_that_point_at_no_marker_leave_the_sentence_whole():
+    """Nothing there to replace, so nothing is cut: the number joins the prose.
+
+    The offsets were trusted as the place to cut, so a span pointing at ordinary words
+    would have deleted them and put a reference number where the finding had been.
+    """
+    text = "Resistance is polyclonal and early in every cohort measured.\n"
+    payload = _payload(
+        text, [_annotation(RESISTANCE, f"{REDIRECT}aaa", 11, len("Resistance is poly"))]
+    )
+
+    assert renumber_report(payload, SourceIndex(LEADS).token) == (
+        "Resistance is polyclonal[S1] and early in every cohort measured."
+    )
+
+
+def test_two_drifting_spans_do_not_land_on_one_marker():
+    """Realignment can walk two annotations onto the same bracket, and cutting it
+    twice would splice the report at offsets that have already been passed."""
+    text = "Resistance is polyclonal [cite: 1, 4]. Onset is early.\n"
+    marker = text.index("[cite: 1, 4]")
+    payload = _payload(
+        text,
+        [
+            _annotation(RESISTANCE, f"{REDIRECT}aaa", marker + 4, marker + 16),
+            _annotation(BIOMARKERS, f"{REDIRECT}bbb", marker + 6, marker + 18),
+        ],
+    )
+
+    assert renumber_report(payload, SourceIndex(LEADS).token) == (
+        "Resistance is polyclonal [S1]. Onset is early."
+    )
+
+
 def test_the_source_list_the_survey_is_given_is_the_one_it_is_read_back_against():
     listing = SourceIndex(LEADS).listing().splitlines()
 

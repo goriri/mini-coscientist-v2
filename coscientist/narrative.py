@@ -7486,8 +7486,12 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
                 # What the record says, not the record: an id resolved here is
                 # printed as the finding, and a pass that wrote its findings as
                 # their own records had "* **Statement:** ... * **Facet:** methods
-                # * **Category:** Finding" spliced into a reviewer's sentence.
-                _without_record_labels(statement.text),
+                # * **Category:** Finding" spliced into a reviewer's sentence. The
+                # pass's own citation numbers go the same way, and for the same
+                # reason they go everywhere else: an Evidence Assessment bullet
+                # read "4E-BP1 was successfully dephosphorylated [cite: 70, 71,
+                # 72] [6]", where only the [6] is a reference this report has.
+                _without_pipeline_markup(_without_record_labels(statement.text)),
                 "discovered_unverified",
             )
     # Claims last: where a claim and a source carry the same id, what the claim
@@ -7506,7 +7510,7 @@ def _evidence_index(record: ResearchRecord) -> dict[str, _EvidenceRecord]:
         standing = source_standing.get(claim.source_id or "", "")
         index[claim.id] = _EvidenceRecord(
             claim.id,
-            _without_record_labels(claim.claim),
+            _without_pipeline_markup(_without_record_labels(claim.claim)),
             standing if standing in DISCREDITED_STATUSES else claim.verification_status,
             url=source_urls.get(claim.source_id or "", ""),
             relation=claim.relation,
