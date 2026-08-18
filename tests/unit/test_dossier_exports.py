@@ -858,3 +858,28 @@ def test_the_index_of_exhibits_gives_a_page_and_a_link_for_every_entry():
         for annotation in (index.get("/Annots") or [])
     }
     assert targets == set(printed.values())
+
+
+def test_a_run_that_waited_overnight_is_not_measured_out_in_minutes():
+    """Provenance printed "5463 minutes after it started" over two timestamps four
+    days apart. The number is right and nobody converts it, and the two dates it
+    sits between have already said the same thing in a unit a reader holds."""
+    from coscientist.dossier import _elapsed
+
+    assert _elapsed("2026-08-14T14:28:47+00:00", "2026-08-18T09:31:44+00:00") == (
+        ", 3 days and 19 hours after it started"
+    )
+    assert _elapsed("2026-08-14T14:28:47+00:00", "2026-08-14T20:15:47+00:00") == (
+        ", 5 hours and 47 minutes after it started"
+    )
+    # The remainder is dropped where there is none, rather than printed as a zero.
+    assert _elapsed("2026-08-14T14:28:47+00:00", "2026-08-15T14:28:47+00:00") == (
+        ", 1 day after it started"
+    )
+    # And the two units that already read well are left as they were.
+    assert _elapsed("2026-08-14T14:28:47+00:00", "2026-08-14T14:58:47+00:00") == (
+        ", 30 minutes after it started"
+    )
+    assert _elapsed("2026-08-14T14:28:47+00:00", "2026-08-14T14:29:20+00:00") == (
+        ", 33 seconds after it started"
+    )

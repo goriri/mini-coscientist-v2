@@ -1919,15 +1919,37 @@ def _specialist_cell(stage: str, label: str, alone: bool) -> str:
 
 
 def _elapsed(start: str, end: str) -> str:
-    """How long the run took, which is what the two timestamps are printed for."""
+    """How long the run took, which is what the two timestamps are printed for.
+
+    In the unit a reader can hold. A run that waits overnight on a gate is measured
+    in days, and printed in minutes it read "5463 minutes after it started" -- a
+    number nobody converts, over two timestamps four days apart that already say it.
+    """
     try:
         span = datetime.fromisoformat(end) - datetime.fromisoformat(start)
     except ValueError:
         return ""
-    minutes = round(span.total_seconds() / 60)
-    if span.total_seconds() < 60:
-        return f", {round(span.total_seconds())} seconds after it started"
-    return f", {_plural(minutes, 'minute')} after it started"
+    seconds = round(span.total_seconds())
+    if seconds < 60:
+        return f", {_plural(seconds, 'second')} after it started"
+    minutes, hours = round(seconds / 60), seconds // 3600
+    if hours < 1:
+        return f", {_plural(minutes, 'minute')} after it started"
+    # The larger unit and the remainder in the next one down, and no further: the
+    # seconds of a four-day run are not a fact about it.
+    if hours < 24:
+        rest = minutes - hours * 60
+        return (
+            f", {_plural(hours, 'hour')}"
+            + (f" and {_plural(rest, 'minute')}" if rest else "")
+            + " after it started"
+        )
+    days, rest = divmod(hours, 24)
+    return (
+        f", {_plural(days, 'day')}"
+        + (f" and {_plural(rest, 'hour')}" if rest else "")
+        + " after it started"
+    )
 
 
 def _producer_label(model: str) -> str:
