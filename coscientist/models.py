@@ -1035,6 +1035,25 @@ class Session(Contract):
     -- as though this run had done that work, and a reader comparing two forks of one
     corpus would take them for two independent searches agreeing with each other.
     """
+    rehearsal: bool = False
+    """This run exercises the pipeline; it does not propose research.
+
+    Set at launch and never afterwards, because it changes what the output is
+    allowed to be taken for and that cannot be decided once the output exists.
+
+    A rehearsal answers its own governance gate. The reflect stage stops a real
+    run until a named person has read each fatal safety finding and either
+    dropped the hypothesis or signed for keeping it, which is right and is not
+    something a test run has a person for -- so a build that has to reach the
+    report stage a dozen times parks at reflect a dozen times, and the operator
+    clicking through ten findings with one sentence each is the gate being worn
+    down into a formality. Better to say plainly, once, that nobody read them.
+
+    Nothing is skipped and nothing is hidden. The reviewer still runs, the
+    findings are still recorded in full, and every one of them is still printed
+    in the dossier -- above a banner saying no one answered it. See
+    ``REHEARSAL_JUSTIFICATION``.
+    """
     exploratory_evidence_accepted: bool = False
     budget: ResearchBudget = Field(default_factory=ResearchBudget)
     artifacts: list[Artifact] = Field(default_factory=list)

@@ -95,6 +95,17 @@ def parser() -> argparse.ArgumentParser:
                 "ask. Set once for a new run and kept for its whole life."
             ),
         )
+        cmd.add_argument(
+            "--rehearsal",
+            action="store_true",
+            help=(
+                "Exercise the pipeline instead of proposing research. The safety "
+                "and governance gate is waived rather than skipped: every fatal "
+                "finding is still raised, still recorded and still printed in "
+                "the report, each above a note saying that no person read it. "
+                "The report is stamped as a rehearsal on every cover."
+            ),
+        )
         cmd.add_argument("--db", help="SQLite research ledger path")
         cmd.add_argument("--session-id", help="Resume a session from --db")
         cmd.add_argument(
@@ -142,11 +153,13 @@ def main(argv: list[str] | None = None) -> int:
     # its default through on a resume would reject every session that had been
     # started on anything else.
     resuming = bool(args.resume or args.session_id)
-    if resuming and (args.model or args.language or args.evidence_review):
+    if resuming and (
+        args.model or args.language or args.evidence_review or args.rehearsal
+    ):
         raise SystemExit(
-            "--model, --language and --evidence-review configure a new run. A "
-            "resumed session keeps the model, language and gates it was "
-            "started with."
+            "--model, --language, --evidence-review and --rehearsal configure a "
+            "new run. A resumed session keeps the model, language and gates it "
+            "was started with."
         )
     provider = (
         A2AProvider(args.a2a_url, model=args.model or DEFAULT_MODEL)
@@ -195,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model or DEFAULT_MODEL,
             language=args.language or DEFAULT_LANGUAGE,
             evidence_review=args.evidence_review,
+            rehearsal=args.rehearsal,
             ledger=ledger,
         )
     else:

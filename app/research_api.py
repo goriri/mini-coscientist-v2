@@ -88,6 +88,13 @@ class CreateResearchSession(BaseModel):
     # completion would simply park at evidence forever. The web launcher asks
     # for it explicitly; nothing else inherits it.
     evidence_review: bool = False
+    # A run that exercises the pipeline instead of proposing research. It waives
+    # its own governance gate -- in writing, on the record, and printed in the
+    # report -- so a build that has to reach the report stage does not park at
+    # reflect waiting for a person to sign for a hazard nobody intends to go
+    # near. Off unless asked for: the flag changes what the output may be taken
+    # for, so it cannot be inferred, only declared.
+    rehearsal: bool = False
     # An earlier run of this same question whose scope and evidence base this one
     # starts from. Gathering the corpus is the long half of a run -- eight Deep
     # Research passes, an hour, twenty-four dollars -- and asking the same question
@@ -358,6 +365,11 @@ def _snapshot(workflow: CoScientistWorkflow) -> dict:
         # gate, and the launcher needs to be able to say so rather than promise
         # a stop that never comes.
         "evidence_review": session.evidence_review,
+        # Sent on every snapshot so the badge is on the page from the first poll.
+        # A reader who opens a run halfway through has no other way to tell a
+        # rehearsal from a proposal until the report exists, and by then the
+        # distinction has stopped being useful.
+        "rehearsal": session.rehearsal,
         # A forked run's evidence card reports the search that built the corpus --
         # seven passes, ninety leads, twenty-one dollars -- and none of it was this
         # run's. The report says so, but the report is the last thing to exist; a
@@ -687,6 +699,7 @@ def create_research_session(
             language=request.language,
             workflow_version=int(os.environ.get("EVIDENCE_PIPELINE_VERSION", "2")),
             evidence_review=request.evidence_review,
+            rehearsal=request.rehearsal,
             ledger=_ledger(),
         )
     except ValueError as error:

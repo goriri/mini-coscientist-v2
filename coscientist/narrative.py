@@ -30,7 +30,7 @@ from .citations import (
 )
 from .debate import standalone_opening
 from .evidence import GROUNDING_REDIRECT_MARKER, unread_passes
-from .governance import open_blockers
+from .governance import REHEARSAL_ADJUDICATOR, open_blockers
 from .models import (
     EVIDENCE_FACETS,
     FACET_PHRASES,
@@ -1883,7 +1883,22 @@ class AdjudicationNote:
         return self.resolution == "withdraw"
 
     @property
+    def waived(self) -> bool:
+        """Recorded by a rehearsal to get past its own gate, not entered by anyone.
+
+        Every other adjudication in the system is a person answering for a hazard,
+        and every sentence this class writes about one says so -- "accepted", "the
+        decision on the record", "the reason they gave". A rehearsal overrides its
+        blockers automatically so the later stages run, and printed in those words
+        the waiver reads as a considered acceptance by someone called
+        ``rehearsal (nobody)``. It has to read as what it is.
+        """
+        return self.adjudicator == REHEARSAL_ADJUDICATOR
+
+    @property
     def heading(self) -> str:
+        if self.waived:
+            return f"Waived by rehearsal — fatal flaw unanswered: {self.title}"
         verb = "Withdrawn" if self.withdrawn else "Override — fatal flaw accepted"
         return f"{verb}: {self.title}"
 
@@ -1899,6 +1914,13 @@ class AdjudicationNote:
 
     @property
     def resolution_sentence(self) -> str:
+        if self.waived:
+            return (
+                "Nobody accepted this flaw. This run was a rehearsal of the "
+                "pipeline, so it overrode the finding itself to let the remaining "
+                "stages run: the hypothesis stands, the flaw was not fixed, "
+                "withdrawn or mitigated, and no person has read it."
+            )
         if self.withdrawn:
             return (
                 f"{self.adjudicator} withdrew this hypothesis from the population in "
@@ -1933,16 +1955,25 @@ class AdjudicationNote:
         section it was pointing at. The caller knows which side it is printing on.
         """
         lead = (
-            "Withdrawn after review."
+            "Warning: this idea carries a fatal safety and governance flaw that "
+            "nobody has read."
+            if self.waived
+            else "Withdrawn after review."
             if self.withdrawn
             else "Warning: this idea carries a fatal safety and governance flaw that "
             "was accepted rather than resolved."
         )
         where = "below" if adjudications_ahead else "above"
+        tail = (
+            "The note recorded in place of a decision is reprinted in full under "
+            f"Governance adjudications {where}."
+            if self.waived
+            else f"The reason {self.adjudicator} gave for the decision is reprinted "
+            f"in full under Governance adjudications {where}."
+        )
         return (
             f"{lead} {self.resolution_sentence} The flaw, reprinted verbatim: "
-            f"{_quoted(self.flaw_text)} The reason {self.adjudicator} gave for the "
-            f"decision is reprinted in full under Governance adjudications {where}."
+            f"{_quoted(self.flaw_text)} {tail}"
         )
 
     @property
@@ -1955,6 +1986,12 @@ class AdjudicationNote:
         subsection is headed Critical Flaws and cannot stay silent about the flaw
         that matters most; it says the flaw is there and where it was just read.
         """
+        if self.waived:
+            return (
+                "The fatal safety and governance flaw quoted at the head of this "
+                "section was waived by this rehearsal run rather than answered by "
+                "anybody, and it still stands against this idea."
+            )
         if self.withdrawn:
             return (
                 f"This idea was withdrawn by {self.adjudicator} over the fatal safety "

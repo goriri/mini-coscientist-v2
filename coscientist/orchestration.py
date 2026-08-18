@@ -48,9 +48,11 @@ from .evidence import (
     unread_passes,
 )
 from .governance import (
+    REHEARSAL_ADJUDICATOR,
     adjudicated_review_ids,
     open_blockers,
     record_adjudication,
+    rehearsal_adjudications,
     withdraw_candidate,
 )
 from .ledger import ResearchLedger
@@ -213,6 +215,7 @@ class CoScientistWorkflow:
         language: str | None = None,
         workflow_version: int = 2,
         evidence_review: bool = False,
+        rehearsal: bool = False,
         ledger: ResearchLedger | None = None,
         evidence_discovery: IterativeEvidenceDiscovery | None = None,
     ):
@@ -251,6 +254,7 @@ class CoScientistWorkflow:
                 # field says what this run will actually do.
                 evidence_review=evidence_review
                 and resolved_profile != ApprovalProfile.AUTO,
+                rehearsal=rehearsal,
                 input_requirements=detect_input_requirements(question),
             )
         else:
@@ -2240,6 +2244,28 @@ class CoScientistWorkflow:
                 for blocker in open_blockers(self.session)
                 if blocker.artifact_id in artifact.input_artifact_ids
             ]
+            if unanswered and self.session.rehearsal:
+                # A rehearsal answers its own gate rather than parking here for
+                # a person it does not have. Recorded, not skipped: each finding
+                # gets an override in the session saying in writing that nobody
+                # read it, so the dossier prints the flaw and the non-answer
+                # together. See ``rehearsal_adjudications``.
+                self.session.governance_adjudications.extend(
+                    rehearsal_adjudications(unanswered)
+                )
+                self._persist(
+                    self._event(
+                        "governance_waived_for_rehearsal",
+                        REHEARSAL_ADJUDICATOR,
+                        payload={
+                            "review_ids": [blocker.review_id for blocker in unanswered],
+                            "candidate_ids": [
+                                blocker.candidate_id for blocker in unanswered
+                            ],
+                        },
+                    )
+                )
+                unanswered = []
             if unanswered:
                 self.session.status = "governance_blocked"
                 event = self._event(

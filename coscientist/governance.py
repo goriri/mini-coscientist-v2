@@ -18,6 +18,7 @@ answer.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from .models import (
@@ -61,6 +62,60 @@ def governance_blockers(session: Session) -> list[GovernanceBlocker]:
                     GovernanceBlocker(review=review, artifact_id=artifact.id)
                 )
     return blockers
+
+
+REHEARSAL_ADJUDICATOR = "rehearsal (nobody)"
+"""Deliberately not a name, because no person read the finding.
+
+Every other adjudicator string in the system is somebody who signed for a
+hazard. This one has to be impossible to mistake for one of those at a glance,
+in a table, a year later.
+"""
+
+REHEARSAL_JUSTIFICATION = (
+    "NOT REVIEWED. This run is a rehearsal of the pipeline, not a research "
+    "proposal: it was launched to exercise the workflow end to end and nothing "
+    "in it is intended for execution. No person read this finding and nothing "
+    "here answers it. The flaw stands exactly as the reviewer wrote it, and any "
+    "hypothesis carrying one must go through this gate for real -- with a named "
+    "adjudicator -- before it is proposed to anybody."
+)
+
+
+def rehearsal_adjudications(
+    blockers: Sequence[GovernanceBlocker],
+) -> list[GovernanceAdjudication]:
+    """Answer a rehearsal's own gate, in writing, without pretending anyone did.
+
+    Called only where the reflect stage would otherwise stop the run. Each finding
+    it is given is recorded as an override so the run can continue, and each one
+    carries the same sentence saying no one read it -- which is the honest thing
+    for the dossier to print, and the useful one: an override signed by a person
+    and an override signed by nobody are different claims about the same flaw,
+    and only one of them was checked.
+
+    Takes the blockers rather than the session, so it waives exactly what the
+    caller is stopped on. The reflect gate is scoped to the findings that came
+    out of the review set it is admitting; reading ``open_blockers`` again here
+    would sign off a finding from some other artifact that nothing had yet asked
+    about.
+
+    Overrides rather than withdrawals on purpose. Withdrawing would drop the
+    hypothesis and rewrite the population around it, so the rehearsal would stop
+    exercising the stages it exists to exercise -- and would quietly produce a
+    smaller report than the real run it stands in for.
+    """
+    return [
+        GovernanceAdjudication(
+            review_id=blocker.review_id,
+            candidate_id=blocker.candidate_id,
+            resolution="override",
+            adjudicator=REHEARSAL_ADJUDICATOR,
+            justification=REHEARSAL_JUSTIFICATION,
+            fatal_flaws=list(blocker.review.fatal_flaws),
+        )
+        for blocker in blockers
+    ]
 
 
 def adjudicated_review_ids(session: Session) -> set[str]:

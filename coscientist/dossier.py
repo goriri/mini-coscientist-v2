@@ -33,6 +33,7 @@ from .debate import (
 )
 from .evidence import GROUNDING_REDIRECT_MARKER, names_a_document, unread_passes
 from .flowchart import flowchart_drawing, flowchart_steps
+from .governance import REHEARSAL_ADJUDICATOR
 from .markdown_render import (
     FIGURE_INDEX_HEADING,
     Code,
@@ -185,7 +186,15 @@ def _front_matter(record: ResearchRecord, overview: ResearchOverview) -> list[st
         # that none of this is a finding sat in an appendix two thousand seven
         # hundred lines down. Three exports of one report, and only two of them
         # told the reader what they were holding.
-        f"*{_DEFAULT_NOTICE}*",
+        #
+        # A rehearsal says something stronger here, and says it in the one place
+        # every export carries. The two documents are otherwise identical --
+        # same agents, same length, same confident section headings -- and the
+        # difference between a proposal that went through the safety gate and
+        # one that answered its own is not something a reader can see from the
+        # body. ``_cover_notice`` reads this line back out for the PDF and the
+        # DOCX, which build their title pages from the compiled Markdown.
+        f"*{_REHEARSAL_NOTICE if session.rehearsal else _DEFAULT_NOTICE}*",
         "",
         "# Research Goal Details",
         "",
@@ -273,6 +282,21 @@ def _overview_body(
 
 def _shared_override_note(notes: Sequence[AdjudicationNote]) -> str:
     """What every override on this run left standing, said once over all of them."""
+    if all(note.waived for note in notes):
+        # Says only what the lead paragraph above has not: the rehearsal, the
+        # waiver and the name are all explained there, and repeating them here
+        # would be the third telling in four paragraphs. What is left to say is
+        # what a waived flaw does to the ranking underneath it.
+        return (
+            f"{_opening(len(notes), 'of the decisions below is not a decision', 'of the decisions below are not decisions')} "
+            "at all, so nothing was weighed against these flaws before the run "
+            "carried on past them. "
+            + _joined_titles([note.title for note in notes], fallback="No idea")
+            + " remain live in this report and are ranked alongside the other "
+            "ideas. A rank says nothing about a flaw, and here it says less than "
+            "usual: no reviewer withdrew any of these findings, no mitigation was "
+            "recorded against them, and nobody read them."
+        )
     return (
         f"{_opening(len(notes), 'of the decisions below is', 'of the decisions below are')} "
         "an override: the adjudicator accepted the flaw rather than fixing, "
@@ -301,16 +325,32 @@ def _shared_withdrawal_note(notes: Sequence[AdjudicationNote]) -> str:
 
 
 def _governance_block(record: ResearchRecord) -> list[str]:
-    """Replay every human answer to a fatal governance finding, verbatim.
+    """Replay every answer to a fatal governance finding, verbatim.
 
     Nothing is emitted on a run where nobody was asked to adjudicate, which is the
     common case: an empty heading would train a reader to skip the one section that
     exists to be unskippable.
+
+    "Answer" rather than "human answer", because a rehearsal waives its own gate and
+    those entries are printed here too -- under wording that says in each place that
+    nobody read the flaw.
     """
     lines: list[str] = []
     if record.adjudications:
         answered = len(record.adjudications)
         open_blocks = len(record.open_governance_blocks)
+        # A rehearsal answers its own gate: every open finding is recorded as an
+        # override signed "rehearsal (nobody)" so the later stages run. The two
+        # paragraphs below both describe an answer somebody entered against a
+        # flaw they had read, and that is precisely the thing a rehearsal did not
+        # do -- printed unchanged over a waived gate, the section that exists to
+        # be unskippable would be the most misleading page in the document.
+        waived = [
+            note
+            for note in record.adjudications
+            if note.adjudicator == REHEARSAL_ADJUDICATOR
+        ]
+        by_hand = answered - len(waived)
         lines.extend(
             [
                 "## Governance adjudications",
@@ -327,18 +367,45 @@ def _governance_block(record: ResearchRecord) -> list[str]:
                 # holds is a name typed at the command line, and the paragraph three
                 # below says so; a live report opened this section by calling
                 # "Automated verification run (Claude Code)" a person.
-                f"{_opening(answered, 'governance adjudication')} "
-                + (
-                    "is recorded for this run: an answer entered"
-                    if answered == 1
-                    else "are recorded for this run, each of them an answer entered"
-                )
-                + " against a fatal flaw the safety and governance review raised. "
-                + ("It is" if answered == 1 else "Each is")
-                + " set out below with the flaw it responds to and the reason given, "
-                "both reprinted word for word. The wording is theirs; nothing here is "
-                "a summary, because a reader has to be able to judge the decision "
-                "rather than learn that one was taken.",
+                (
+                    f"{_opening(answered, 'governance adjudication')} "
+                    + ("is" if answered == 1 else "are")
+                    + " recorded for this run. "
+                    + (
+                        "Every one of them "
+                        if not by_hand
+                        else f"{_bare_count(len(waived)).capitalize()} of them "
+                    )
+                    + "was answered by nobody. This run was a rehearsal of the "
+                    "pipeline rather than a research proposal, so instead of "
+                    "stopping at the gate for a person it did not have, it "
+                    "overrode each fatal flaw the safety and governance review "
+                    f"raised under the name {REHEARSAL_ADJUDICATOR}. The flaws are "
+                    "set out below exactly as the reviewer wrote them, each under "
+                    "the same sentence saying that nothing here answers it."
+                    + (
+                        ""
+                        if not by_hand
+                        else f" The other {_plural(by_hand, 'adjudication')} "
+                        + ("carries" if by_hand == 1 else "carry")
+                        + " a name and "
+                        + ("is" if by_hand == 1 else "are")
+                        + " an answer somebody entered."
+                    )
+                    if waived
+                    else f"{_opening(answered, 'governance adjudication')} "
+                    + (
+                        "is recorded for this run: an answer entered"
+                        if answered == 1
+                        else "are recorded for this run, each of them an answer entered"
+                    )
+                    + " against a fatal flaw the safety and governance review raised. "
+                    + ("It is" if answered == 1 else "Each is")
+                    + " set out below with the flaw it responds to and the reason "
+                    "given, both reprinted word for word. The wording is theirs; "
+                    "nothing here is a summary, because a reader has to be able to "
+                    "judge the decision rather than learn that one was taken."
+                ),
                 "",
                 (
                     f"{_opening(open_blocks, 'further fatal finding')} "
@@ -366,10 +433,27 @@ def _governance_block(record: ResearchRecord) -> list[str]:
                 # a report that prints it as an attribution invites the reader to
                 # treat it as one -- which turns an unverified string into the record
                 # of who is accountable for overriding a safety finding.
-                "The names below are as entered by whoever ran the adjudication. "
-                "This system does not authenticate them, so a name here is a record "
-                "of what was claimed at the time and carries only as much weight as "
-                "the process that produced it.",
+                (
+                    "An override signed by a person and an override signed by "
+                    "nobody are different claims about the same flaw, and only "
+                    "one of them was checked. Every waived flaw in this section "
+                    "is the second kind: it stands exactly as recorded, and the "
+                    "idea carrying it would have to come back through this gate "
+                    "for real, with a named adjudicator, before it could be "
+                    "proposed to anybody."
+                    if waived and not by_hand
+                    else "The names below are as entered by whoever ran the "
+                    "adjudication. This system does not authenticate them, so a "
+                    "name here is a record of what was claimed at the time and "
+                    "carries only as much weight as the process that produced it."
+                    + (
+                        ""
+                        if not waived
+                        else f" The entries signed {REHEARSAL_ADJUDICATOR} are not "
+                        "names and were not checked by anyone; the flaws they "
+                        "cover stand exactly as recorded."
+                    )
+                ),
                 "",
             ]
         )
@@ -410,9 +494,20 @@ def _governance_block(record: ResearchRecord) -> list[str]:
                     }
                 )
             )
+            # The rehearsal waiver is the same sentence under every flaw by
+            # construction, so it lands here on every rehearsal that raised more
+            # than one -- and the stock wording would then call it a decision
+            # written by somebody, three paragraphs after the section has said
+            # it is neither.
+            waived_reason = given_by == REHEARSAL_ADJUDICATOR
             lines.extend(
                 [
-                    f"One justification below is given word for word against "
+                    f"One note below stands word for word against "
+                    f"{_plural(count, 'flaw')}. It is the same non-answer in every "
+                    "case, so it is quoted here once rather than reprinted under "
+                    "each of them:"
+                    if waived_reason
+                    else f"One justification below is given word for word against "
                     f"{_plural(count, 'flaw')}. It was written once by {given_by} and "
                     "applied to "
                     + ("both" if count == 2 else "all of them")
@@ -439,7 +534,11 @@ def _governance_block(record: ResearchRecord) -> list[str]:
                 # adjudicator's name and the justification below is attributed to it
                 # again, so the label was the third copy of one string inside a block
                 # four lines deep.
-                f"Resolution: {outcome}, adjudicated by {note.adjudicator}."
+                # "Adjudicated by rehearsal (nobody)" is a sentence about who
+                # decided, in a block whose whole point is that nobody did.
+                "Resolution: waived by the rehearsal; no person adjudicated it."
+                if note.waived and outcome in hoisted
+                else f"Resolution: {outcome}, adjudicated by {note.adjudicator}."
                 if outcome in hoisted
                 else f"Resolution: {outcome}. {note.resolution_sentence}",
                 "",
@@ -452,16 +551,21 @@ def _governance_block(record: ResearchRecord) -> list[str]:
         if reason in shared_reasons:
             lines.extend(
                 [
-                    f"Justification: the wording quoted above, which {note.adjudicator}"
-                    " wrote once and applied to this flaw along with "
-                    f"{_plural(shared_reasons[reason] - 1, 'other')}.",
+                    "Note: the wording quoted above, recorded against this flaw "
+                    f"along with {_plural(shared_reasons[reason] - 1, 'other')}."
+                    if note.waived
+                    else f"Justification: the wording quoted above, which "
+                    f"{note.adjudicator} wrote once and applied to this flaw along "
+                    f"with {_plural(shared_reasons[reason] - 1, 'other')}.",
                     "",
                 ]
             )
         else:
             lines.extend(
                 [
-                    f"Justification given by {note.adjudicator}, verbatim:",
+                    "Note recorded in place of a justification, verbatim:"
+                    if note.waived
+                    else f"Justification given by {note.adjudicator}, verbatim:",
                     "",
                     f"> {reason}",
                     "",
@@ -3473,6 +3577,28 @@ _DEFAULT_NOTICE = (
 )
 
 
+_REHEARSAL_NOTICE = (
+    "REHEARSAL — NOT A RESEARCH PROPOSAL. This run was launched to exercise the "
+    "pipeline end to end. It was generated and scored by the same agents a real run "
+    "uses, so it reads like one, but no person read any part of it: the safety and "
+    "governance findings it raised were recorded and left unanswered by anybody, and "
+    "the run waived its own gate to keep going. Nothing here is a finding, a "
+    "recommendation, or a proposal, and nothing here should be cited, acted upon, or "
+    "forwarded as one."
+)
+
+
+def _cover_notice(content: str) -> str:
+    """Which of the two cover notices this compiled report carries.
+
+    The PDF and the DOCX build their title pages from the compiled Markdown and are
+    handed a string, not a session, so the fact that a run was a rehearsal reaches
+    them the same way the title and the question do -- by being read back off the
+    cover the Markdown already wrote.
+    """
+    return _REHEARSAL_NOTICE if f"*{_REHEARSAL_NOTICE}*" in content else _DEFAULT_NOTICE
+
+
 def _without_cover_notice(content: str) -> str:
     """The compiled Markdown without the notice these two exporters set themselves.
 
@@ -3480,7 +3606,7 @@ def _without_cover_notice(content: str) -> str:
     is: under the title in Markdown, on the title page in the PDF and the DOCX.
     Left in the body for those two it would be set twice, a page apart.
     """
-    return content.replace(f"*{_DEFAULT_NOTICE}*\n\n", "", 1)
+    return content.replace(f"*{_cover_notice(content)}*\n\n", "", 1)
 
 
 _SERIF = "Times-Roman"
@@ -4606,7 +4732,9 @@ def _page_total_flowable(totals: dict):
     return _PageTotal()
 
 
-def _title_page(title: str, question: str, stamp: str, styles: dict) -> list:
+def _title_page(
+    title: str, question: str, stamp: str, styles: dict, notice: str = ""
+) -> list:
     from reportlab.lib import colors
     from reportlab.platypus import HRFlowable, PageBreak, Spacer
 
@@ -4635,7 +4763,7 @@ def _title_page(title: str, question: str, stamp: str, styles: dict) -> list:
                 styles["title_meta"],
             ),
             Spacer(1, 22),
-            _para(_markup(_DEFAULT_NOTICE), styles["notice"]),
+            _para(_markup(notice or _DEFAULT_NOTICE), styles["notice"]),
             PageBreak(),
         ]
     )
@@ -4673,7 +4801,7 @@ def render_pdf(content: str) -> bytes:
     toc.levelStyles = styles["toc"]
     toc.dotsMinLevel = 0
 
-    story = _title_page(title, question, stamp, styles)
+    story = _title_page(title, question, stamp, styles, _cover_notice(content))
     measure = document.width - 2 * _FRAME_PADDING
     story.extend(
         [
@@ -4962,6 +5090,7 @@ def _docx_cover(
     question: str,
     stamp: str,
     entries: list[tuple[int, str, str]] | None = None,
+    notice: str = "",
 ) -> None:
     """The same title page the PDF gets, followed by a Word-native contents field.
 
@@ -4996,7 +5125,7 @@ def _docx_cover(
     if question:
         centred(question, 13)
     centred(stamp, 10, grey=True).paragraph_format.space_before = Pt(24)
-    centred(_DEFAULT_NOTICE, 9.5, italic=True, grey=True)
+    centred(notice or _DEFAULT_NOTICE, 9.5, italic=True, grey=True)
 
     # Not a heading: as Heading 2 under a TOC field scoped to levels 1-3, the word
     # "Contents" was the first entry in the contents list it captioned.
@@ -5322,6 +5451,7 @@ def render_docx(content: str) -> bytes:
         or f"Prepared by AI co-scientist on {date.today().isoformat()}. "
         "For research purposes only.",
         _docx_toc_entries(blocks, bookmarks),
+        _cover_notice(content),
     )
     available = (
         section.page_width - section.left_margin - section.right_margin

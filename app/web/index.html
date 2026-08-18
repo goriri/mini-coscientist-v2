@@ -45,6 +45,12 @@
                none of it was this run's. The dossier says so, but the dossier is
                the last thing to exist. -->
           <span class="session-forked" id="currentSessionForked" hidden></span>
+          <!-- A rehearsal is indistinguishable from a real run while it is
+               running: same stages, same cards, same hypotheses. The one place
+               a reader can be told before the report exists is here. -->
+          <span class="session-rehearsal" id="currentSessionRehearsal" hidden
+            >Rehearsal — pipeline test, not research</span
+          >
         </section>
 
         <nav class="stage-nav" aria-label="Research stages">
@@ -375,6 +381,21 @@
                 <p class="profile-note" id="evidenceReviewNote" hidden>
                   An auto run accepts every stage it produces, so nothing would
                   be waiting at this gate.
+                </p>
+                <!-- A run that exercises the pipeline rather than proposing
+                     research. Unchecked by default and never inferred: the box
+                     changes what the output may be taken for, and that is not a
+                     thing to decide once the output exists. Nothing is skipped
+                     -- the reviewer still runs and every fatal finding is still
+                     printed, each above a note saying nobody read it. -->
+                <label class="profile-control profile-check" for="rehearsal">
+                  <input id="rehearsal" type="checkbox" />
+                  <span>Rehearsal — testing the pipeline, not research</span>
+                </label>
+                <p class="profile-note" id="rehearsalNote" hidden>
+                  The safety gate is waived instead of stopping the run. Every
+                  finding is still raised and printed, marked as read by nobody,
+                  and every report cover says this was a rehearsal.
                 </p>
                 <!-- Searching the literature is the long half of a run: eight
                      Deep Research passes against one question, an hour of

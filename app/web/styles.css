@@ -336,6 +336,22 @@ button {
   text-transform: none;
 }
 
+/* Not italic grey like the fork note above it: that one is context, and this one
+   is the difference between a research proposal and a test fixture. A badge,
+   because the line has to survive being glanced at. */
+.current-session-card > .session-rehearsal {
+  align-self: start;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--coral);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
 .stage-nav ol {
   margin: 13px 0 0;
   padding: 0;

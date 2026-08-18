@@ -135,6 +135,8 @@ const elements = {
   languageChoice: document.querySelector("#languageChoice"),
   evidenceReview: document.querySelector("#evidenceReview"),
   evidenceReviewNote: document.querySelector("#evidenceReviewNote"),
+  rehearsal: document.querySelector("#rehearsal"),
+  rehearsalNote: document.querySelector("#rehearsalNote"),
   seedEvidenceFrom: document.querySelector("#seedEvidenceFrom"),
   seedEvidenceNote: document.querySelector("#seedEvidenceNote"),
   composerWrap: document.querySelector("#composerWrap"),
@@ -146,6 +148,7 @@ const elements = {
   currentSessionName: document.querySelector("#currentSessionName"),
   currentSessionState: document.querySelector("#currentSessionState"),
   currentSessionForked: document.querySelector("#currentSessionForked"),
+  currentSessionRehearsal: document.querySelector("#currentSessionRehearsal"),
   sessionHistory: document.querySelector("#sessionHistory"),
   sessionCount: document.querySelector("#sessionCount"),
   historyButton: document.querySelector("#historyButton"),
@@ -1104,6 +1107,14 @@ function updateSessionIdentity(workflow) {
     : "";
   elements.currentSessionForked.title = forkedFrom
     ? "Scope and evidence were forked from an earlier run of this same question. This run started at idea generation, and the search reported under Evidence is that earlier run's."
+    : "";
+  // A rehearsal reaches the report stage looking exactly like a real run,
+  // because every stage it passed through was the real one. What differs is
+  // that its safety gate was waived rather than answered, and a reader who
+  // opens the tab at reflect has nothing else on the page telling them so.
+  elements.currentSessionRehearsal.hidden = !workflow.rehearsal;
+  elements.currentSessionRehearsal.title = workflow.rehearsal
+    ? "This run was launched to exercise the pipeline. Fatal safety and governance findings are recorded and printed but were waived by the run rather than answered by anybody, and nothing it produces is a research proposal."
     : "";
   renderSessionTitle(workflow);
 }
@@ -2195,6 +2206,7 @@ async function createGuidedWorkflow(prompt, pending) {
       // disabled above and must not ask for a gate nothing will stop at.
       evidence_review:
         elements.evidenceReview.checked && !elements.evidenceReview.disabled,
+      rehearsal: elements.rehearsal.checked,
       seed_evidence_from: elements.seedEvidenceFrom.value.trim(),
     }),
   });
@@ -2236,6 +2248,10 @@ function describeRunSettings() {
   if (elements.seedEvidenceFrom.value.trim()) parts.push("forked evidence");
   else if (elements.evidenceReview.checked && !elements.evidenceReview.disabled)
     parts.push("evidence gate");
+  // Last in the line and unabbreviated. The digest is what the folded
+  // composer shows, and of everything in it this is the only setting that
+  // changes what the finished report may be taken for.
+  if (elements.rehearsal.checked) parts.push("rehearsal");
   return parts.join(" · ");
 }
 
@@ -2279,6 +2295,15 @@ function syncEvidenceReviewControl() {
     ? "An auto run accepts every stage it produces, so nothing would be waiting at this gate."
     : "A forked run does not search, so it never reaches this gate. Open the earlier run to read its evidence base.";
   elements.evidenceReviewNote.hidden = !off || state.mode === "conversation";
+  syncRunSettingsDigest();
+}
+
+// The consequences of the box, shown only once it is ticked. Spelled out
+// unconditionally it is four lines of safety copy under a control almost
+// nobody uses, and the launcher already has more of those than it can carry.
+function syncRehearsalControl() {
+  elements.rehearsalNote.hidden =
+    !elements.rehearsal.checked || state.mode === "conversation";
   syncRunSettingsDigest();
 }
 
@@ -2629,6 +2654,7 @@ elements.seedEvidenceFrom.addEventListener("input", syncEvidenceReviewControl);
 elements.modelChoice.addEventListener("change", syncRunSettingsDigest);
 elements.languageChoice.addEventListener("change", syncRunSettingsDigest);
 elements.evidenceReview.addEventListener("change", syncRunSettingsDigest);
+elements.rehearsal.addEventListener("change", syncRehearsalControl);
 elements.newInquiry.addEventListener("click", newInquiry);
 elements.copySession.addEventListener("click", async () => {
   if (!state.sessionId) {
