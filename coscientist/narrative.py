@@ -19,6 +19,7 @@ from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal
 from itertools import pairwise
 from typing import Any, Literal
+from urllib.parse import unquote
 
 from pydantic import Field
 
@@ -902,6 +903,10 @@ _TITLE_FUNCTION_WORDS = frozenset(
 # What a server appends to the name of the thing it is serving.
 _LOCATOR_EXTENSIONS = (".pdf", ".html", ".htm", ".php", ".aspx", ".full", ".abstract")
 
+# A comma with a word closed up against it, which prose does not write and a
+# filename does. Only where a letter follows, so a decimal comma keeps its digits.
+_RUN_ON_COMMA = re.compile(r",(?=[A-Za-z])")
+
 # A run of three or more element symbols with their subscripts, which is what a
 # chemical formula looks like once a path has stripped its punctuation out. Three
 # rather than two, so a two-group word that is an initialism and a number -- PR2024,
@@ -943,6 +948,15 @@ def _name_from_locator(url: str) -> str:
     cannot mark which of its hyphens joined a compound, so "solid-state" comes back
     as two words -- which is why the entry says where the name came from. What it can
     put back is a formula's decimal points, since nothing else they could have been.
+
+    The segment is decoded before it is read, and it is decoded after the path has
+    been cut on its slashes so that an encoded one cannot open a segment that was
+    never there. A publisher that files its papers under their names writes the
+    spaces out as "%20", and undecoded the whole title is one word: entry 27 of a
+    live reference list printed "Materials Chemistry A" -- the journal, asserted as
+    the paper's name -- over
+    ".../papers/2020%20UBC,%20Stable%20Zn%20Metal%20Anode%20Enabled%20by%20ALD%20Al2O3%20for%20Aqueous%20Zinc-ion%20Batteries,Liu.pdf",
+    which says what the paper is called.
     """
     if not url.startswith(("http://", "https://")) or GROUNDING_REDIRECT_MARKER in url:
         return ""
@@ -950,12 +964,13 @@ def _name_from_locator(url: str) -> str:
     _, _, path = remainder.partition("/")
     host = _publisher_of(url).replace(".", "")
     for segment in reversed(path.partition("?")[0].partition("#")[0].split("/")):
+        segment = unquote(segment)
         lowered = segment.lower()
         for suffix in _LOCATOR_EXTENSIONS:
             if lowered.endswith(suffix):
                 segment = segment[: -len(suffix)]
                 break
-        words = [word for word in re.split(r"[-_+]", segment) if word]
+        words = [word for word in re.split(r"[-_+\s]", segment) if word]
         # A catalogue number in front of the name belongs to the catalogue.
         while words and words[0].isdigit():
             words.pop(0)
@@ -963,7 +978,10 @@ def _name_from_locator(url: str) -> str:
             continue
         if not any(word.lower() in _TITLE_FUNCTION_WORDS for word in words):
             continue
-        name = " ".join(_restored_formula(word) for word in words)
+        # A comma a filename runs straight into the next word is the space the
+        # filename could not spare: "... Zinc-ion Batteries,Liu" is where the
+        # publisher stopped naming the paper and started naming the author.
+        name = _RUN_ON_COMMA.sub(", ", " ".join(_restored_formula(w) for w in words))
         # A slug is lower-cased whatever case the title was set in; one that kept its
         # capitals kept them from the title, so only the flattened form is restored.
         return name if name != name.lower() else name[:1].upper() + name[1:]

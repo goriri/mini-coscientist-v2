@@ -454,6 +454,25 @@ def test_a_journal_where_the_papers_name_should_be_gives_way_to_the_address():
     )
 
 
+def test_a_path_that_writes_its_spaces_out_as_percent_twenty_is_still_a_name():
+    """Entry 27 of a live reference list read "Materials Chemistry A" -- the journal,
+    asserted as the paper's name -- over a path that spelled the paper out in full.
+    A publisher that files papers under their names has to encode the spaces, and
+    undecoded the whole title is one word: too few to be read as a name, so the
+    address never got its turn and the journal stood. The comma the filename ran
+    into the author's surname is the space the filename could not spare."""
+    encoded = _lead(
+        "https://arradiance.com/papers/2020%20UBC,%20Stable%20Zn%20Metal%20Anode%20"
+        "Enabled%20by%20ALD%20Al2O3%20for%20Aqueous%20Zinc-ion%20Batteries,Liu.pdf",
+        title="Materials Chemistry A",
+    )
+
+    assert _reference_title(encoded) == (
+        "UBC, Stable Zn Metal Anode Enabled by ALD Al2O3 for Aqueous Zinc ion "
+        "Batteries, Liu"
+    )
+
+
 def test_a_short_title_the_address_agrees_with_is_a_short_title_and_is_kept():
     """The rule turns on the two being different names, not on the title being short.
     A locator that repeats the name it was given has confirmed it, not displaced it,
