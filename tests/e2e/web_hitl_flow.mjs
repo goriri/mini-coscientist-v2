@@ -852,9 +852,19 @@ try {
     input.dispatchEvent(new Event("input", { bubbles: true }));
     document.querySelector("#composer").requestSubmit();
   })()`);
+  // Which sessions are there, not how many, and where two of them sit relative
+  // to each other, not at which index. The panel is fed by the public directory
+  // as well as by this browser, so against the deployment the list is however
+  // many runs the service is holding and whatever else is being worked on sorts
+  // in among them: this waited seventy-five minutes for a list of two while
+  // looking at a correct list of seventeen, with the card it wanted third.
   await waitFor(
     cdp,
-    "document.querySelectorAll('.session-history-item').length === 2 && !!document.querySelector('.approval-card:not(.resolved) [data-decision=\"toggle_edit\"]')",
+    `(() => {
+      const ids = [...document.querySelectorAll(".session-history-item")].map(item => item.dataset.sessionId);
+      return ids.includes("${workflowId}")
+        && !!document.querySelector('.approval-card:not(.resolved) [data-decision="toggle_edit"]');
+    })()`,
     "A second resumable research session was not added to browser history.",
     30000,
   );
@@ -863,7 +873,8 @@ try {
     "[...document.querySelectorAll('.session-history-item')].map(item => item.dataset.sessionId)",
   );
   assert(
-    historyOrder[0] === secondWorkflowId && historyOrder[1] === workflowId,
+    historyOrder.includes(secondWorkflowId) &&
+      historyOrder.indexOf(secondWorkflowId) < historyOrder.indexOf(workflowId),
     "Recent sessions must be ordered by most recently opened or updated.",
   );
 
@@ -878,7 +889,10 @@ try {
   })()`);
   await waitFor(
     cdp,
-    "refreshSessionDirectory().then(() => document.querySelectorAll('.session-history-item').length === 2)",
+    `refreshSessionDirectory().then(() => {
+      const ids = [...document.querySelectorAll(".session-history-item")].map(item => item.dataset.sessionId);
+      return ids.includes("${workflowId}") && ids.includes("${secondWorkflowId}");
+    })`,
     "A browser holding no history of its own saw none of the server's sessions.",
   );
   const strangerSees = await cdp.evaluate(
@@ -1051,17 +1065,16 @@ try {
   );
   const mobileHistory = await cdp.evaluate(`(() => {
     const panel = document.querySelector(".context-panel").getBoundingClientRect();
+    const ids = [...document.querySelectorAll(".session-history-item")].map(item => item.dataset.sessionId);
     return {
-      cards: document.querySelectorAll(".session-history-item").length,
+      cards: ids.length,
+      held: ids.includes("${workflowId}") && ids.includes("${secondWorkflowId}"),
       left: panel.left,
       right: panel.right,
       viewport: innerWidth,
     };
   })()`);
-  assert(
-    mobileHistory.cards === 2,
-    "The mobile drawer lost browser session history.",
-  );
+  assert(mobileHistory.held, "The mobile drawer lost browser session history.");
   assert(
     mobileHistory.left >= 0 &&
       mobileHistory.right <= mobileHistory.viewport + 1,
@@ -1122,7 +1135,11 @@ try {
   })()`);
   await waitFor(
     cdp,
-    `document.querySelectorAll(".session-history-item").length === 1 && fetch("/api/research/sessions/${secondWorkflowId}").then(response => response.status === 404)`,
+    `(() => {
+      const ids = [...document.querySelectorAll(".session-history-item")].map(item => item.dataset.sessionId);
+      if (ids.includes("${secondWorkflowId}")) return false;
+      return fetch("/api/research/sessions/${secondWorkflowId}").then(response => response.status === 404);
+    })()`,
     "Permanent cloud deletion did not remove the session and its browser reference.",
     10000,
   );
