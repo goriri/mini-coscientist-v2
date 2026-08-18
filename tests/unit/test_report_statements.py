@@ -204,6 +204,38 @@ def test_a_finding_arrives_without_the_tags_the_pass_wrote_for_the_pipeline():
     ]
 
 
+def test_a_tag_naming_the_facet_and_the_category_together_arrives_stripped_too():
+    """One Knowledge Base chapter of a live report carried "[methods, supporting]"
+    twenty-one times, because the tag was recognised only where a single name filled
+    the bracket and the pass files each sentence under a facet and a category."""
+    statements = _evidence_statements(
+        _record(
+            _statement(
+                "Biopsies were dissociated into single-cell suspensions "
+                "[methods, supporting]. The libraries were sequenced "
+                "[safety_governance, negative_null]."
+            )
+        )
+    )
+
+    assert [item.text for item in statements] == [
+        "Biopsies were dissociated into single-cell suspensions. "
+        "The libraries were sequenced."
+    ]
+
+
+def test_a_bracketed_pair_that_names_no_facet_is_left_where_the_pass_put_it():
+    """The reference numbers the run itself writes are this shape, and so is a
+    concentration range a finding is about."""
+    statements = _evidence_statements(
+        _record(_statement("Capacity held above 90 percent [12, 13] at 2-4.8 V."))
+    )
+
+    assert [item.text for item in statements] == [
+        "Capacity held above 90 percent [12, 13] at 2-4.8 V."
+    ]
+
+
 def test_the_same_finding_tagged_in_one_copy_and_not_the_other_is_one_finding():
     """The merge keys on the text, so a tag left on one copy made two findings."""
     statements = _evidence_statements(

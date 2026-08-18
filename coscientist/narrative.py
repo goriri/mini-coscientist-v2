@@ -4226,6 +4226,31 @@ def _states_a_critique(text: str) -> bool:
     return bool(cleaned) and not _BARE_HANDLE.match(cleaned)
 
 
+_HANDLE_LABEL = re.compile(r"^`?(?P<id>[\w.\-]+)`?\s*:\s+(?=\S)")
+
+
+def _without_handle_label(text: str) -> str:
+    """A critique filed under the review that raised it, printed as what it says.
+
+    The handle-only case is dropped by the test above; this is the other half of it,
+    where the handle stands in front of a statement rather than instead of one. Four
+    ideas in a live report were introduced with "this is what it was written against:
+    `rev_analogy_federated_causal_masking_methods`: The combination of O(|V|^2 * d)
+    local complexity and asynchronous federated updates ... risks severe gradient
+    staleness" -- a sentence that says the whole thing on its own, behind forty-three
+    characters of an id no page of this report carries.
+
+    Only where the label is an id. A critique the stage recorded as "Missing Structured
+    Evaluation Table: Added to mechanism_model" names its own subject, and that half is
+    the reader's: see ``_labelled_note``.
+    """
+    cleaned = " ".join(str(text or "").split())
+    match = _HANDLE_LABEL.match(cleaned)
+    if match and _RECORD_ID.fullmatch(match.group("id")):
+        return cleaned[match.end() :]
+    return cleaned
+
+
 def _introduces(lead: str, text: str) -> str:
     """A lead-in and the text it introduces, joined so that one colon governs.
 
@@ -5158,11 +5183,11 @@ def _revised_form(
     # rewrite was written to address.
     rounds = sorted({item.round_number for item in revisions})
     critiques = [
-        _labelled_note(critique)
+        _labelled_note(said)
         for critique in dict.fromkeys(
             critique for item in revisions for critique in item.critiques_addressed
         )
-        if _states_a_critique(critique)
+        if _states_a_critique(said := _without_handle_label(critique))
     ]
     addressed = _spliced(_join(critiques, fallback="the reviews"))
     # "to address" and "the rounds addressed" both want a noun phrase, and the
@@ -7728,8 +7753,15 @@ def _evidence_notes(
 # -- the specialist citing the record it is about to quote, in the shape a footnote
 # marker would take if this format had footnotes. The badge beside the bullet already
 # says what stands behind it, so the marker is dropped and the sentence kept.
+#
+# The underscore-less spelling as well, and whether or not the id names a record this
+# run kept. A live report's Evidence Assessment opened nine bullets on "stmt3:",
+# "stmt62:", "stmt49:" -- the ids the specialists wrote for statements the base holds
+# as pass4_stmt_5 -- and the marker stood because it resolved to nothing, which is the
+# one case where it is certain to send the reader nowhere.
 _CITED_PREFIX = re.compile(
-    rf"^[\[(]?({_BARE_REFERENCE.pattern})[\])]?\s*[:\-\u2013\u2014]\s+"
+    rf"^[\[(]?(?P<id>{_BARE_REFERENCE.pattern}|{_PREFIXED_REFERENCE.pattern})"
+    r"[\])]?\s*[:\-\u2013\u2014]\s+"
 )
 
 
@@ -7753,8 +7785,15 @@ def _stated_evidence(
             "beside it, and no record of that id exists in this run's evidence base"
         )
     prefix = _CITED_PREFIX.match(text)
-    if prefix and prefix.group(1) in index:
-        text = _sentence(text[prefix.end() :])
+    if prefix:
+        # An id the run kept, or the misspelling of one: the leading word has to be a
+        # word this run files records under, which is the same test the id-by-id pass
+        # applies and the reason "Cycle_life: retention held" keeps its prefix.
+        misspelt = _PREFIXED_REFERENCE.fullmatch(prefix.group("id"))
+        if prefix.group("id") in index or (
+            misspelt and misspelt.group(1).lower() in prefixes
+        ):
+            text = _sentence(text[prefix.end() :])
 
     def _named(match: re.Match[str]) -> str:
         name = names.get(match.group(0))
@@ -7828,16 +7867,22 @@ def _shared_qualifications(record: ResearchRecord) -> list[str]:
 # code -- "`[Facet: contradictory]`" -- and the trailing lookahead then saw a
 # backtick rather than a space, so fourteen tags went to the reader in a report
 # whose whole point is that they do not.
-_FACET_TAG_RE = re.compile(
-    r"[ \t]*`?\[(?:facet:\s*)?(?:"
-    + "|".join(
-        sorted(
-            (facet.replace("_", "[ _-]") for facet in EVIDENCE_FACETS),
-            key=len,
-            reverse=True,
-        )
+#
+# More than one name in the bracket, because the pass tags the facet and the category
+# it filed the sentence under together: a live run's Knowledge Base carried "[methods,
+# supporting]" twenty-one times in one chapter -- closing a sentence about single-cell
+# suspensions, another about a sequencing platform, and every one of the eleven after
+# them -- because the tag was recognised only where one name filled the whole bracket.
+_FACET_NAMES = "|".join(
+    sorted(
+        (facet.replace("_", "[ _-]") for facet in EVIDENCE_FACETS),
+        key=len,
+        reverse=True,
     )
-    + r")\]`?(?=[\s.,;:)]|$)",
+)
+_FACET_TAG_RE = re.compile(
+    rf"[ \t]*`?\[(?:facet:\s*)?(?:{_FACET_NAMES})"
+    rf"(?:\s*,\s*(?:{_FACET_NAMES}))*\]`?(?=[\s.,;:)]|$)",
     re.IGNORECASE,
 )
 _PASS_CITE_RE = re.compile(r"[ \t]*`?\[cite:[^\]\n]{0,80}\]`?")

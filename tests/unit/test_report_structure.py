@@ -6646,7 +6646,7 @@ def test_a_cross_link_the_report_cannot_name_is_counted_rather_than_printed():
     )
 
 
-def _rewrite_addressing_handles():
+def _rewrite_addressing_handles(critiques=("rev_4", "rev_cand_mechanism_2")):
     """A rewrite whose recorded critiques are the ids evolution was thinking in."""
     from coscientist.models import Candidate, EvolutionCycle, EvolutionRecord
     from coscientist.narrative import ResearchRecord
@@ -6671,7 +6671,7 @@ def _rewrite_addressing_handles():
                 parent_ids=["cand_1"],
                 candidate=rewritten,
                 changes=["Specified the thickness."],
-                critiques_addressed=["rev_4", "rev_cand_mechanism_2"],
+                critiques_addressed=list(critiques),
                 new_prediction="Retention holds past five hundred cycles.",
             )
         ]
@@ -6709,6 +6709,46 @@ def test_naming_the_ids_does_not_hide_a_handle_from_the_test_for_one():
 
     assert "rev_4" not in prose and "rev_cand_mechanism_2" not in prose
     assert "to address the reviews" in prose
+
+
+def test_a_critique_filed_under_a_handle_is_printed_as_what_the_handle_said():
+    """Four ideas in a live report were introduced with "this is what it was written
+    against: `rev_analogy_federated_causal_masking_methods`: The combination of
+    O(|V|^2 * d) local complexity ... risks severe gradient staleness" -- forty-three
+    characters of an id no page of the report carries, in front of a sentence that
+    says the whole thing on its own."""
+    from coscientist.narrative import _name_ids_in_prose, _revised_form
+
+    record, ranked = _rewrite_addressing_handles(
+        (
+            "rev_safety_6: The proposal does not mention differential privacy, "
+            "leaving the federated gradients open to model inversion.",
+        )
+    )
+    _name_ids_in_prose(record)
+
+    prose, _changed, _unchanged = _revised_form(record, ranked)
+
+    assert "rev_safety_6" not in prose
+    assert (
+        "written against: the proposal does not mention differential privacy, "
+        "leaving the federated gradients open to model inversion" in prose
+    )
+
+
+def test_a_critique_that_names_its_own_subject_keeps_the_name():
+    """The evolution stage records a critique as "Missing Structured Evaluation Table:
+    Added to mechanism_model", and that label is the reader's -- it is the subject of
+    the note, not an id filed against a record nothing in the report prints."""
+    from coscientist.narrative import _revised_form
+
+    record, ranked = _rewrite_addressing_handles(
+        ("Missing Power Analysis: Added to the validation protocol.",)
+    )
+
+    prose, _changed, _unchanged = _revised_form(record, ranked)
+
+    assert "written against: missing Power Analysis — added to the " in prose
 
 
 def test_a_governance_finding_names_the_evidence_it_cites():

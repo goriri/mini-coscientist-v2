@@ -883,3 +883,21 @@ def test_a_run_that_waited_overnight_is_not_measured_out_in_minutes():
     assert _elapsed("2026-08-14T14:28:47+00:00", "2026-08-14T14:29:20+00:00") == (
         ", 33 seconds after it started"
     )
+
+
+def test_a_run_a_rounding_short_of_the_hour_is_not_given_sixty_minutes():
+    """A live report's Provenance read "3 hours and 60 minutes after it started".
+
+    The hours were counted off the raw seconds and the minutes were rounded, so the
+    two disagreed by the rounding wherever the run sat within half a minute of the
+    hour. Both now come out of the same count."""
+    from coscientist.dossier import _elapsed
+
+    assert _elapsed("2026-08-14T14:28:47+00:00", "2026-08-14T18:28:25+00:00") == (
+        ", 4 hours after it started"
+    )
+    # The same seam a day up: 23 hours and 60 minutes is a day, and neither the day
+    # nor the hour beside it may be counted a second way.
+    assert _elapsed("2026-08-14T14:28:47+00:00", "2026-08-15T14:28:25+00:00") == (
+        ", 1 day after it started"
+    )

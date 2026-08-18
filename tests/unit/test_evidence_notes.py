@@ -220,6 +220,27 @@ def test_an_id_written_in_front_of_the_sentence_it_cites_is_dropped():
     assert badge == LEAD_BADGE
 
 
+def test_an_id_in_front_of_a_sentence_is_dropped_where_it_names_nothing_too():
+    """Nine bullets of a live report opened on "stmt3:", "stmt49:", "stmt62:" -- the
+    spelling a specialist gives an id the base holds as pass4_stmt_5, which the marker
+    was dropped only for where it resolved. Not resolving is the one case in which it
+    is certain to send the reader nowhere, and the badge says so beside it."""
+    ((_heading, badge, said),) = _notes(evidence_against=[f"stmt5: {STATEMENT_TEXT}."])
+
+    assert said == f"{STATEMENT_TEXT}."
+    assert badge == UNSOURCED_BADGE
+
+
+def test_a_sentence_opening_on_a_word_this_run_files_nothing_under_keeps_it():
+    """The prefix is dropped for an id and not for a heading a specialist wrote, and
+    the ideas under test are about NCM811 and Al2O3, which are shaped like one."""
+    ((_heading, _badge, said),) = _notes(
+        evidence_against=[f"NCM811: {STATEMENT_TEXT}."]
+    )
+
+    assert said == f"NCM811: {STATEMENT_TEXT}."
+
+
 def test_a_statement_id_carrying_its_pass_number_is_named_like_any_other():
     """An underscore is a word character, so there is no boundary in front of the
     "stmt" in "pass4_stmt_5" and the pattern matched nothing. Chapters five and six
