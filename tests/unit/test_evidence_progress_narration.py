@@ -32,6 +32,7 @@ from coscientist.models import (
     Artifact,
     DeepResearchRun,
     DiscoveryManifest,
+    EnrichmentRequest,
     SourceLead,
 )
 from coscientist.orchestration import CoScientistWorkflow
@@ -65,9 +66,23 @@ def _manifest(count: int) -> DiscoveryManifest:
     )
 
 
-def _run(monkeypatch: pytest.MonkeyPatch, leads: int) -> CoScientistWorkflow:
+def _run(
+    monkeypatch: pytest.MonkeyPatch,
+    leads: int,
+    *,
+    outstanding: int = 0,
+) -> CoScientistWorkflow:
     """A run whose literature search returned a manifest, as Deep Research does."""
     manifest = _manifest(leads)
+    manifest.enrichment_requests = [
+        EnrichmentRequest(
+            provider="google_search",
+            gap_ids=[f"gap-{index}"],
+            query=f"{QUESTION} gap {index}",
+            status="queued",
+        )
+        for index in range(outstanding)
+    ]
     flow = CoScientistWorkflow(QUESTION, _QuietVerifier())
 
     async def _discovered(self, plan, *, feedback, revision):
@@ -95,7 +110,7 @@ def test_the_verification_fan_out_counts_the_sources_it_has_opened(monkeypatch):
     flow.accept(flow.preview(), actor="test_researcher")
     flow.preview()
 
-    assert said[0] == "Opening 28 sources to check what the documents say."
+    assert "Opening 28 sources to check what the documents say." in said
     checked = [line for line in said if line.startswith("Checked ")]
     assert len(checked) == 3
     # However the batches interleave, the last one to land says the whole corpus
@@ -115,7 +130,43 @@ def test_one_source_is_opened_rather_than_one_sources(monkeypatch):
     flow.accept(flow.preview(), actor="test_researcher")
     flow.preview()
 
-    assert said[0] == "Opening 1 source to check what the documents say."
+    assert "Opening 1 source to check what the documents say." in said
+
+
+def test_the_searches_that_close_a_gap_say_how_many_are_running(monkeypatch):
+    """A coverage score short of sufficient queues up to six more searches, and
+    they run between the corpus being written down and the first document being
+    opened -- a model fan-out with nothing on the manifest to show for it yet."""
+    flow = _run(monkeypatch, 6, outstanding=4)
+    said: list[str] = []
+    flow.progress = said.append
+
+    flow.accept(flow.preview(), actor="test_researcher")
+    flow.preview()
+
+    assert "Running 4 follow-up searches on what the corpus left open." in said
+
+
+def test_one_gap_search_is_not_four(monkeypatch):
+    flow = _run(monkeypatch, 6, outstanding=1)
+    said: list[str] = []
+    flow.progress = said.append
+
+    flow.accept(flow.preview(), actor="test_researcher")
+    flow.preview()
+
+    assert "Running 1 follow-up search on what the corpus left open." in said
+
+
+def test_a_corpus_that_left_nothing_open_says_nothing_about_gaps(monkeypatch):
+    flow = _run(monkeypatch, 6)
+    said: list[str] = []
+    flow.progress = said.append
+
+    flow.accept(flow.preview(), actor="test_researcher")
+    flow.preview()
+
+    assert not [line for line in said if line.startswith("Running ")]
 
 
 def test_a_narrator_that_raises_does_not_cost_the_stage_its_research(monkeypatch):
@@ -164,6 +215,32 @@ def test_the_same_sentence_is_not_written_twice(monkeypatch):
     ]
 
 
+def test_a_sentence_does_not_come_back_after_one_other_line(monkeypatch):
+    """Two callers sit one line apart around the registry lookup and both read
+    the same manifest. Against the previous line alone, the page said what the
+    fold had produced, said what the lookup was doing, and then said what the
+    fold had produced again -- going backwards, which reads as a stall."""
+    flow = _run(monkeypatch, 6)
+    said: list[str] = []
+    flow.progress = said.append
+
+    flow._note("All 7 searches came back; 114 sources to work with.")
+    flow._note("Looking up publication details for 114 sources.")
+    flow._note("All 7 searches came back; 114 sources to work with.")
+    # Far enough back to be news again, which is what a revisited stage is.
+    flow._note("Opening 114 sources to check what the documents say.")
+    flow._note("Checked 114 of 114 sources against what the document actually says.")
+    flow._note("All 7 searches came back; 114 sources to work with.")
+
+    assert said == [
+        "All 7 searches came back; 114 sources to work with.",
+        "Looking up publication details for 114 sources.",
+        "Opening 114 sources to check what the documents say.",
+        "Checked 114 of 114 sources against what the document actually says.",
+        "All 7 searches came back; 114 sources to work with.",
+    ]
+
+
 def _with_runs(*statuses: str, leads: int = 0) -> DiscoveryManifest:
     manifest = _manifest(leads)
     manifest.runs = [
@@ -203,6 +280,40 @@ def test_the_last_pass_landing_says_the_searches_are_back():
 
     assert discovery_progress_sentence(manifest) == (
         "All 2 searches are back; folding what they found in."
+    )
+
+
+def test_a_wave_that_has_been_read_does_not_say_it_is_being_folded():
+    """The same callback is called again on the far side of the fold. Both times
+    every pass is terminal, so both times the sentence above was written -- the
+    page announcing, after seven reports had been read, work already done."""
+    manifest = _with_runs("completed", "completed", leads=41)
+    for index, run in enumerate(manifest.runs, start=1):
+        run.raw_artifact_reference = f"gs://bucket/pass-{index}.json"
+
+    assert discovery_progress_sentence(manifest) == (
+        "All 2 searches came back; 41 sources to work with."
+    )
+
+
+def test_a_wave_half_read_is_still_being_folded():
+    """The ingest reads its passes one at a time and writes the reference for
+    each as it goes. Until the last one is written the fold is still running,
+    and the count on the manifest is part of a wave rather than all of it."""
+    manifest = _with_runs("completed", "completed", leads=41)
+    manifest.runs[0].raw_artifact_reference = "gs://bucket/pass-1.json"
+
+    assert discovery_progress_sentence(manifest) == (
+        "All 2 searches are back; folding what they found in."
+    )
+
+
+def test_a_single_read_search_keeps_its_own_verb():
+    manifest = _with_runs("completed", leads=1)
+    manifest.runs[0].raw_artifact_reference = "gs://bucket/pass-1.json"
+
+    assert discovery_progress_sentence(manifest) == (
+        "The search came back; 1 source to work with."
     )
 
 
@@ -265,16 +376,102 @@ def test_the_poll_loop_narrates_the_wave_it_is_waiting_on():
     flow.preview()
 
     total = len(EVIDENCE_FACETS)
-    # The whole stage, in order and without a gap: the wave going out, one line
-    # for each pass that came back, the fold, and then verification. Nine
-    # minutes of "Specialists are preparing the next research gate." is what
-    # this same run said before the callback wrote anything.
+    # The whole stage, in order and without a gap: the wave going out, the fold,
+    # one line for each report as it is read, what the fold produced, the corpus
+    # being written down, verification, the merge and the survey. Nine minutes
+    # of "Specialists are preparing the next research gate." is what this same
+    # run said before the callback wrote anything, and every line below that is
+    # not a poll stands over a stretch that was silent after it started writing:
+    # a model call per report, then two more over the whole corpus.
     assert said == [
         *(
             f"Deep Research has finished {done} of {total} searches; 0 sources so far."
             for done in range(total)
         ),
         f"All {total} searches are back; folding what they found in.",
+        *(
+            f"Reading what search {position} of {total} came back with."
+            for position in range(1, total + 1)
+        ),
+        f"All {total} searches came back; 2 sources to work with.",
+        "Writing down what the searches found, source by source.",
         "Opening 2 sources to check what the documents say.",
         "Checked 2 of 2 sources against what the document actually says.",
+        "Merging 2 sets of findings into one corpus.",
+        "Writing the knowledge survey over 2 sources.",
     ]
+
+
+class _RedirectedTransport(_StaggeredTransport):
+    """A wave whose reports cite through the grounding redirector, as Deep
+    Research does: it mints a fresh token for every citation it prints."""
+
+    REPORT = (
+        "Supporting evidence https://vertexaisearch.cloud.google.com/"
+        "grounding-api-redirect/AbC1 and contradictory negative null replication "
+        "methods safety correction evidence https://vertexaisearch.cloud.google."
+        "com/grounding-api-redirect/AbC2"
+    )
+
+
+class _CountingEnricher:
+    """Stands in for the registry lookup, which is one network round trip per
+    lead against Crossref and its neighbours."""
+
+    def enrich(self, leads):
+        return leads
+
+
+def test_the_two_stretches_between_the_fold_and_the_verifier_are_narrated():
+    """Neither is on the manifest and neither is a model call the caller makes,
+    so neither was visible: a registry round trip per retained lead, and a
+    redirector followed per citation Deep Research printed. On a live run of a
+    hundred and fourteen sources they are the bulk of the ten silent minutes
+    between the last search landing and the first document being opened."""
+    flow = CoScientistWorkflow(QUESTION, _QuietVerifier())
+    flow.evidence_discovery = IterativeEvidenceDiscovery(
+        _RedirectedTransport(),
+        EvidenceArtifactStore(bucket_name=""),
+        poll_interval_seconds=0,
+        registry_enricher=_CountingEnricher(),
+    )
+    said: list[str] = []
+    flow.progress = said.append
+
+    flow.accept(flow.preview(), actor="test_researcher")
+    flow.preview()
+
+    # One lead, because a redirector is a fresh token per citation and the two
+    # in this report resolve to the same unfollowable address -- which is also
+    # why the singular matters here: "1 search link back to the documents they
+    # name" is what a count dropped into a fixed sentence produces.
+    lookup = "Looking up publication details for 1 source."
+    following = "Following 1 search link back to the document it names."
+    assert lookup in said
+    assert following in said
+    # In that order, and both after the reports have been read: the leads have
+    # to exist before either can count them.
+    total = len(EVIDENCE_FACETS)
+    assert said.index(lookup) > said.index(
+        f"Reading what search {total} of {total} came back with."
+    )
+    assert said.index(following) > said.index(lookup)
+
+
+def test_a_corpus_of_plain_links_is_not_told_they_are_being_followed():
+    """The grounded fallback and a resumed manifest both arrive with their
+    locators already naming documents. A sentence about following redirectors
+    would stand over no work at all, and the next one is the honest one."""
+    flow = CoScientistWorkflow(QUESTION, _QuietVerifier())
+    flow.evidence_discovery = IterativeEvidenceDiscovery(
+        _StaggeredTransport(),
+        EvidenceArtifactStore(bucket_name=""),
+        poll_interval_seconds=0,
+    )
+    said: list[str] = []
+    flow.progress = said.append
+
+    flow.accept(flow.preview(), actor="test_researcher")
+    flow.preview()
+
+    assert not [line for line in said if line.startswith("Following ")]

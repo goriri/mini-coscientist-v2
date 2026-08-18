@@ -24,6 +24,7 @@ from .collaboration import LocalA2ATaskBus
 from .disciplines import classify_discipline
 from .dossier import compile_dossier
 from .evidence import (
+    GROUNDING_REDIRECT_MARKER,
     MAX_DEEP_RESEARCH_PASSES,
     MAX_RETAINED_SOURCE_LEADS,
     SUFFICIENT_COVERAGE,
@@ -228,7 +229,7 @@ class CoScientistWorkflow:
         # attaches a writer here; left unset -- a test, the CLI -- the run says
         # nothing and behaves identically. See ``_note``.
         self.progress: Callable[[str], None] | None = None
-        self._last_note = ""
+        self._recent_notes: list[str] = []
         if session is None:
             if approval_profile is not None:
                 resolved_profile = ApprovalProfile(approval_profile)
@@ -497,13 +498,22 @@ class CoScientistWorkflow:
         most times it is asked, and a sentence that has not changed is not news.
         The lease is renewed by the heartbeat and does not depend on this.
 
+        A short window rather than the last line alone. Two of these callers sit
+        one line apart around the registry lookup, both reading the same
+        manifest, and against the immediately-previous line only, the page said
+        what the fold had produced, said what the lookup was doing, and then
+        said what the fold had produced again -- a line that goes backwards,
+        which reads as a stall rather than as progress. Three deep, because
+        every caller that speaks repeatedly is counting something and its
+        sentence changes each time it is asked.
+
         Narration, and narration only. A writer that raises has failed to update
         a sentence, which is not a reason to lose an hour of research, so the
         failure is logged and the stage carries on.
         """
-        if self.progress is None or detail == self._last_note:
+        if self.progress is None or detail in self._recent_notes:
             return
-        self._last_note = detail
+        self._recent_notes = [*self._recent_notes[-2:], detail]
         try:
             self.progress(detail)
         except Exception:
@@ -782,6 +792,7 @@ class CoScientistWorkflow:
         # left behind, and computing it afterwards published a manifest and a
         # summary that both said nothing about either.
         batches = self._verification_batches(manifest)
+        self._note("Writing down what the searches found, source by source.")
         stated = self._record_discovered_corpus(manifest, feedback=feedback)
         stated_corpus = (
             EvidencePacket.model_validate(stated.payload)
@@ -821,6 +832,11 @@ class CoScientistWorkflow:
             if request.status in {"queued", "working"}
         ]
         if pending_enrichment:
+            outstanding = len(pending_enrichment[:6])
+            noun = "search" if outstanding == 1 else "searches"
+            self._note(
+                f"Running {outstanding} follow-up {noun} on what the corpus left open."
+            )
             enrichment_definition = tuple(
                 item
                 for item in SPECIALISTS_BY_STAGE["evidence"]
@@ -922,6 +938,7 @@ class CoScientistWorkflow:
         # carried at the tier discovery is entitled to assert and no higher.
         folded = verified_packets + ([stated_corpus] if stated_corpus else [])
         if len(folded) > 1:
+            self._note(f"Merging {len(folded)} sets of findings into one corpus.")
             consolidated = merge_evidence_packets(self.session.question, folded)
             for result in results:
                 if result.artifact.schema_name == "EvidencePacket":
@@ -958,6 +975,9 @@ class CoScientistWorkflow:
         # call inside a page request; and the reports being merged live in the
         # artifact store, which is the one thing the stored session does not
         # carry, so this is the last point in the run that can still reach them.
+        held = len(manifest.source_leads)
+        noun = "source" if held == 1 else "sources"
+        self._note(f"Writing the knowledge survey over {held} {noun}.")
         survey = await asyncio.to_thread(self._knowledge_survey, manifest)
         if survey is not None:
             manifest = manifest.model_copy(update={"knowledge_survey": survey})
@@ -1128,6 +1148,7 @@ class CoScientistWorkflow:
                 manifest=existing_manifest,
                 normalizer=normalizer,
                 manifest_callback=persist_manifest,
+                narrate=self._note,
             )
             if any(
                 run.status in {"queued", "in_progress", "requires_action"}
@@ -1139,6 +1160,22 @@ class CoScientistWorkflow:
             # Deep Research names its sources with the same grounding redirector
             # search uses. They are followed here, before the manifest is
             # recorded, so the corpus written from these leads names documents.
+            redirected = sum(
+                1
+                for lead in manifest.source_leads
+                if GROUNDING_REDIRECT_MARKER in lead.canonical_url
+            )
+            if redirected:
+                # "1 search link back to the documents they name" is what a
+                # count dropped into a fixed sentence produces, and one link is
+                # what a rehearsal and a thin literature both return.
+                following = (
+                    "Following 1 search link back to the document it names."
+                    if redirected == 1
+                    else f"Following {redirected} search links back to the "
+                    "documents they name."
+                )
+                self._note(following)
             manifest = await self._resolved_lead_locators(manifest)
         return manifest, discovery
 

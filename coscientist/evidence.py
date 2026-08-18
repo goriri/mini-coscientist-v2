@@ -2510,6 +2510,13 @@ def discovery_progress_sentence(manifest: DiscoveryManifest) -> str:
     leads: a wave's findings are folded in after every pass in it is terminal.
     Hence "so far", and hence no number at all on the branch that fires in the
     gap between the last pass going terminal and the fold that follows it.
+
+    That gap closes rather than repeating itself. The same callback is called
+    once more on the far side of the fold, and until the read passes were
+    distinguished from the terminal ones it said "folding what they found in" a
+    second time -- announcing, after seven reports had been read, work that was
+    already done. ``raw_artifact_reference`` is the mark of having been read:
+    the ingest writes it for every pass it handles and nothing else does.
     """
     runs = manifest.runs
     if not runs:
@@ -2517,12 +2524,15 @@ def discovery_progress_sentence(manifest: DiscoveryManifest) -> str:
     total = len(runs)
     running = sum(1 for run in runs if run.status in _DISCOVERY_IN_FLIGHT)
     searches = "search" if total == 1 else "searches"
-    if not running:
-        if total == 1:
-            return "The search is back; folding what it found in."
-        return f"All {total} searches are back; folding what they found in."
     held = len(manifest.source_leads)
     sources = "source" if held == 1 else "sources"
+    if not running:
+        if any(not run.raw_artifact_reference for run in runs):
+            if total == 1:
+                return "The search is back; folding what it found in."
+            return f"All {total} searches are back; folding what they found in."
+        subject = "The search" if total == 1 else f"All {total} searches"
+        return f"{subject} came back; {held} {sources} to work with."
     return (
         f"Deep Research has finished {total - running} of {total} {searches}; "
         f"{held} {sources} so far."
@@ -2805,6 +2815,7 @@ class IterativeEvidenceDiscovery:
         manifest: DiscoveryManifest,
         *,
         normalizer: Callable[[str], str] | None,
+        narrate: Callable[[str], None] | None = None,
     ) -> bool:
         """Fold a completed wave into the manifest and score coverage once.
 
@@ -2815,9 +2826,19 @@ class IterativeEvidenceDiscovery:
         Returns whether the run may continue. It may not once every pass in a
         wave has failed, which is a transport problem rather than a thin
         literature and will not be improved by paying for another wave.
+
+        The poll loop above narrates itself on a clock; this does not, and the
+        reading is where the time goes -- a model call per pass over a report
+        that can run to thirty thousand characters. A live run held "All 7
+        searches are back; folding what they found in." for the whole of it,
+        which is the one sentence a reader has no way to tell from a hang.
         """
         completed = 0
-        for run in wave:
+        for position, run in enumerate(wave, start=1):
+            if narrate:
+                narrate(
+                    f"Reading what search {position} of {len(wave)} came back with."
+                )
             payload = payloads.get(run.interaction_id) or {}
             run.status = str(payload.get("status") or run.status)
             run.completed_at = _now()
@@ -2921,7 +2942,17 @@ class IterativeEvidenceDiscovery:
         normalizer: Callable[[str], str] | None = None,
         status_callback: Callable[[DeepResearchRun], None] | None = None,
         manifest_callback: Callable[[DiscoveryManifest], None] | None = None,
+        narrate: Callable[[str], None] | None = None,
     ) -> DiscoveryManifest:
+        """``narrate`` is told, in a sentence, what the stage is doing.
+
+        Distinct from ``manifest_callback``, which is handed the manifest to
+        write down and can only say what the manifest shows. Between the last
+        poll and the return there are two long stretches the manifest is silent
+        through -- the reports being read, and every retained lead being looked
+        up in a metadata registry -- and both are model or network work measured
+        in minutes.
+        """
         manifest = manifest or DiscoveryManifest(question=session.question)
         seed: dict[str, dict] = {}
         while True:
@@ -2977,7 +3008,12 @@ class IterativeEvidenceDiscovery:
             # met by nothing, having bought the literature and thrown it away.
             timed_out = manifest.convergence_reason == "deep_research_timed_out"
             if not self._ingest_wave(
-                session, wave, payloads, manifest, normalizer=normalizer
+                session,
+                wave,
+                payloads,
+                manifest,
+                normalizer=normalizer,
+                narrate=narrate,
             ):
                 break
             if manifest_callback:
@@ -3000,6 +3036,9 @@ class IterativeEvidenceDiscovery:
             retained
         )
         if self.registry_enricher is not None:
+            if narrate:
+                noun = "source" if len(retained) == 1 else "sources"
+                narrate(f"Looking up publication details for {len(retained)} {noun}.")
             manifest.source_leads = self.registry_enricher.enrich(retained)
         else:
             manifest.source_leads = retained
