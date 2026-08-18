@@ -172,12 +172,23 @@ try {
   // looking at was correctly reopening an hour-old evidence stage -- the other
   // half of this same test, passing. So the precondition is read rather than
   // assumed, and a half that could not be checked says so instead of failing.
+  //
+  // Read the way the page reads it. Keying on the operation instead said the
+  // deployment was idle while eight sessions sat unfinished at a gate, none of
+  // them with an operation in flight -- and a stage waiting on a decision is
+  // exactly the work the landing screen is meant to reopen in place of the
+  // launcher. UNFINISHED in app.js is the list this has to agree with.
   const directory = await fetch(`${baseUrl}/api/research/sessions?limit=200`);
   assert(directory.ok, `Could not read the running work: ${directory.status}.`);
   const listed = await directory.json();
+  const UNFINISHED = [
+    "input_required",
+    "evidence_required",
+    "governance_blocked",
+    "active",
+  ];
   const busy = (Array.isArray(listed) ? listed : listed.sessions || []).filter(
-    (row) =>
-      row.operation && ["queued", "running"].includes(row.operation.status),
+    (row) => UNFINISHED.includes(row.status),
   );
 
   let empty = `not checked: ${busy.map((row) => row.id).join(", ")} in flight`;
