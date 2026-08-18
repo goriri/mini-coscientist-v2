@@ -5753,7 +5753,12 @@ def _cited_setting(lead_in: str, items: Sequence[str], cited: _CitedEvidence) ->
         return f"{lead_in}{series}"
     # One to a line, each keeping the capital it was written with: a list has no
     # series for an entry to be folded into, and a paper's name is not a sentence.
-    listed = "\n".join(f"- {_sentence(entry)}" for entry in entries)
+    #
+    # The entry this run writes itself is the exception, and it is written for the
+    # series it is no longer in. Three live reports set "- the statements printed
+    # above under Evidence Assessment citing [2] and [1]." under a finding that opens
+    # on a capital, as the one lower-case line in the list.
+    listed = "\n".join(f"- {_opened(_sentence(entry))}" for entry in entries)
     return f"{lead_in.rstrip()}\n\n{listed}"
 
 

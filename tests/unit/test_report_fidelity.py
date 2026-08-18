@@ -1741,6 +1741,35 @@ def test_findings_too_long_to_read_as_a_series_are_set_one_to_a_line():
     )
 
 
+def test_the_entry_this_report_writes_itself_is_opened_like_the_findings_beside_it():
+    """Three live reports set "- the statements printed above under Evidence
+    Assessment citing [2] and [1]." as the one lower-case line in a list whose other
+    entries are findings opening on a capital. The phrase is written for the series
+    it is no longer in."""
+    from coscientist.narrative import _cited_setting, _CitedEvidence
+
+    finding = (
+        "Pancreatic cancer is notoriously refractory to programmed cell death "
+        "protein 1 blockade, largely because of minimal baseline immunogenicity "
+        "and poor CD8+ effector T-cell infiltration of the tumour stroma. The "
+        "desmoplastic barrier excludes what few effector cells are primed, and "
+        "the myeloid compartment that fills the space in their stead suppresses "
+        "the ones that do arrive."
+    )
+    listed = _cited_setting(
+        "What it cites with no direction recorded either way on the question: ",
+        [finding, "claim_2", "claim_5"],
+        _CitedEvidence(restated={"claim_2": "[2]", "claim_5": "[1]"}),
+    )
+
+    assert listed.splitlines()[-1] == (
+        "- The statements printed above under Evidence Assessment citing [2] and [1]."
+    )
+    # A finding is left with the case its pass wrote it in, which is what the list
+    # setting was for: a paper's name is not a sentence.
+    assert f"- {finding}" in listed
+
+
 def test_two_short_findings_stay_in_the_sentence_that_introduces_them():
     """A list of two clauses a reader takes in at a glance costs more than it pays."""
     from coscientist.models import EvidenceClaim, EvidencePacket, SourceRecord
