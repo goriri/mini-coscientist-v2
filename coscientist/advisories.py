@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .citations import GROUNDED_STATUSES
+from .governance import REHEARSAL_ADJUDICATOR
 from .narrative import (
     _AGENT_NAMES,
     IdeaBrief,
@@ -346,6 +347,25 @@ def _forked_evidence_advisory(record: ResearchRecord) -> list[Advisory]:
     ]
 
 
+def _floor_shortfalls(waiver) -> str:
+    """What the gate said, quoted, where nothing answered it.
+
+    A waiver a person signed is answerable to whoever signed it, and the report
+    can leave the measurement to the evidence chapter. A waiver nobody signed has
+    to carry the finding it walked past, for the same reason the governance
+    section reprints a fatal flaw over a rehearsal's non-answer.
+    """
+    floor = (waiver.payload or {}).get("evidence_floor") or {}
+    shortfalls = [str(item).strip() for item in floor.get("shortfalls") or [] if item]
+    if not shortfalls:
+        return ""
+    return (
+        f"What the gate reported stands unanswered: {' '.join(shortfalls)} "
+        if shortfalls[-1].endswith(".")
+        else f"What the gate reported stands unanswered: {' '.join(shortfalls)}. "
+    )
+
+
 def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
     if not record.session.exploratory_evidence_accepted:
         return []
@@ -374,6 +394,11 @@ def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
     grounded = [
         source for source in sources if source.verification_status in GROUNDED_STATUSES
     ]
+    # A rehearsal waives this gate itself so the stages after it run, and the
+    # sentence above is written for somebody who chose to. "The waiver is
+    # recorded against the actor recorded as rehearsal (nobody)" reads as a
+    # person with an odd username, which is the one reading it must not have.
+    waived_by_rehearsal = bool(waiver) and waiver.actor == REHEARSAL_ADJUDICATOR
     return [
         Advisory(
             title="A waived evidence gate",
@@ -383,7 +408,12 @@ def _waived_gate_advisory(record: ResearchRecord) -> list[Advisory]:
                 "Knowledge Base was admitted without meeting the verification "
                 "standard the goal declared. "
                 + (
-                    f"The waiver is recorded against {_actor_words(waiver.actor)}. "
+                    "Nobody waived it. This run is a rehearsal of the pipeline "
+                    "rather than a research proposal, so rather than stopping at "
+                    "the gate for a person it did not have, it waived the gate "
+                    "itself and carried on. " + _floor_shortfalls(waiver)
+                    if waived_by_rehearsal
+                    else f"The waiver is recorded against {_actor_words(waiver.actor)}. "
                     if waiver
                     else "No actor is recorded against the waiver. "
                 )

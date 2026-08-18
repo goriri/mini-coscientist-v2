@@ -158,6 +158,98 @@ def test_the_waiver_covers_only_the_findings_it_was_handed():
     assert second.review_id not in {note.review_id for note in waived}
 
 
+# --- the other gate a rehearsal has no person for ----------------------------
+
+
+def _at_evidence(*, rehearsal: bool) -> CoScientistWorkflow:
+    """A run stopped where the evidence floor is measured, on a corpus short of it."""
+    flow = CoScientistWorkflow(
+        "Can a coating improve cycle life?",
+        approval_profile=ApprovalProfile.AUTO,
+        workflow_version=2,
+        rehearsal=rehearsal,
+    )
+    flow.accept(flow.preview())
+    assert flow.stage == "evidence"
+    return flow
+
+
+def test_a_real_run_still_stops_at_the_evidence_floor():
+    """The second control. A thin corpus stops a proposal, and has to keep doing so."""
+    flow = _at_evidence(rehearsal=False)
+
+    with pytest.raises(ValueError, match="does not meet the floor"):
+        flow.accept(flow.preview())
+
+    assert flow.session.status == "evidence_required"
+    assert flow.session.exploratory_evidence_accepted is False
+
+
+def test_a_rehearsal_answers_the_evidence_floor_as_well_as_the_safety_gate():
+    """A live rehearsal launched to exercise the pipeline parked here instead.
+
+    Waiving one gate and stopping at the next leaves the run needing a person
+    anyway, which is the thing the rehearsal exists not to need.
+    """
+    flow = _at_evidence(rehearsal=True)
+
+    flow.accept(flow.preview())
+
+    assert flow.session.status != "evidence_required"
+    assert flow.session.exploratory_evidence_accepted is True
+
+
+def test_the_evidence_waiver_records_what_the_gate_reported():
+    flow = _at_evidence(rehearsal=True)
+    flow.accept(flow.preview())
+    waiver = next(
+        event
+        for event in flow.session.events
+        if event.event_type == "limited_exploratory_evidence_accepted"
+    )
+
+    assert waiver.actor == REHEARSAL_ADJUDICATOR
+    # The measurement itself, not merely the fact that it failed: a waiver nobody
+    # signed has to carry the finding it walked past.
+    assert waiver.payload["evidence_floor"]["shortfalls"]
+
+
+def _waived_evidence_advisory(session, *, actor: str) -> str:
+    from coscientist.advisories import _waived_gate_advisory
+    from coscientist.models import AuditEvent
+    from coscientist.narrative import load_record
+
+    session.exploratory_evidence_accepted = True
+    session.events.append(
+        AuditEvent(
+            event_type="limited_exploratory_evidence_accepted",
+            actor=actor,
+            stage="evidence",
+            payload={
+                "evidence_floor": {"shortfalls": ["0 of 8 weighted verified sources."]}
+            },
+        )
+    )
+    return _flat(_waived_gate_advisory(load_record(session))[0].body)
+
+
+def test_the_waived_evidence_gate_says_nobody_waived_it(rich_session):
+    body = _waived_evidence_advisory(rich_session, actor=REHEARSAL_ADJUDICATOR)
+
+    assert "Nobody waived it." in body
+    assert "0 of 8 weighted verified sources." in body
+    # "The waiver is recorded against the actor recorded as rehearsal (nobody)"
+    # reads as a person with an odd username.
+    assert "The waiver is recorded against" not in body
+
+
+def test_an_evidence_gate_a_person_waived_is_still_described_as_one(rich_session):
+    body = _waived_evidence_advisory(rich_session, actor="web_researcher")
+
+    assert "The waiver is recorded against" in body
+    assert "Nobody waived it" not in body
+
+
 # --- the launcher: declared, never inferred, and reported back ---------------
 
 

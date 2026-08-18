@@ -2204,6 +2204,34 @@ class CoScientistWorkflow:
                 # withdrawn, and the status has to go with it or the run is
                 # still parked on a finding that no longer holds.
                 self.session.status = "active"
+            elif self.session.rehearsal:
+                # The other gate a rehearsal has no person for, answered the
+                # same way: in writing, under a name nobody could have typed,
+                # and with what the gate reported carried into the record rather
+                # than dropped. A live rehearsal launched to exercise the
+                # pipeline end to end stopped here at evidence_required, which
+                # is the floor doing its job over a corpus nobody was going to
+                # act on.
+                self.session.exploratory_evidence_accepted = True
+                self.session.status = "active"
+                self._persist(
+                    self._event(
+                        # The event the waived-gate advisory reads, so a
+                        # rehearsal's waiver reaches the report by the path
+                        # every other waiver reaches it by. What it says there
+                        # is not the same, because the actor is not.
+                        "limited_exploratory_evidence_accepted",
+                        REHEARSAL_ADJUDICATOR,
+                        payload={
+                            "manifest_ok": manifest_ok,
+                            "evidence_floor": floor.model_dump(mode="json"),
+                            "warning": (
+                                "All downstream outputs remain hypotheses and must "
+                                "not be presented as evidence-backed findings."
+                            ),
+                        },
+                    )
+                )
             else:
                 self.session.status = "evidence_required"
                 self._persist(
