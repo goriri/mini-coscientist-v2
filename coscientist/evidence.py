@@ -641,6 +641,36 @@ async def resolve_grounding_urls(urls, *, client, timeout: float = 10.0) -> list
     return list(dict.fromkeys(url for url in followed if url))
 
 
+_BROWSE_SURFACES = frozenset(
+    {
+        "author",
+        "authors",
+        "browse",
+        "categories",
+        "category",
+        "feed",
+        "list",
+        "people",
+        "profile",
+        "profiles",
+        "rss",
+        "scholars",
+        "search",
+        "tag",
+        "tags",
+        "user",
+        "users",
+    }
+)
+"""First path segments that open an index of documents rather than one of them.
+
+Read off the live corpora rather than imagined: every other opening segment in
+eight reports' worth of references -- ``articles``, ``publication``, ``doi``,
+``content``, ``abs``, ``pdf``, ``figure``, ``reviewed-preprints`` -- names a
+thing to read.
+"""
+
+
 def names_a_document(url: str) -> bool:
     """Whether a locator reaches a document rather than a site or a redirector.
 
@@ -650,6 +680,15 @@ def names_a_document(url: str) -> bool:
     which paper to read. Discovery is asked in its contract not to emit one, and
     a live run showed it doing so anyway when the grounding metadata gave it
     nothing better, so the rule is enforced here rather than requested there.
+
+    A path is not enough on its own, and the second failure is the same failure
+    one level in. Three live reference lists numbered a browse surface as though
+    a statement had been read off it: [38] "Computer Science - arXiv arxiv.org"
+    for ``arxiv.org/list/cs/new?skip=200&show=2000``, [64] "Machine Learning -
+    arXiv arxiv.org" for a second listing, and [42] "Grigory L. Kozhemyakin" for
+    ``scilit.com/scholars/019f...`` -- an index of new submissions, another
+    index, and a person. Each has a path, each reaches a real page, and none of
+    them is a document anybody can have found a finding in.
     """
     if not url.startswith(("http://", "https://")):
         return False
@@ -657,7 +696,65 @@ def names_a_document(url: str) -> bool:
         return False
     _, _, remainder = url.partition("://")
     _, _, path = remainder.partition("/")
-    return bool(path.strip("/"))
+    path = path.partition("?")[0].partition("#")[0].strip("/")
+    if not path:
+        return False
+    return path.split("/")[0].lower() not in _BROWSE_SURFACES
+
+
+_NOT_LITERATURE = frozenset(
+    {
+        "facebook.com",
+        "instagram.com",
+        "pinterest.com",
+        "quora.com",
+        "reddit.com",
+        "scribd.com",
+        "steamcommunity.com",
+        "tiktok.com",
+        "twitter.com",
+        "x.com",
+        "youtu.be",
+        "youtube.com",
+    }
+)
+"""Hosts a scientific claim cannot rest on, whatever the page says.
+
+Not a judgement about the internet: these are the hosts a grounded search fell
+back to when it had nothing, and a report that prints them as evidence is
+telling the reader something false about where its findings come from.
+"""
+
+
+def could_be_literature(url: str) -> bool:
+    """Whether a page could be the source of a scientific finding at all.
+
+    ``names_a_document`` asks whether the locator reaches something to read.
+    This asks whether the thing to read could be a source, and the two failures
+    are genuinely different: a Reddit thread is a document, retrievable and
+    quotable, and no dossier may cite one as the paper a mechanism came from.
+
+    A live run put six of them in its reference list: a Steam discussion of
+    RimWorld twice, in Portuguese and in Chinese, numbered [12] and [15]; the
+    r/halo thread "PRO TIP: The Razorback can hold the flag!" at [16]; a Call of
+    Duty loadout thread at [18]; "* SECRET * WAYS TO USE SNAPSHOT GRENADES" at
+    [17]; and a national day flypast rehearsal on YouTube at [23] -- the search
+    matching "rehearsal", "flag" and "smoke test" as words, which is all it had
+    to go on, and two of the six reaching the body of the report as citations.
+
+    The domain and everything under it, because the failure is the host and not
+    the path. Publishers of preprints, theses, code and conference material are
+    all absent from this list on purpose: a repository holding a named tool is a
+    citable artifact, and a badly titled one is a separate complaint.
+    """
+    if not url.startswith(("http://", "https://")):
+        return False
+    _, _, remainder = url.partition("://")
+    host = remainder.partition("/")[0].partition(":")[0].lower()
+    host = host.removeprefix("www.")
+    return not any(
+        host == denied or host.endswith(f".{denied}") for denied in _NOT_LITERATURE
+    )
 
 
 async def resolve_packet_locators(packet: EvidencePacket, *, client) -> EvidencePacket:
@@ -1998,6 +2095,14 @@ def _scraped_copy(url: str) -> bool:
 def merge_leads(
     existing: list[SourceLead], additions: list[SourceLead]
 ) -> list[SourceLead]:
+    # Here because every lead this run will ever hold passes through this merge
+    # once, and a host that cannot carry a finding should be refused in one
+    # place rather than at each of the eight that later read the list. Refused
+    # rather than kept and marked: a lead that survives is counted in the source
+    # total, sent to a verifier, and numbered in the references, and the run has
+    # nothing true to say about any of the three.
+    existing = [lead for lead in existing if could_be_literature(lead.canonical_url)]
+    additions = [lead for lead in additions if could_be_literature(lead.canonical_url)]
     merged = {lead_identity(lead): lead.model_copy(deep=True) for lead in existing}
     # The second index is what catches one paper held at two addresses. It maps
     # a title onto the key the copy of it already in hand is filed under, so a

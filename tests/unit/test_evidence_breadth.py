@@ -331,6 +331,19 @@ def test_a_source_whose_locator_will_not_parse_is_kept_rather_than_dropped():
         ("https://vertexaisearch.cloud.google.com/grounding-api-redirect/AbC", False),
         ("researchgate.net/article/12", False),
         ("", False),
+        # An index of documents, which is the bare domain one level in. All
+        # three reached a live reference list: "Computer Science - arXiv
+        # arxiv.org" at [38], a second listing at [64], and a person at [42].
+        ("https://arxiv.org/list/cs/new?skip=200&show=2000", False),
+        ("https://arxiv.org/list/cs.LG/new", False),
+        ("https://www.scilit.com/scholars/019f29627d71734bbb10da440f77c479", False),
+        ("https://example.org/search?q=kras+g12c", False),
+        # And the openings that name a thing to read, which is every other one
+        # the eight live corpora used.
+        ("https://arxiv.org/abs/2512.08012", True),
+        ("https://pmc.ncbi.nlm.nih.gov/articles/PMC10261865/", True),
+        ("https://www.biorxiv.org/content/10.1101/2025.03.18.643954v1", True),
+        ("https://www.researchgate.net/publication/391458634_De_Novo", True),
     ],
 )
 def test_a_locator_either_reaches_a_document_or_only_names_a_website(
