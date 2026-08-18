@@ -10951,6 +10951,13 @@ def _recommendation_grounding(
             + ("other does" if len(ordered) - len(verified) == 1 else "others do")
             + " not."
         )
+    elif len(ordered) == 1:
+        lead = " It does not rest on verified evidence."
+    elif len(ordered) == 2:
+        # "None of the two rests on verified evidence" was on a live page. The count is
+        # right and the English is not: none is for three and up, and at one it read
+        # "None of the one".
+        lead = " Neither of them rests on verified evidence."
     else:
         lead = f" None of the {total} rests on verified evidence."
     # "The others do not rest on verified evidence" is equally true of an idea nobody
@@ -10962,11 +10969,20 @@ def _recommendation_grounding(
         item for item in ordered if supports[item] in {"unsupported", "discredited"}
     ]
     if broken:
+        # Same arithmetic, said in English at the small numbers a recommendation
+        # actually runs to: "One of the one cites evidence that was retracted" is what
+        # the fraction reads as where a single idea is carried.
+        if len(ordered) == 1:
+            subject = "It cites"
+        elif len(broken) == len(ordered):
+            subject = "Both cite" if len(ordered) == 2 else f"All {total} cite"
+        else:
+            subject = f"{_number_word(len(broken))} of the {total} " + (
+                "cites" if len(broken) == 1 else "cite"
+            )
         lead += (
-            f" {_number_word(len(broken))} of the {total} "
-            + ("cites" if len(broken) == 1 else "cite")
-            + " evidence that was retracted, could not be retrieved, or is not in "
-            "this report at all, which is a weaker position than unchecked."
+            f" {subject} evidence that was retracted, could not be retrieved, or is "
+            "not in this report at all, which is a weaker position than unchecked."
         )
     if supports[ordered[0]] == "uncited":
         lead += (
@@ -11149,7 +11165,23 @@ def _section_nine(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
         item.candidate.id
         for item in (record.evolution.records if record.evolution else [])
     }
-    recommended_ids = [item for item in resolved_ids if item not in unresolved]
+    # An id with no title anywhere in the record is a third case, and it used to fall
+    # through to the placeholder: a live report told its reader that the meta-review
+    # recommends carrying one named idea "and Unnamed Research Idea". A placeholder
+    # offered as one of the two things to fund reads as an idea whose name was lost,
+    # which is a kinder account than the truth -- nothing in the run was generated,
+    # reviewed or ranked under that identifier at all.
+    known_ids = set(record.titles) | {item.id for item in record.candidates}
+    nameless_ids = [
+        item
+        for item in resolved_ids
+        if item not in unresolved and item not in known_ids
+    ]
+    recommended_ids = [
+        item
+        for item in resolved_ids
+        if item not in unresolved and item not in nameless_ids
+    ]
     unmatched_ids = [item for item in resolved_ids if item in unresolved]
     recommended = [record.title_for(item) for item in recommended_ids]
     # Only where the idea's own section will carry the rewrite. This paragraph sends
@@ -11282,6 +11314,22 @@ def _section_nine(record: ResearchRecord, briefs: Sequence[IdeaBrief]) -> _Draft
             )
             + " should be read off the evolution stage's own output rather than "
             "from this report."
+        )
+    if nameless_ids:
+        core.append(
+            "The meta-review also recommended "
+            + _plural(len(nameless_ids), "identifier")
+            + " that names no idea in this run: "
+            + _join([f"`{item}`" for item in nameless_ids], fallback="none").rstrip(".")
+            + ". Nothing was generated, reviewed or ranked under "
+            + ("it" if len(nameless_ids) == 1 else "them")
+            + ", so there is no idea here to carry and no title to print. "
+            + (
+                "That recommendation is"
+                if len(nameless_ids) == 1
+                else "Those recommendations are"
+            )
+            + " reported rather than followed."
         )
     if revised:
         # Every round of the lineage, not the last one. The change log is the only

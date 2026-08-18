@@ -3127,7 +3127,7 @@ def test_the_recommendation_carries_the_grounding_the_appendix_records():
         _recommended_pair("discovered_unverified"),
         [_brief("An uncited conjecture", [], facts=_facts(), candidate_id="cand_a")],
     )
-    assert "None of the two rests on verified evidence." in core
+    assert "Neither of them rests on verified evidence." in core
     assert "An uncited conjecture, which leads the recommendation, cites none" in core
     assert "Evidence integrity in the appendix" in core
 
@@ -3145,7 +3145,7 @@ def test_a_recommendation_resting_on_broken_evidence_is_not_reported_as_merely_u
         [_brief("An uncited conjecture", [], facts=_facts(), candidate_id="cand_a")],
     )
 
-    assert "None of the two rests on verified evidence." in core
+    assert "Neither of them rests on verified evidence." in core
     assert (
         "One of the two cites evidence that was retracted, could not be retrieved, "
         "or is not in this report at all, which is a weaker position than unchecked."
@@ -3153,6 +3153,61 @@ def test_a_recommendation_resting_on_broken_evidence_is_not_reported_as_merely_u
     )
     # The idea that cites nothing at all is a third case again, and keeps its clause.
     assert "An uncited conjecture, which leads the recommendation, cites none" in core
+
+
+def test_the_grounding_of_a_single_recommended_idea_is_written_in_the_singular():
+    """ "None of the one rests on verified evidence" is what the fraction reads as.
+
+    The sentence was written for a set and a recommendation is often one idea, so the
+    count and the English came apart at the size the section runs to most often.
+    """
+    record = _recommended_pair("retracted")
+    record.manifest.recommendation_candidate_ids = ["cand_b"]
+
+    core = _nine(record, [_brief("A cited idea", [], facts=_facts())])
+
+    assert "It does not rest on verified evidence." in core
+    assert "It cites evidence that was retracted" in core
+    assert "of the one" not in core
+
+
+def test_a_recommendation_broken_all_the_way_through_says_so_as_a_pair():
+    from coscientist.citations import CandidateCitations
+
+    record = _recommended_pair("retracted")
+    record.evidence_support["cand_a"] = CandidateCitations(
+        candidate_id="cand_a",
+        citations=list(record.evidence_support["cand_b"].citations),
+    )
+
+    core = _nine(
+        record,
+        [_brief("An uncited conjecture", [], facts=_facts(), candidate_id="cand_a")],
+    )
+
+    assert "Both cite evidence that was retracted" in core
+    assert "Two of the two" not in core
+
+
+def test_an_identifier_that_names_no_idea_is_reported_rather_than_recommended():
+    """A live report recommended one named idea "and Unnamed Research Idea".
+
+    The meta-review named a candidate the run holds nothing under, and the placeholder
+    the report falls back to for an untitled idea went out as one of the two things a
+    reader was being asked to fund.
+    """
+    record = _recommended_pair("verified")
+    record.manifest.recommendation_candidate_ids = ["cand_a", "cand_ghost"]
+
+    core = _nine(
+        record,
+        [_brief("An uncited conjecture", [], facts=_facts(), candidate_id="cand_a")],
+    )
+
+    assert "Unnamed Research Idea" not in core
+    assert "The meta-review recommends carrying An uncited conjecture." in core
+    assert "one identifier that names no idea in this run: `cand_ghost`" in core
+    assert "reported rather than followed" in core
 
 
 def test_a_recommendation_nobody_checked_is_not_told_its_evidence_was_pulled():
