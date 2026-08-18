@@ -2930,8 +2930,10 @@ def _record_names(record: ResearchRecord) -> dict[str, str]:
             # What it says, and not the record kept about it: a run whose pass wrote
             # its findings as their own records had a review name one of them "the
             # finding that * **Statement:** Atomic Layer Deposition (ALD)…", which
-            # spends the whole of the splice on the label and says nothing.
-            said = _without_record_labels(claim.claim)
+            # spends the whole of the splice on the label and says nothing. The
+            # pass's own citation numbers go the same way and for the same reason:
+            # they number a list this report does not print.
+            said = _without_record_labels(_without_pipeline_markup(claim.claim))
             names[claim.id] = (
                 f"the {standing}claim drawn from {title}"
                 if title
@@ -2958,7 +2960,11 @@ def _record_names(record: ResearchRecord) -> dict[str, str]:
         )
     for narrative in record.discovery.narratives if record.discovery else []:
         for statement in narrative.statements:
-            said = _without_record_labels(statement.text)
+            # A live review named a finding "(the finding that however, [cite:
+            # 49]the broad-spectrum pan-RAS inhibitor…)": the pass's own marker
+            # spliced into a reviewer's sentence, pointing into a numbering no
+            # reader of this report has.
+            said = _without_record_labels(_without_pipeline_markup(statement.text))
             names.setdefault(
                 statement.id,
                 _named_by_text(
@@ -7670,7 +7676,11 @@ def _evidence_notes(
             # under a verified-source badge and carrying a reference number -- picked
             # up off a record whose own text was empty and which therefore compared
             # equal to it.
-            text = _sentence(statement, fallback="")
+            # The pass's own numbering, struck before the sentence is read for the
+            # run's: an Evidence Assessment bullet printed "4E-BP1 was successfully
+            # dephosphorylated [cite: 70, 71, 72] [6]", where the trailing [6] is
+            # the only marker in it a reader can look up.
+            text = _sentence(_without_pipeline_markup(statement), fallback="")
             if not text:
                 continue
             cited = _cited_records(text, index)

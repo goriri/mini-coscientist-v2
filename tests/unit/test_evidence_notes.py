@@ -268,6 +268,42 @@ def test_a_claim_read_out_of_the_index_leaves_them_behind_too():
     assert said == f"{CLAIM_TEXT}."
 
 
+def test_a_finding_named_inside_a_sentence_leaves_them_behind_too():
+    """An id standing alone is printed as the record; an id inside a sentence is
+    named after what the record says, and that is a third path to the same markers.
+    A live review named one "(the finding that however, [cite: 49]the broad-spectrum
+    pan-RAS inhibitor…)", spending the splice on a numbering this report has not
+    got."""
+    record = _record(evidence_against=["The thickness limit is set by pass4_stmt_5."])
+    record.discovery.narratives[0].statements[0].text = f"{STATEMENT_TEXT} [cite: 49]"
+
+    ((_heading, _badge, said, *_rest),) = _evidence_notes(record, record.candidates[0])
+
+    assert "cite:" not in said
+    assert said == (
+        "The thickness limit is set by the finding that increased coating thickness "
+        "causes severe mass transfer resistance at the particle surface."
+    )
+
+
+def test_a_specialist_quoting_a_pass_leaves_the_passs_own_numbers_behind_as_well():
+    """The two cases above reach the marker through the index. A specialist that
+    quotes the pass report into its own Evidence for field does not, and a live
+    bullet read "**[Literature Lead]** When researchers utilized dual inhibitors
+    (AZD8055 or Sapanisertib) to block both mTORC1 and mTORC2, 4E-BP1 was
+    successfully dephosphorylated [cite: 70, 71, 72] [6]" -- the sentence written
+    out in full by the specialist, with a numbering this report does not print
+    standing beside the one it does."""
+    ((_heading, _badge, said),) = _notes(
+        evidence_for=[
+            "Dual mTORC1/2 inhibition dephosphorylated 4E-BP1 [cite: 70, 71, 72]."
+        ]
+    )
+
+    assert "cite:" not in said
+    assert said == "Dual mTORC1/2 inhibition dephosphorylated 4E-BP1."
+
+
 def test_a_prefix_that_names_no_record_is_left_where_the_specialist_put_it():
     """ "Cycle_life: retention held" is a phrase with a colon after it, not a citation.
     Only a prefix the run can resolve is furniture the report may cut."""

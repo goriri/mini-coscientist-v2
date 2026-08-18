@@ -2862,6 +2862,33 @@ def test_a_claim_called_after_what_it_says_is_not_called_after_its_label(
     assert "the unverified claim that Atomic Layer Deposition lays down a" in body
 
 
+def test_a_record_called_after_what_it_says_drops_the_passs_own_numbers(
+    rich_session: Session,
+):
+    """A live review named a finding "(the finding that however, [cite: 49]the
+    broad-spectrum pan-RAS inhibitor…)" -- the pass's own marker spliced into a
+    reviewer's sentence, pointing into a numbering no reader of this report has, and
+    spending sixty characters of the sixty the splice gets on doing it."""
+    evidence = next(
+        artifact
+        for artifact in rich_session.artifacts
+        if artifact.schema_name == "EvidencePacket"
+    )
+    claim = evidence.payload["claims"][1]
+    claim["source_id"] = ""
+    claim["verification_status"] = "discovered_unverified"
+    claim["claim"] = (
+        "However, [cite: 49] the broad-spectrum pan-RAS inhibitor restored sensitivity."
+    )
+    body = _findings(rich_session, "The idea rests on claim_1.")
+
+    assert "cite:" not in body
+    assert (
+        "the unverified claim that however, the broad-spectrum pan-RAS inhibitor "
+        "restored sensitivity" in body
+    )
+
+
 def test_a_record_named_after_a_technique_keeps_the_technique_capitalised():
     """A sentence spliced into another one no longer opens it, so its capital goes --
     but the capital of an abbreviation or of a technique's name is not the sentence's,
