@@ -3878,6 +3878,22 @@ def _records_nothing(text: str) -> bool:
     )
 
 
+def _stated_items(items: Sequence[str]) -> list[str]:
+    """A review's list of findings, reduced to the ones that reach the page as prose.
+
+    Two ways a field says nothing, and the counts and item numbers are built off these
+    lists, so what a reader can see has to be what was counted. A field that says so in
+    words -- "None identified" -- and one ``_sentence`` finds nothing printable in,
+    which is the serialised payload it discards rather than shows.
+    """
+    return [
+        said
+        for item in items
+        if not _records_nothing(item)
+        and (said := _sentence(item, fallback="")).strip(". ")
+    ]
+
+
 def _comparable(text: str) -> str:
     """One statement reduced to what makes two of them the same statement.
 
@@ -6310,21 +6326,17 @@ def _idea_reviews(record: ResearchRecord, candidate_id: str) -> list[IdeaReview]
                     # Dropped before ``_sentence``, which reads a bare "None" as a
                     # missing field and would put "Not stated by the specialist." on
                     # the page as the answer.
-                    objections=[
-                        _sentence(item)
-                        for item in review.objections
-                        if not _records_nothing(item)
-                    ],
-                    rebuttals=[
-                        _sentence(item)
-                        for item in review.rebuttals
-                        if not _records_nothing(item)
-                    ],
-                    fatal_flaws=[
-                        _sentence(item)
-                        for item in review.fatal_flaws
-                        if not _records_nothing(item)
-                    ],
+                    #
+                    # And every other field ``_sentence`` has nothing to print for,
+                    # not the ones that say so in words alone: a reviewer answered
+                    # with a serialised payload, which is discarded rather than shown,
+                    # and a live idea's Addressed Objections read "The novelty review
+                    # answered the objection it raised, item 4 under Deep Verification
+                    # below: Not stated by the specialist." -- a line whose first half
+                    # asserts what its second half withdraws.
+                    objections=_stated_items(review.objections),
+                    rebuttals=_stated_items(review.rebuttals),
+                    fatal_flaws=_stated_items(review.fatal_flaws),
                     # The reference reports print a matched pair, the verdict beside
                     # the number. Setting both to the score printed "Answer: 3" over
                     # "Score: 3" under every scored review in the report, which tells

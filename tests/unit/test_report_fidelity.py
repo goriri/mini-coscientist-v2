@@ -537,6 +537,35 @@ def test_a_rebuttal_that_says_there_is_nothing_to_answer_is_not_a_response():
     assert review.fatal_flaws == []
 
 
+def test_a_rebuttal_the_report_cannot_print_is_not_counted_as_a_response_either():
+    """A live idea's Addressed Objections read "The novelty review answered the
+    objection it raised, item 4 under Deep Verification below: Not stated by the
+    specialist." -- a line whose first half asserts what its second half withdraws.
+
+    The reviewer had answered with a serialised payload, which the report discards
+    rather than shows. Only the fields that say they are empty in words were dropped
+    before the count, so the one that says nothing by holding the wrong thing was
+    counted as a response and then had nothing to print.
+    """
+    record = ResearchRecord(session=Session(question="Can a coating help?"))
+    record.reviews = [
+        ReviewSet(
+            reviews=[
+                _review(
+                    "cand_a",
+                    criterion="novelty",
+                    objections=["The mechanism is already published."],
+                    rebuttals=['{"rebuttal": "The 2 nm window is new.", "score": 3}'],
+                )
+            ]
+        )
+    ]
+
+    (review,) = _idea_reviews(record, "cand_a")
+
+    assert review.rebuttals == []
+
+
 @pytest.mark.parametrize(
     "written",
     [
