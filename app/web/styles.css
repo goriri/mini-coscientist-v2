@@ -2815,6 +2815,15 @@ body.history-preview .composer .send-button {
   inset: 0;
 }
 
+/* A display of its own beats the one `hidden` gets from the browser, so the
+   attribute the markup ships with and the one closeSessionBrowser() sets both
+   did nothing: the search overlay was drawn over the whole workspace from first
+   paint, on top of the landing page and every gate, and the close button could
+   not put it away. */
+.session-browser[hidden] {
+  display: none;
+}
+
 .session-browser-panel {
   display: flex;
   width: min(720px, 100%);

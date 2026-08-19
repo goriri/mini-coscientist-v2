@@ -139,32 +139,57 @@ async function waitFor(cdp, expression, note, timeout = gateTimeout) {
 
 async function click(cdp, selector) {
   // The selectors carry their own double quotes, so they are encoded rather
-  // than pasted into a quoted string.
+  // than pasted into a quoted string. The card being answered is marked, so
+  // settle() can wait on that card rather than on a selector: every gate offers
+  // an accept, and offline the next one opens inside a single poll, so "the
+  // accept button is gone" is never true for long enough to observe.
   const query = JSON.stringify(`.approval-card:not(.resolved) ${selector}`);
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const landed = await cdp.evaluate(
+    const stageKey = await cdp.evaluate(
       `(() => {
         const button = document.querySelector(${query});
-        if (!button) return false;
+        if (!button) return null;
+        const card = button.closest(".approval-card");
+        document
+          .querySelectorAll("[data-e2e-answering]")
+          .forEach((node) => node.removeAttribute("data-e2e-answering"));
+        card.setAttribute("data-e2e-answering", "1");
         button.click();
-        return true;
+        return card.dataset.stageKey || "";
       })()`,
     );
-    if (landed) return;
+    if (stageKey !== null) return stageKey;
     await delay(200);
   }
   throw new Error(`No live gate offered ${selector}.`);
 }
 
-async function settle(cdp, selector) {
+async function settle(cdp, stageKey) {
   // A decision reaches the server before the next poll repaints, so the card
   // just answered stays on screen for a beat. Without this the loop re-enters
   // on the stale gate and clicks a button that vanishes mid-retry.
-  const query = JSON.stringify(`.approval-card:not(.resolved) ${selector}`);
+  //
+  // The card retires itself the moment the decision is recorded, which is the
+  // one signal that means what this wait needs it to mean. Waiting on the
+  // buttons instead let the loop run a gate ahead of the page: it read the
+  // exploratory offer on a card the server had already accepted, spent a second
+  // photographing it, and then found nothing left to click.
+  //
+  // A refusal also settles, and one gate is designed to produce one: the
+  // evidence floor is evaluated when accept is pressed, not when the draft is
+  // drawn, so the first press at the evidence gate comes back with the
+  // shortfall and the offer of the exploratory route, on a card that stays
+  // live. The stage does not move and is not supposed to; the loop reads the
+  // offer on its next pass.
   await waitFor(
     cdp,
-    `!document.querySelector(${query})`,
-    `The gate offering ${selector} never cleared.`,
+    `(() => {
+      const card = document.querySelector("[data-e2e-answering]");
+      if (!card || card.classList.contains("resolved")) return true;
+      const fallback = card.querySelector('[data-decision="exploratory_evidence"]');
+      return !!fallback && !fallback.disabled;
+    })()`,
+    `The gate for ${stageKey || "an unidentified stage"} never cleared.`,
   );
 }
 
@@ -180,6 +205,7 @@ async function shoot(cdp, name) {
 }
 
 const shots = [];
+let rankingShot = false;
 
 try {
   await waitForEndpoint(baseUrl, 300, "The server did not become ready.");
@@ -235,7 +261,13 @@ try {
   await delay(400);
   shots.push(await shoot(cdp, "03-approval-gate"));
 
-  for (let gate = 0; gate < 6; gate += 1) {
+  // One pass per gate, plus room for the refusal the evidence floor is there to
+  // give. Six was the count of gates a run photographed before any of them
+  // refused anything, and it ran out halfway.
+  for (let gate = 0; gate < 14; gate += 1) {
+    if (await cdp.evaluate("!!document.querySelector('.report-completion')")) {
+      break;
+    }
     await waitFor(
       cdp,
       "!!document.querySelector('.approval-card:not(.resolved) [data-decision=\"accept\"]:not(:disabled)') || !!document.querySelector('.approval-card:not(.resolved) [data-decision=\"exploratory_evidence\"]')",
@@ -260,19 +292,31 @@ try {
       }
       await delay(300);
       shots.push(await shoot(cdp, "04-evidence-integrity-gate"));
-      await click(cdp, '[data-decision="exploratory_evidence"]');
-      await settle(cdp, '[data-decision="exploratory_evidence"]');
+      await settle(
+        cdp,
+        await click(cdp, '[data-decision="exploratory_evidence"]'),
+      );
       continue;
     }
-    if (await cdp.evaluate("!!document.querySelector('.ranking-table')")) {
+    // Once, at the gate that produces it. The table stays in the transcript
+    // afterwards, so every later gate re-took this shot over the top of the one
+    // before it and the file ended up being the meta-review screen under the
+    // ranking screen's name.
+    if (
+      !rankingShot &&
+      (await cdp.evaluate("!!document.querySelector('.ranking-table')"))
+    ) {
+      rankingShot = true;
       await cdp.evaluate(
         "document.querySelector('.ranking-table').scrollIntoView({block: 'center'})",
       );
       await delay(300);
       shots.push(await shoot(cdp, "05-ranking-presentation"));
     }
-    await click(cdp, '[data-decision="accept"]:not(:disabled)');
-    await settle(cdp, '[data-decision="accept"]');
+    await settle(
+      cdp,
+      await click(cdp, '[data-decision="accept"]:not(:disabled)'),
+    );
     await delay(400);
   }
 

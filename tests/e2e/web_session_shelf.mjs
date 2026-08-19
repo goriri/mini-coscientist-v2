@@ -105,6 +105,19 @@ await refuseOccupiedPort(debuggingPort);
 const browser = spawnBrowser(chrome, debuggingPort, profile);
 
 const drawerOrder = `[...document.querySelectorAll(".session-history-item")].map((node) => node.dataset.sessionId)`;
+// Whether the overlay is on the screen, which is not what its `hidden`
+// attribute says. `.session-browser` sets a display of its own, and an author
+// display beats the one the attribute gets from the browser: the overlay was
+// painted over the landing page and every gate from first paint, its close
+// button did nothing, and the attribute read correctly throughout.
+const overlayShown = `(() => {
+  const panel = document.querySelector("#sessionBrowser");
+  return (
+    getComputedStyle(panel).display !== "none" &&
+    panel.getBoundingClientRect().height > 0
+  );
+})()`;
+
 const browserRows = `(() => {
   const panel = document.querySelector("#sessionBrowser");
   return {
@@ -135,6 +148,10 @@ try {
     cdp,
     "document.querySelectorAll('.session-history-item').length === 4",
     "The four seeded sessions did not reach the history drawer.",
+  );
+  assert(
+    !(await cdp.evaluate(overlayShown)),
+    "The session search overlay is on screen before anybody asked for it.",
   );
 
   // 1. Newest first. The seed wrote them in a fourth order again, so insertion
@@ -181,6 +198,10 @@ try {
     cdp,
     "!document.querySelector('#sessionBrowser').hidden",
     "The search button did not open the session browser.",
+  );
+  assert(
+    await cdp.evaluate(overlayShown),
+    "The search button set the attribute but drew nothing.",
   );
   let view = await cdp.evaluate(browserRows);
   assert(
@@ -254,6 +275,10 @@ try {
     cdp,
     "document.querySelector('#sessionBrowser').hidden",
     "Escape did not close the session browser.",
+  );
+  assert(
+    !(await cdp.evaluate(overlayShown)),
+    "Escape set the attribute but left the overlay over the workspace.",
   );
 
   console.log(
