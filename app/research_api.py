@@ -25,7 +25,7 @@ from app.evidence_tasks import enqueue_evidence_step
 from coscientist.agents import A2AProvider, DeterministicProvider
 from coscientist.dossier import render_docx, render_pdf
 from coscientist.evidence import EvidenceStillRunning
-from coscientist.governance import governance_blockers
+from coscientist.governance import blockers_for_draft, governance_blockers
 from coscientist.ledger import (
     ConcurrentSessionUpdate,
     PostgresResearchLedger,
@@ -286,8 +286,21 @@ def _governance_blockers(workflow: CoScientistWorkflow) -> list[dict]:
     answered and every part-typed reason in the others lost. Once the last
     finding is answered the block is over and the list empties, so a cleared
     gate does not carry its history into the next stage's card.
+
+    Scoped to the draft on the table, exactly as the gate that stops on them is.
+    Reading every finding in the session instead put the findings of a
+    superseded review set on a later stage's card: a live run reached the
+    tournament carrying eight of them, and over the ranking gate the card said
+    "8 safety findings unanswered", disabled accept, and then refused every
+    override pressed on them because the session was not blocked.
     """
-    findings = governance_blockers(workflow.session)
+    findings = blockers_for_draft(workflow.session, workflow.pending_draft)
+    if not findings and workflow.session.status == "governance_blocked":
+        # A session that says it is blocked has to be answerable from the card
+        # it is showing, whatever the draft on the table turns out to list. The
+        # scoping above is what stops a stale finding from blocking a gate;
+        # this is what stops it from leaving a real block with nothing to press.
+        findings = governance_blockers(workflow.session)
     answered = {
         item.review_id: item for item in workflow.session.governance_adjudications
     }

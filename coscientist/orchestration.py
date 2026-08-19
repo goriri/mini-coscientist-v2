@@ -53,6 +53,7 @@ from .evidence import (
 from .governance import (
     REHEARSAL_ADJUDICATOR,
     adjudicated_review_ids,
+    blockers_for_draft,
     open_blockers,
     record_adjudication,
     rehearsal_adjudications,
@@ -2387,10 +2388,11 @@ class CoScientistWorkflow:
             # Only findings nobody has answered still block. An adjudicated one
             # has been withdrawn or explicitly accepted by a named person, and
             # re-raising it would make the gate impossible to clear.
+            answered = adjudicated_review_ids(self.session)
             unanswered = [
                 blocker
-                for blocker in open_blockers(self.session)
-                if blocker.artifact_id in artifact.input_artifact_ids
+                for blocker in blockers_for_draft(self.session, artifact)
+                if blocker.review_id not in answered
             ]
             if unanswered and self.session.rehearsal:
                 # A rehearsal answers its own gate rather than parking here for

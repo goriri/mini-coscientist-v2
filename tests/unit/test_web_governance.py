@@ -23,7 +23,11 @@ from app.research_api import (
     decide_research_session,
     get_research_session,
 )
-from coscientist.governance import latest_population, withdrawn_candidate_ids
+from coscientist.governance import (
+    governance_blockers,
+    latest_population,
+    withdrawn_candidate_ids,
+)
 from coscientist.ledger import ResearchLedger
 from coscientist.models import (
     ApprovalProfile,
@@ -35,7 +39,7 @@ from coscientist.models import (
     ReviewSet,
     Session,
 )
-from coscientist.orchestration import CoScientistWorkflow
+from coscientist.orchestration import WORKFLOW_STAGES, CoScientistWorkflow
 
 QUESTION = "Can a protective coating extend battery cycle life?"
 FLAW = (
@@ -378,6 +382,136 @@ def test_a_withdrawn_finding_keeps_its_title_after_the_population_is_rewritten(
     assert settled["candidate_id"] == "cand_2"
     assert settled["candidate_title"] == "Anneal the assembled electrode at 400 C"
     assert settled["resolution"]["action"] == "withdraw"
+
+
+@pytest.fixture()
+def past_the_block(tmp_path, monkeypatch) -> str:
+    """A run at the tournament, carrying a finding from a review set it replaced.
+
+    Which is what a reflect revision leaves behind. The re-review is a new
+    ReviewSet, and whatever was never answered in the one it superseded stays in
+    the session for the rest of the run.
+    """
+    store = ResearchLedger(tmp_path / "research.db")
+    monkeypatch.setattr(research_api, "_ledger", lambda: store)
+    monkeypatch.setattr(research_api, "evidence_tasks_configured", lambda: False)
+
+    session = Session(question=QUESTION)
+    session.current_stage = WORKFLOW_STAGES.index("rank")
+    population = Artifact(
+        stage="generate",
+        agent="generation",
+        content="",
+        schema_name="CandidatePopulation",
+        payload=CandidatePopulation(
+            candidates=[
+                _candidate("cand_1", "A conformal alumina coating passivates"),
+                _candidate("cand_2", "Anneal the assembled electrode at 400 C"),
+            ],
+            target_size=2,
+        ).model_dump(mode="json"),
+        status=ArtifactStatus.ACCEPTED,
+    )
+    superseded = Artifact(
+        stage="reflect",
+        agent="ethics_safety_governance",
+        artifact_type="specialist_output",
+        content="",
+        schema_name="ReviewSet",
+        payload=ReviewSet(
+            reviews=[
+                CandidateReview(
+                    id="rev_1",
+                    candidate_id="cand_2",
+                    criterion="safety_governance",
+                    reviewer="ethics_safety_governance",
+                    recommendation="reject",
+                    fatal_flaws=[FLAW],
+                )
+            ]
+        ).model_dump(mode="json"),
+        status=ArtifactStatus.SUPERSEDED,
+    )
+    rereview = Artifact(
+        stage="reflect",
+        agent="ethics_safety_governance",
+        artifact_type="specialist_output",
+        content="",
+        schema_name="ReviewSet",
+        payload=ReviewSet(
+            reviews=[
+                CandidateReview(
+                    id="rev_2",
+                    candidate_id="cand_2",
+                    criterion="safety_governance",
+                    reviewer="ethics_safety_governance",
+                    recommendation="revise",
+                    objections=["Specify the fume extraction."],
+                )
+            ]
+        ).model_dump(mode="json"),
+        status=ArtifactStatus.ACCEPTED,
+    )
+    session.artifacts = [
+        population,
+        superseded,
+        rereview,
+        Artifact(
+            stage="reflect",
+            agent="supervisor",
+            content="The reviews, second time round.",
+            input_artifact_ids=[rereview.id],
+            status=ArtifactStatus.ACCEPTED,
+        ),
+        Artifact(
+            stage="rank",
+            agent="ranking",
+            content="The tournament, waiting for a decision.",
+            input_artifact_ids=[population.id],
+            status=ArtifactStatus.DRAFT,
+        ),
+    ]
+    store.save(session)
+    return session.id
+
+
+def test_a_finding_from_a_superseded_review_does_not_block_a_later_gate(
+    past_the_block,
+):
+    """The card has to be scoped exactly as the gate that stops on it is.
+
+    ``accept`` stops on the findings the draft in front of it lists as inputs.
+    The card read every fatal finding in the session instead, so a live run
+    reached the tournament with eight findings from replaced review sets behind
+    it and the ranking gate said "8 safety findings unanswered", greyed out
+    Accept for a stage that had nothing to do with them, and then refused every
+    override pressed on them -- adjudication applies only to a blocked session,
+    and this session was not blocked. On the human profile that is a run with no
+    way forward anywhere on screen.
+    """
+    snapshot = get_research_session(past_the_block, BackgroundTasks())
+    assert snapshot["stage"] == "rank"
+    assert snapshot["status"] == "active"
+    assert snapshot["governance_blockers"] == []
+
+    # The finding is still in the record; it is only the gate that has moved on.
+    workflow = CoScientistWorkflow.load_from_ledger(
+        past_the_block, research_api._ledger()
+    )
+    assert [item.review_id for item in governance_blockers(workflow.session)] == [
+        "rev_1"
+    ]
+
+    # And nothing the card could have offered for it would have worked.
+    with pytest.raises(HTTPException) as raised:
+        _decide(
+            past_the_block,
+            action="override_governance",
+            review_id="rev_1",
+            feedback=REASON,
+            actor=NAME,
+        )
+    assert "blocked session" in raised.value.detail
 
 
 def test_a_stale_review_id_is_reported_rather_than_silently_ignored(blocked):

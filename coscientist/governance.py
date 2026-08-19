@@ -118,6 +118,32 @@ def rehearsal_adjudications(
     ]
 
 
+def blockers_for_draft(
+    session: Session, draft: Artifact | None
+) -> list[GovernanceBlocker]:
+    """The fatal findings a given stage draft is the gate for.
+
+    The reflect gate stops on the findings that came out of the review set it is
+    admitting, which is ``blocker.artifact_id in draft.input_artifact_ids`` --
+    a finding belonging to some other review set is not what this gate is
+    asking about. Every reader of the gate has to scope it the same way, and
+    the web card did not: it drew every fatal finding in the session.
+
+    A reflect revision is enough to make the two disagree. The re-review is a
+    new review set, and any finding left unanswered in the one it replaced
+    stays in the session forever. A live run reached the tournament with eight
+    of those behind it and the card said "8 safety findings unanswered" over
+    the ranking gate, greyed out the accept button for a stage that had nothing
+    to do with them, and refused every override pressed on them -- adjudication
+    applies only to a blocked session, and the session was not blocked. Under
+    the human profile that is a run with no way forward on screen at all.
+    """
+    if draft is None:
+        return []
+    inputs = set(draft.input_artifact_ids)
+    return [item for item in governance_blockers(session) if item.artifact_id in inputs]
+
+
 def adjudicated_review_ids(session: Session) -> set[str]:
     return {item.review_id for item in session.governance_adjudications}
 
