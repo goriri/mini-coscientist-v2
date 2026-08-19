@@ -154,6 +154,12 @@ const elements = {
   historyButton: document.querySelector("#historyButton"),
   operatorKey: document.querySelector("#operatorKey"),
   closeHistory: document.querySelector("#closeHistory"),
+  searchSessionsButton: document.querySelector("#searchSessionsButton"),
+  sessionBrowser: document.querySelector("#sessionBrowser"),
+  sessionBrowserList: document.querySelector("#sessionBrowserList"),
+  sessionBrowserCount: document.querySelector("#sessionBrowserCount"),
+  sessionSearch: document.querySelector("#sessionSearch"),
+  closeSessionBrowser: document.querySelector("#closeSessionBrowser"),
   notifySection: document.querySelector("#notifySection"),
   notifyEnabled: document.querySelector("#notifyEnabled"),
   notifyDetail: document.querySelector("#notifyDetail"),
@@ -224,7 +230,10 @@ function formatPlainText(value) {
           // the clusters. Run through the paragraph branch they arrived as one
           // block of dashes separated by line breaks.
           const lines = block.split("\n");
-          if (lines.length > 1 && lines.every((line) => /^\s*[-*]\s+/.test(line))) {
+          if (
+            lines.length > 1 &&
+            lines.every((line) => /^\s*[-*]\s+/.test(line))
+          ) {
             const items = lines
               .map(
                 (line) =>
@@ -777,7 +786,9 @@ const HISTORY_STATES = {
 function historyState(item) {
   if (item.stage === "report") return "Report ready";
   const waiting = HISTORY_STATES[item.status];
-  return waiting ? `${stageLabel(item.stage)} · ${waiting}` : stageLabel(item.stage);
+  return waiting
+    ? `${stageLabel(item.stage)} · ${waiting}`
+    : stageLabel(item.stage);
 }
 
 function relativeTime(value) {
@@ -802,7 +813,7 @@ function saveSessionHistory() {
   );
 }
 
-function upsertRecentSession(workflow, touch = false) {
+function upsertRecentSession(workflow) {
   const existing = state.recentSessions.find((item) => item.id === workflow.id);
   const entry = {
     id: workflow.id,
@@ -816,21 +827,16 @@ function upsertRecentSession(workflow, touch = false) {
       workflow.created_at || existing?.createdAt || new Date().toISOString(),
     updatedAt:
       workflow.updated_at || existing?.updatedAt || new Date().toISOString(),
-    lastOpenedAt: touch
-      ? new Date().toISOString()
-      : existing?.lastOpenedAt ||
-        workflow.updated_at ||
-        new Date().toISOString(),
     unavailable: false,
     deleteToken: workflow.deletion_token || existing?.deleteToken || null,
   };
+  // Held in the order the panel shows them, because this is also the list the
+  // oldest entries fall off the end of once it is longer than the cap: dropping
+  // by any other order would evict a run that is still on the page.
   state.recentSessions = [
     entry,
     ...state.recentSessions.filter((item) => item.id !== workflow.id),
-  ].sort(
-    (left, right) =>
-      Date.parse(right.lastOpenedAt) - Date.parse(left.lastOpenedAt),
-  );
+  ].sort((left, right) => historyRank(right) - historyRank(left));
   saveSessionHistory();
   renderSessionHistory();
 }
@@ -873,7 +879,9 @@ function operatorKey() {
 function renderOperatorKey() {
   const held = Boolean(operatorKey());
   elements.operatorKey.classList.toggle("held", held);
-  elements.operatorKey.textContent = held ? "Operator key held" : "Operator key";
+  elements.operatorKey.textContent = held
+    ? "Operator key held"
+    : "Operator key";
   elements.operatorKey.title = held
     ? "Every run on this server can be deleted from here. Click to give the key up."
     : "Hold the operator key for this deployment to delete runs this browser did not start";
@@ -966,7 +974,6 @@ function mergedSessions() {
       stage: entry.stage,
       createdAt: entry.created_at,
       updatedAt: entry.updated_at,
-      lastOpenedAt: mine?.lastOpenedAt || entry.updated_at,
       unavailable: false,
       // A run this browser did not start is one it cannot delete: the
       // credential was handed out once, to whoever created it.
@@ -986,13 +993,15 @@ function mergedSessions() {
   return merged.sort((left, right) => historyRank(right) - historyRank(left));
 }
 
-// Most recently opened or updated, which are two different claims on the top of
-// the list: a run somebody else's browser is driving moves when it changes
-// stage, and a finished run this browser just opened has not moved for hours.
+// When the research last moved, and nothing else. Reading a run used to count
+// as the run moving -- opening one from the list rewrote its rank and it jumped
+// to the top, so the list reordered itself under the hand that was using it and
+// the run you had just left was no longer where you left it. A finished run
+// from last week is a finished run from last week however many times it has
+// been opened since.
 function historyRank(item) {
-  return Math.max(
-    Date.parse(item.updatedAt || "") || 0,
-    Date.parse(item.lastOpenedAt || "") || 0,
+  return (
+    Date.parse(item.updatedAt || "") || Date.parse(item.createdAt || "") || 0
   );
 }
 
@@ -1079,6 +1088,113 @@ function renderSessionHistory() {
         </article>`,
     )
     .join("");
+  // The same list is on screen twice while the browser is open, and both are
+  // views of one directory poll. Rendered together so a stage that finishes
+  // behind an open search does not leave the search reading yesterday's state.
+  renderSessionBrowser();
+}
+
+// ---------------------------------------------------------------------------
+// Every session, searchable
+// ---------------------------------------------------------------------------
+
+// A run is looked for by whatever the person remembers about it, which is
+// mostly the question it was started from -- not its name, which is derived
+// from that question and truncated, and never its identifier. Everything shown
+// on the row is searched, plus the question behind the name and the day it was
+// started, so what matched is always visible in the result.
+function sessionHaystack(item) {
+  return [
+    historyTitle(item),
+    item.query || "",
+    historyState(item),
+    item.status || "",
+    item.stage || "",
+    item.id,
+    absoluteDay(item.updatedAt),
+    absoluteDay(item.createdAt),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+// Every word, in any order and any field: "battery coating" finds the coating
+// run about batteries whichever way round the two words were typed, and a
+// single-string match would have found it only one way round.
+function matchesSearch(item, query) {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const haystack = sessionHaystack(item);
+  return terms.every((term) => haystack.includes(term));
+}
+
+function absoluteDay(value) {
+  const timestamp = Date.parse(value || "");
+  if (!Number.isFinite(timestamp)) return "";
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(timestamp));
+}
+
+function renderSessionBrowser() {
+  if (!elements.sessionBrowser || elements.sessionBrowser.hidden) return;
+  const all = mergedSessions();
+  const query = elements.sessionSearch.value.trim();
+  const matches = all.filter((item) => matchesSearch(item, query));
+  elements.sessionBrowserCount.textContent = query
+    ? `${matches.length} of ${all.length} ${all.length === 1 ? "session" : "sessions"} match “${query}”`
+    : `${all.length} ${all.length === 1 ? "session" : "sessions"}, newest first`;
+  if (!matches.length) {
+    elements.sessionBrowserList.innerHTML = `
+      <div class="history-empty">
+        <span>∅</span>
+        <strong>${all.length ? "Nothing matches that" : "No research on this server yet"}</strong>
+        <p>${
+          all.length
+            ? "Search the session name, the question it was started from, the stage it is in or the day it began."
+            : "Every inquiry run here appears in this list, whoever started it."
+        }</p>
+      </div>`;
+    return;
+  }
+  elements.sessionBrowserList.innerHTML = matches
+    .map(
+      (item) => `
+        <article class="session-browser-item ${item.id === state.workflowId ? "current" : ""} ${
+          item.unavailable ? "unavailable" : ""
+        }" data-session-id="${escapeHtml(item.id)}">
+          <button class="session-browser-open" type="button" ${
+            item.unavailable ? "disabled" : ""
+          }>
+            <strong>${escapeHtml(historyTitle(item))}</strong>
+            <p>${escapeHtml(item.query || "")}</p>
+            <span>${
+              item.unavailable
+                ? "Unavailable on this instance"
+                : `${escapeHtml(historyState(item))} · ${escapeHtml(absoluteDay(item.updatedAt))} · ${escapeHtml(relativeTime(item.updatedAt))}`
+            }</span>
+          </button>
+        </article>`,
+    )
+    .join("");
+}
+
+function openSessionBrowser() {
+  elements.sessionBrowser.hidden = false;
+  document.body.classList.add("browser-open");
+  // Opening it is the one moment the list is definitely being read, and the
+  // panel beside it refreshes on the same evidence.
+  refreshSessionDirectory();
+  renderSessionBrowser();
+  elements.sessionSearch.focus();
+  elements.sessionSearch.select();
+}
+
+function closeSessionBrowser() {
+  elements.sessionBrowser.hidden = true;
+  document.body.classList.remove("browser-open");
 }
 
 function updateSessionIdentity(workflow) {
@@ -1597,7 +1713,9 @@ function gateBlockReasons(workflow, requirements, openFindings) {
   if (openFindings.length)
     reasons.push(`${plural(openFindings.length, "safety finding")} unanswered`);
   if (requirements.length)
-    reasons.push(`${plural(requirements.length, "input reference")} still needed`);
+    reasons.push(
+      `${plural(requirements.length, "input reference")} still needed`,
+    );
   if (workflow.pending_artifacts.length)
     reasons.push(
       `${plural(workflow.pending_artifacts.length, "specialist output")} still to approve`,
@@ -2115,14 +2233,14 @@ async function viewStagePreview(stage) {
   }
 }
 
-function renderWorkflow(workflow, pending = null, touchHistory = false) {
+function renderWorkflow(workflow, pending = null) {
   state.workflow = workflow;
   state.workflowId = workflow.id;
   state.sessionId = workflow.id;
   syncComposerVisibility();
   updateSessionIdentity(workflow);
   updateStageNavigation(workflow);
-  upsertRecentSession(workflow, touchHistory);
+  upsertRecentSession(workflow);
   localStorage.setItem(CURRENT_WORKFLOW_KEY, workflow.id);
   const operationActive = ["queued", "running"].includes(
     workflow.operation?.status,
@@ -2210,7 +2328,7 @@ async function createGuidedWorkflow(prompt, pending) {
       seed_evidence_from: elements.seedEvidenceFrom.value.trim(),
     }),
   });
-  renderWorkflow(workflow, pending, true);
+  renderWorkflow(workflow, pending);
 }
 
 function selectMode(mode) {
@@ -2320,7 +2438,7 @@ async function openResearchSession(sessionId, { restore = false } = {}) {
     const workflow = await researchApi(
       `/sessions/${encodeURIComponent(sessionId)}`,
     );
-    renderWorkflow(workflow, null, true);
+    renderWorkflow(workflow);
     document.body.classList.remove("history-open");
     if (!restore) toast("Research session restored");
   } catch (error) {
@@ -2430,7 +2548,9 @@ async function handleDecisionClick(event) {
     // before it is posted.
     const source = button.closest(".governance-finding");
     const name = source.querySelector(".governance-adjudicator").value.trim();
-    const reason = source.querySelector(".governance-justification").value.trim();
+    const reason = source
+      .querySelector(".governance-justification")
+      .value.trim();
     if (!reason) {
       toast("Write the reason here first, then copy it");
       source.querySelector(".governance-justification").focus();
@@ -2445,7 +2565,9 @@ async function handleDecisionClick(event) {
         if (name) finding.querySelector(".governance-adjudicator").value = name;
         copied += 1;
       });
-    toast(`Copied into ${copied} finding${copied === 1 ? "" : "s"} — edit before posting`);
+    toast(
+      `Copied into ${copied} finding${copied === 1 ? "" : "s"} — edit before posting`,
+    );
     return;
   }
   const payload = { action };
@@ -2737,6 +2859,26 @@ elements.historyButton.addEventListener("click", () => {
 });
 elements.closeHistory.addEventListener("click", () => {
   document.body.classList.remove("history-open");
+});
+elements.searchSessionsButton.addEventListener("click", openSessionBrowser);
+elements.closeSessionBrowser.addEventListener("click", closeSessionBrowser);
+elements.sessionSearch.addEventListener("input", renderSessionBrowser);
+elements.sessionBrowser.addEventListener("click", (event) => {
+  // Outside the panel is a click on the page behind it, which is what the
+  // dimmed backdrop is saying it will take.
+  if (event.target === elements.sessionBrowser) {
+    closeSessionBrowser();
+    return;
+  }
+  const item = event.target.closest(".session-browser-item");
+  if (!item || !event.target.closest(".session-browser-open")) return;
+  closeSessionBrowser();
+  openResearchSession(item.dataset.sessionId);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !elements.sessionBrowser.hidden) {
+    closeSessionBrowser();
+  }
 });
 elements.notifyEnabled.addEventListener("change", () => {
   state.notifyStageAlerts = elements.notifyEnabled.checked;
