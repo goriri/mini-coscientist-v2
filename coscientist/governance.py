@@ -18,6 +18,7 @@ answer.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -148,11 +149,89 @@ def adjudicated_review_ids(session: Session) -> set[str]:
     return {item.review_id for item in session.governance_adjudications}
 
 
+_FLAW_STOPWORDS = frozenset(
+    """this that these those with without from into onto over under
+    which where when what have been being will would could should must
+    them they their there here than then also more most some such very
+    lacks lack lacking fails fail failed missing absence absent does
+    require requires required need needs needed provide provides state
+    states stated specify specifies specified explicit explicitly
+    proposed proposal propose candidate hypothesis study review finding""".split()
+)
+"""Grammar and reviewer's phrasing, so a paraphrase is not read as a new hazard."""
+
+
+def _flaw_topic(text: str) -> set[str]:
+    """What a fatal flaw is about, with the wording taken off.
+
+    Its own rather than the report's: ``narrative`` has a more careful version of
+    this and imports from here, so taking that one would close the loop. What is
+    matched here is a hazard rather than an objection, and the two want different
+    stopwords anyway.
+    """
+    words = set()
+    for token in re.findall(r"[a-z]+", text.lower()):
+        if len(token) < 4 or token in _FLAW_STOPWORDS:
+            continue
+        for suffix in ("ations", "ation", "ments", "ment", "ings", "ing", "es", "s"):
+            if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+                token = token[: -len(suffix)]
+                break
+        words.add(token)
+    return words
+
+
+def _same_flaw(one: str, other: str) -> bool:
+    """Whether two fatal flaws are the same hazard written twice.
+
+    Two content words in common is the floor, and the shorter of the two has to
+    be half covered, so "vents hydrogen fluoride above the binder's decomposition
+    point" is not merged with "no statistical power calculation" over a word they
+    happen to share.
+    """
+    first, second = _flaw_topic(one), _flaw_topic(other)
+    if not first or not second:
+        return False
+    overlap = len(first & second)
+    return overlap >= 2 and overlap / min(len(first), len(second)) >= 0.5
+
+
+def is_answered(session: Session, blocker: GovernanceBlocker) -> bool:
+    """Whether a named person has already signed for this hazard.
+
+    By review id, and failing that by the hazard itself. A reflect revision
+    re-reviews the same population and the reviewer writes its findings fresh, so
+    the same flaw on the same hypothesis comes back under a new id -- one live run
+    raised ``rev_cand_analogy_sam_ald_safety``, took an override for it, re-ran
+    reflect, and blocked again on ``rev_safety_cand_analogy_sam_ald``: the same
+    sentence about the same candidate, permuted. Nothing about answering it moved
+    the run forward, and it would have gone round for as long as somebody kept
+    pressing override.
+
+    Every flaw in the finding has to be covered, not just one. A re-review that
+    turns up a hazard nobody signed for is a new finding and blocks again, which
+    is the half of this that keeps the gate a gate.
+    """
+    if blocker.review_id in adjudicated_review_ids(session):
+        return True
+    signed = [
+        flaw
+        for item in session.governance_adjudications
+        if item.candidate_id == blocker.candidate_id
+        for flaw in item.fatal_flaws
+    ]
+    if not signed:
+        return False
+    return all(
+        any(_same_flaw(flaw, prior) for prior in signed)
+        for flaw in blocker.review.fatal_flaws
+    )
+
+
 def open_blockers(session: Session) -> list[GovernanceBlocker]:
     """Fatal findings nobody has answered yet."""
-    answered = adjudicated_review_ids(session)
     return [
-        item for item in governance_blockers(session) if item.review_id not in answered
+        item for item in governance_blockers(session) if not is_answered(session, item)
     ]
 
 

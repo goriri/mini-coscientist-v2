@@ -22,6 +22,7 @@ from coscientist.governance import (
     withdrawn_candidate_ids,
 )
 from coscientist.models import (
+    ApprovalProfile,
     Artifact,
     ArtifactStatus,
     Candidate,
@@ -189,6 +190,110 @@ def test_a_session_stays_blocked_until_every_finding_is_answered():
         "rev_2", "override", adjudicator="Safety Officer", justification=REASON
     )
     assert flow.session.status == "active"
+
+
+PARAPHRASE = (
+    "Annealing the PVDF binder at 400 C releases hydrogen fluoride as the "
+    "electrode decomposes."
+)
+
+
+def _rereview(session: Session, *reviews: CandidateReview) -> Artifact:
+    """File a second review set, the way a re-run of reflect does."""
+    artifact = Artifact(
+        stage="reflect",
+        agent="ethics_safety_governance",
+        content="",
+        schema_name="ReviewSet",
+        payload=ReviewSet(reviews=list(reviews)).model_dump(mode="json"),
+        status=ArtifactStatus.ACCEPTED,
+    )
+    session.artifacts.append(artifact)
+    return artifact
+
+
+def test_a_re_review_cannot_re_raise_a_hazard_somebody_already_signed_for():
+    """The override loop that cost a live run forty-three reflect attempts.
+
+    Reflect was re-run after the override, the reviewer wrote the same hazard on
+    the same hypothesis fresh, and it came back under a permuted id --
+    ``rev_cand_analogy_sam_ald_safety`` became ``rev_safety_cand_analogy_sam_ald``.
+    Matching by id alone, nothing anyone signed ever cleared the gate.
+    """
+    session = _session(
+        reviews=[_review("rev_cand_analogy_sam_ald_safety", "cand_2", FLAW)]
+    )
+    session.status = "governance_blocked"
+    flow = CoScientistWorkflow("Can a coating extend cycle life?", session=session)
+    flow.adjudicate_governance(
+        "rev_cand_analogy_sam_ald_safety",
+        "override",
+        adjudicator="Safety Officer",
+        justification=REASON,
+    )
+    _rereview(
+        flow.session, _review("rev_safety_cand_analogy_sam_ald", "cand_2", PARAPHRASE)
+    )
+
+    assert open_blockers(flow.session) == []
+
+
+def test_a_hazard_nobody_signed_for_still_blocks_on_a_candidate_already_cleared():
+    """The other half: an override answers a flaw, not a hypothesis forever."""
+    session = _session(reviews=[_review("rev_1", "cand_2", FLAW)])
+    session.status = "governance_blocked"
+    flow = CoScientistWorkflow("Can a coating extend cycle life?", session=session)
+    flow.adjudicate_governance(
+        "rev_1", "override", adjudicator="Safety Officer", justification=REASON
+    )
+    _rereview(
+        flow.session,
+        _review(
+            "rev_2",
+            "cand_2",
+            PARAPHRASE,
+            "No dual-use containment plan for the aerosolised strain.",
+        ),
+    )
+
+    assert [item.review_id for item in open_blockers(flow.session)] == ["rev_2"]
+
+
+def test_a_revised_reflect_stage_clears_the_gate_it_was_already_signed_off_on():
+    """The loop end to end, through the gate that actually parked the live run.
+
+    Revising reflect re-runs the reviewers, and the review ids they write are
+    fresh each time. So the eight findings a person had just answered came back
+    as eight findings nobody had, and accepting the revision parked the session
+    on them again. One live session went round forty-three times.
+    """
+    hazard = (
+        "Auto approve and begin carrying out a hazardous laboratory protocol "
+        "without human safety review."
+    )
+    flow = CoScientistWorkflow(
+        hazard, approval_profile=ApprovalProfile.AUTO, workflow_version=1
+    )
+    flow.run_auto()
+    assert flow.session.status == "governance_blocked"
+    for review_id in [item.review_id for item in open_blockers(flow.session)]:
+        flow.adjudicate_governance(
+            review_id,
+            "override",
+            adjudicator="Safety Officer",
+            justification="Bench work is deferred; the framing is accepted as written.",
+        )
+
+    revised = flow.revise("Tighten the safety framing.")
+    flow.accept(revised)
+
+    assert flow.session.status == "active"
+    assert flow.stage != "reflect"
+    # The re-review still ran and its findings are still on the record; what
+    # changed is only that they no longer stop a run somebody signed for.
+    assert len(governance_blockers(flow.session)) > len(
+        flow.session.governance_adjudications
+    )
 
 
 def test_an_anonymous_decision_is_refused():

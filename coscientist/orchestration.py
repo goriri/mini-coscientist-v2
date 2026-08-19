@@ -54,6 +54,7 @@ from .governance import (
     REHEARSAL_ADJUDICATOR,
     adjudicated_review_ids,
     blockers_for_draft,
+    is_answered,
     open_blockers,
     record_adjudication,
     rehearsal_adjudications,
@@ -2387,12 +2388,13 @@ class CoScientistWorkflow:
         if artifact.stage == "reflect":
             # Only findings nobody has answered still block. An adjudicated one
             # has been withdrawn or explicitly accepted by a named person, and
-            # re-raising it would make the gate impossible to clear.
-            answered = adjudicated_review_ids(self.session)
+            # re-raising it would make the gate impossible to clear -- which is
+            # what a re-review does when it writes the same hazard down under a
+            # new id, so ``is_answered`` reads the hazard and not only the id.
             unanswered = [
                 blocker
                 for blocker in blockers_for_draft(self.session, artifact)
-                if blocker.review_id not in answered
+                if not is_answered(self.session, blocker)
             ]
             if unanswered and self.session.rehearsal:
                 # A rehearsal answers its own gate rather than parking here for
