@@ -26,6 +26,39 @@ class ConcurrentSessionUpdate(RuntimeError):
     """Raised when a stale process attempts to overwrite a newer session."""
 
 
+LISTING_COLUMNS = {
+    "question": "TEXT",
+    "status": "TEXT",
+    "current_stage": "INTEGER",
+    "workflow_version": "INTEGER",
+    "created_at": "TEXT",
+}
+"""The five scalars the history list shows, kept beside the payload.
+
+They are in the payload too, and reading them back out of it is what the
+listing used to do -- ``payload ->> 'question'`` and four more like it. Each of
+those detoasts and decompresses the whole stored session, a megabyte once a run
+carries a corpus, and six expressions over a hundred runs is six hundred
+megabytes of decompression for a list of six short strings each. On a
+shared-core database that is not slow, it is unavailable: the listing took
+longer than the thirty-second pool timeout, every poll of it occupied one of
+three connections for that whole time, and the deployment answered 500 to
+everything -- reports, gates, the lot -- while a single-session read on the
+same pool was still returning in milliseconds.
+"""
+
+
+def _listing_values(session: Session) -> tuple[Any, ...]:
+    """What a save writes into those columns, in ``LISTING_COLUMNS`` order."""
+    return (
+        session.question,
+        session.status,
+        session.current_stage,
+        session.workflow_version,
+        session.created_at,
+    )
+
+
 def _session_row(row: Any) -> dict[str, Any]:
     """One listing entry, from the columns both backends select in that order.
 
@@ -107,6 +140,26 @@ class ResearchLedger:
                 connection.execute(
                     "ALTER TABLE sessions ADD COLUMN delete_token_hash TEXT"
                 )
+            for column, sql_type in LISTING_COLUMNS.items():
+                if column not in columns:
+                    connection.execute(
+                        f"ALTER TABLE sessions ADD COLUMN {column} {sql_type}"
+                    )
+            connection.execute(
+                """
+                UPDATE sessions SET
+                    question = json_extract(payload, '$.question'),
+                    status = json_extract(payload, '$.status'),
+                    current_stage = json_extract(payload, '$.current_stage'),
+                    workflow_version = json_extract(payload, '$.workflow_version'),
+                    created_at = json_extract(payload, '$.created_at')
+                WHERE question IS NULL
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS sessions_updated_at "
+                "ON sessions(updated_at DESC)"
+            )
 
     def save(
         self,
@@ -133,19 +186,34 @@ class ResearchLedger:
                             f"Session {session.id} does not exist at version {prior_version}."
                         )
                     connection.execute(
-                        "INSERT INTO sessions(id, version, payload, updated_at) VALUES (?, ?, ?, ?)",
-                        (session.id, next_version, payload, session.updated_at),
+                        """
+                        INSERT INTO sessions(
+                            id, version, payload, updated_at,
+                            question, status, current_stage, workflow_version,
+                            created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            session.id,
+                            next_version,
+                            payload,
+                            session.updated_at,
+                            *_listing_values(session),
+                        ),
                     )
                 else:
                     cursor = connection.execute(
                         """
-                        UPDATE sessions SET version = ?, payload = ?, updated_at = ?
+                        UPDATE sessions SET version = ?, payload = ?, updated_at = ?,
+                            question = ?, status = ?, current_stage = ?,
+                            workflow_version = ?, created_at = ?
                         WHERE id = ? AND version = ?
                         """,
                         (
                             next_version,
                             payload,
                             session.updated_at,
+                            *_listing_values(session),
                             session.id,
                             prior_version,
                         ),
@@ -202,20 +270,17 @@ class ResearchLedger:
         and a researcher who opened the site in a second browser lost every run
         they had started in the first.
 
-        The fields come out in SQL rather than through ``load``: a stored
-        session runs to about a megabyte once it carries a corpus, and this
-        list wants six scalars from each of fifty of them.
+        The fields come out of their own columns rather than through ``load``
+        or out of the payload: a stored session runs to about a megabyte once
+        it carries a corpus, and this list wants six scalars from each of fifty
+        of them. See ``LISTING_COLUMNS`` for what reading them back out of the
+        payload cost the deployment.
         """
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id,
-                       json_extract(payload, '$.question'),
-                       json_extract(payload, '$.status'),
-                       json_extract(payload, '$.current_stage'),
-                       json_extract(payload, '$.workflow_version'),
-                       json_extract(payload, '$.created_at'),
-                       updated_at
+                SELECT id, question, status, current_stage, workflow_version,
+                       created_at, updated_at
                 FROM sessions ORDER BY updated_at DESC LIMIT ?
                 """,
                 (max(1, limit),),
@@ -564,6 +629,54 @@ class PostgresResearchLedger:
                 )
                 """
             )
+            cursor.execute(
+                """
+                ALTER TABLE research_sessions
+                    ADD COLUMN IF NOT EXISTS question TEXT,
+                    ADD COLUMN IF NOT EXISTS status TEXT,
+                    ADD COLUMN IF NOT EXISTS current_stage INTEGER,
+                    ADD COLUMN IF NOT EXISTS workflow_version INTEGER,
+                    ADD COLUMN IF NOT EXISTS created_at TEXT
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS research_sessions_updated_at
+                ON research_sessions(updated_at DESC)
+                """
+            )
+        self._backfill_listing_columns()
+
+    def _backfill_listing_columns(self) -> None:
+        """Fill the listing columns of runs that were stored before they existed.
+
+        In batches, newest first, each its own transaction. The whole table in
+        one statement is the same detoasting the listing is being rescued from,
+        and a container that is shut down in the middle of it -- Cloud Run will
+        do that -- would roll the lot back and start again from nothing on the
+        next boot, forever. Batched, every finished batch stays finished, and
+        the runs a reader is most likely to be looking for are done first.
+        """
+        for _ in range(400):
+            with self._connect() as connection, connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE research_sessions SET
+                        question = payload ->> 'question',
+                        status = payload ->> 'status',
+                        current_stage = (payload ->> 'current_stage')::INTEGER,
+                        workflow_version = (payload ->> 'workflow_version')::INTEGER,
+                        created_at = payload ->> 'created_at'
+                    WHERE id IN (
+                        SELECT id FROM research_sessions
+                        WHERE question IS NULL
+                        ORDER BY updated_at DESC
+                        LIMIT 20
+                    )
+                    """
+                )
+                if cursor.rowcount < 1:
+                    return
 
     def save(
         self,
@@ -594,24 +707,35 @@ class PostgresResearchLedger:
                     cursor.execute(
                         """
                         INSERT INTO research_sessions(
-                            id, version, payload, updated_at
+                            id, version, payload, updated_at,
+                            question, status, current_stage, workflow_version,
+                            created_at
                         )
-                        VALUES (%s, %s, %s::jsonb, %s)
+                        VALUES (%s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s)
                         """,
-                        (session.id, next_version, payload, session.updated_at),
+                        (
+                            session.id,
+                            next_version,
+                            payload,
+                            session.updated_at,
+                            *_listing_values(session),
+                        ),
                     )
                 else:
                     cursor.execute(
                         """
                         UPDATE research_sessions
                         SET version = %s, payload = %s::jsonb,
-                            updated_at = %s
+                            updated_at = %s, question = %s, status = %s,
+                            current_stage = %s, workflow_version = %s,
+                            created_at = %s
                         WHERE id = %s AND version = %s
                         """,
                         (
                             next_version,
                             payload,
                             session.updated_at,
+                            *_listing_values(session),
                             session.id,
                             prior_version,
                         ),
@@ -667,13 +791,8 @@ class PostgresResearchLedger:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id,
-                       payload ->> 'question',
-                       payload ->> 'status',
-                       payload ->> 'current_stage',
-                       payload ->> 'workflow_version',
-                       payload ->> 'created_at',
-                       updated_at
+                SELECT id, question, status, current_stage, workflow_version,
+                       created_at, updated_at
                 FROM research_sessions ORDER BY updated_at DESC LIMIT %s
                 """,
                 (max(1, limit),),

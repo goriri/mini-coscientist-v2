@@ -257,3 +257,179 @@ def test_the_session_service_and_the_task_store_share_one_engine(monkeypatch):
         services._shared_engine.cache_clear()
         services.get_session_service.cache_clear()
         services.get_task_store.cache_clear()
+
+
+class _RecordingCursor:
+    """A psycopg cursor that answers nothing and remembers what it was asked."""
+
+    def __init__(self, log: list[tuple[str, tuple]], rowcounts: list[int]):
+        self._log = log
+        self._rowcounts = rowcounts
+        self.rowcount = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exception):
+        return False
+
+    def execute(self, statement, parameters=()):
+        flattened = " ".join(statement.split())
+        self._log.append((flattened, tuple(parameters)))
+        # Only the writes are scripted. Counting the schema statements as well
+        # would make the script depend on how many of those there happen to be.
+        self.rowcount = (
+            self._rowcounts.pop(0)
+            if self._rowcounts and flattened.startswith("UPDATE")
+            else 0
+        )
+
+    def fetchone(self):
+        return None
+
+    def fetchall(self):
+        return []
+
+
+def _fake_postgres(monkeypatch, rowcounts: list[int] | None = None):
+    """A PostgreSQL ledger over a cursor that records SQL instead of running it.
+
+    There is no server here, and these tests are about what the ledger asks for
+    rather than what comes back -- the shape of the statement is the whole of
+    the defect below.
+    """
+    import psycopg_pool
+
+    from coscientist.ledger import PostgresResearchLedger
+
+    log: list[tuple[str, tuple]] = []
+    counts = list(rowcounts or [])
+
+    class _Connection:
+        def cursor(self):
+            return _RecordingCursor(log, counts)
+
+    class _Pool:
+        check_connection = psycopg_pool.ConnectionPool.check_connection
+
+        def __init__(self, conninfo, **kwargs):
+            pass
+
+        def connection(self):
+            return contextlib.nullcontext(_Connection())
+
+    monkeypatch.setattr(psycopg_pool, "ConnectionPool", _Pool)
+    return PostgresResearchLedger("postgresql:///coscientist"), log
+
+
+def test_the_sqlite_listing_does_not_touch_the_stored_session(tmp_path: Path):
+    """The listing wants six scalars, not the run they were copied from.
+
+    Written as a payload the listing cannot survive reading: if the query goes
+    anywhere near it again -- which is how the deployment came down -- this
+    stops passing rather than merely getting slower somewhere nobody looks.
+    """
+    ledger = ResearchLedger(tmp_path / "research.db")
+    flow = CoScientistWorkflow("Does a coating change cycle life?", ledger=ledger)
+    with ledger._connect() as connection:
+        connection.execute("UPDATE sessions SET payload = 'not json at all'")
+
+    (listed,) = ledger.recent_sessions(10)
+
+    assert listed["id"] == flow.session.id
+    assert listed["question"] == "Does a coating change cycle life?"
+    assert listed["status"] == "active"
+
+
+def test_a_run_stored_before_the_listing_columns_is_still_listed(tmp_path: Path):
+    """Every run on the deployment predates these columns. None may vanish.
+
+    The columns are dropped here to make a database of the older shape, which
+    is what a first boot on the new code opens.
+    """
+    from coscientist.ledger import LISTING_COLUMNS
+
+    path = tmp_path / "research.db"
+    ledger = ResearchLedger(path)
+    flow = CoScientistWorkflow("Which host factors govern relapse?", ledger=ledger)
+    flow.preview()
+    with ledger._connect() as connection:
+        for column in LISTING_COLUMNS:
+            connection.execute(f"ALTER TABLE sessions DROP COLUMN {column}")
+
+    (listed,) = ResearchLedger(path).recent_sessions(10)
+
+    assert listed["question"] == "Which host factors govern relapse?"
+    assert listed["status"] == flow.session.status
+    assert listed["current_stage"] == flow.session.current_stage
+    assert listed["workflow_version"] == flow.session.workflow_version
+    assert listed["created_at"] == flow.session.created_at
+
+
+def test_the_postgres_listing_never_reads_a_stored_session(monkeypatch):
+    """Six ``payload ->>`` expressions took the deployment off the air.
+
+    Each one detoasts and decompresses the whole stored session -- about a
+    megabyte once a run carries a corpus -- so listing a hundred runs asked a
+    shared-core server for six hundred megabytes of decompression to show six
+    short strings each. It took longer than the thirty-second pool timeout, and
+    since the page polls it, all three of the process's connections sat in it:
+    every route answered 500, including ones that only wanted a single row.
+    """
+    ledger, log = _fake_postgres(monkeypatch)
+    log.clear()
+
+    ledger.recent_sessions(200)
+
+    ((statement, parameters),) = log
+    assert "payload" not in statement, statement
+    assert statement.startswith(
+        "SELECT id, question, status, current_stage, workflow_version,"
+    )
+    assert parameters == (200,)
+
+
+def test_a_postgres_save_keeps_the_listing_columns_in_step(monkeypatch):
+    """Columns beside the payload are only cheap if they are also true."""
+    from coscientist.models import Session
+
+    ledger, log = _fake_postgres(monkeypatch)
+    session = Session(question="Does a coating change cycle life?")
+    log.clear()
+
+    ledger.save(session)
+
+    ((statement, parameters),) = [entry for entry in log if "INSERT" in entry[0]]
+    assert "question, status, current_stage, workflow_version," in statement
+    assert parameters[4:] == (
+        session.question,
+        session.status,
+        session.current_stage,
+        session.workflow_version,
+        session.created_at,
+    )
+
+
+def test_the_backfill_runs_in_batches_and_stops_when_there_is_nothing_left(
+    monkeypatch,
+):
+    """A boot must not have to finish the whole table to have achieved anything.
+
+    Cloud Run stops a container whenever it likes. One statement over every row
+    is the same detoasting this is rescuing the listing from, and a shutdown
+    halfway through it rolls the lot back -- so the next boot starts from
+    nothing, and so does the one after that.
+    """
+    ledger, log = _fake_postgres(monkeypatch, rowcounts=[20, 20, 7, 0])
+    backfills = [entry for entry, _ in log if entry.startswith("UPDATE")]
+
+    assert len(backfills) == 4, log
+    assert "LIMIT 20" in backfills[0]
+    assert "WHERE question IS NULL" in backfills[0]
+    # Newest first: the runs somebody is looking for are the recent ones, and a
+    # backfill that is cut short should have done those.
+    assert "ORDER BY updated_at DESC" in backfills[0]
+
+    log.clear()
+    ledger._backfill_listing_columns()
+    assert len(log) == 1, "A filled table costs one statement a boot, not four."
