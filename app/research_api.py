@@ -649,20 +649,29 @@ def _run_advance(
             return
 
 
-def _schedule_advance(
+def _hand_off(
     session_id: str,
     background_tasks: BackgroundTasks,
     *,
-    kind: str = "next",
+    kind: str,
     feedback: str = "",
 ) -> None:
-    operation = _operation(session_id)
-    if operation["status"] in {"queued", "running"}:
-        raise ValueError("The next research gate is already being prepared.")
-    _set_operation(session_id, "queued", "Waiting for a workflow worker.", kind)
+    """Give the work to the queue where there is one, and to this process where
+    there is not.
+
+    Every route into a stage goes through here, recovery included. The recovery
+    route used to add the background task directly, and a background task is the
+    thing the queue exists to replace: it outlives the request that started it,
+    so the instance serving it can be reclaimed mid-stage, which is what leaves
+    an evidence stage to be recovered in the first place. A live run went
+    straight back onto that path -- the sweep declared the interrupted worker
+    dead, started attempt three inside the main service, and the queue standing
+    ready beside it was not asked.
+    """
     if (
         evidence_tasks_configured()
-        and kind in {"next", "auto"}
+        and kind in {"next", "auto", "evidence"}
+        and not feedback
         and _load(session_id).stage == "evidence"
     ):
         enqueue_evidence_step(
@@ -677,6 +686,20 @@ def _schedule_advance(
         kind=kind,
         feedback=feedback,
     )
+
+
+def _schedule_advance(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    *,
+    kind: str = "next",
+    feedback: str = "",
+) -> None:
+    operation = _operation(session_id)
+    if operation["status"] in {"queued", "running"}:
+        raise ValueError("The next research gate is already being prepared.")
+    _set_operation(session_id, "queued", "Waiting for a workflow worker.", kind)
+    _hand_off(session_id, background_tasks, kind=kind, feedback=feedback)
 
 
 @router.get("/options")
@@ -808,11 +831,10 @@ def get_research_session(session_id: str, background_tasks: BackgroundTasks) -> 
     """Return the persisted approval and workflow state."""
     operation = _operation(session_id)
     if _ledger().requeue_expired_operation(session_id):
-        background_tasks.add_task(
-            _advance_in_background,
+        _hand_off(
             session_id,
+            background_tasks,
             kind=operation.get("kind", "next"),
-            feedback="",
         )
     return _snapshot(_load(session_id))
 

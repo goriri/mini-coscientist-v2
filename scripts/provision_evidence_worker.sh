@@ -199,15 +199,28 @@ say "3. The queue"
 # task id already guarantees; the dispatch cap is across sessions. Backoff is
 # the poll interval the inline loop uses, so a retried step arrives no sooner
 # than the next poll would have.
-if gcloud tasks queues describe "$QUEUE" --project "$PROJECT" \
-     --location "$REGION" >/dev/null 2>&1; then
+#
+# Reading a queue is a separate permission from creating tasks on it, and the
+# enqueuer role this deployment runs as does not have it. Told apart, because
+# "Missing." over a queue that had just delivered two tasks is a report of the
+# account rather than of the project: a refused read means unknown, and the
+# create below is then the way to find out, being harmless if it exists.
+QUEUE_READ="$(gcloud tasks queues describe "$QUEUE" --project "$PROJECT" \
+  --location "$REGION" 2>&1 >/dev/null || true)"
+if [[ -z "$QUEUE_READ" ]]; then
   note "Already exists."
 else
-  note "Missing. Needs roles/cloudtasks.admin."
+  if [[ "$QUEUE_READ" == *PERMISSION_DENIED* ]]; then
+    note "Cannot tell: this account may not read queues (cloudtasks.queues.get)."
+    note "Creating is harmless if it is already there."
+  else
+    note "Missing. Needs roles/cloudtasks.admin."
+  fi
   run gcloud tasks queues create "$QUEUE" \
     --project "$PROJECT" --location "$REGION" \
     --max-concurrent-dispatches 8 --max-attempts 5 \
-    --min-backoff 15s --max-backoff 300s
+    --min-backoff 15s --max-backoff 300s || \
+    note "  refused or already there -- see the message above."
 fi
 
 # -----------------------------------------------------------------------------
@@ -238,17 +251,29 @@ run gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" \
   note "  refused -- needs roles/iam.serviceAccountAdmin."
 
 # -----------------------------------------------------------------------------
-say "5. Point the main service at the queue"
+say "5. Point both services at the queue"
 # -----------------------------------------------------------------------------
 # This is the switch. Until these four are set, configured() is false and the
 # stage keeps running inline, whatever else above succeeded -- so it is last.
-MAIN_ENV="EVIDENCE_WORKER_URL=${WORKER_URL}"
-MAIN_ENV+=",EVIDENCE_CLOUD_TASKS_QUEUE=${QUEUE}"
-MAIN_ENV+=",EVIDENCE_CLOUD_TASKS_LOCATION=${REGION}"
-MAIN_ENV+=",EVIDENCE_TASKS_SERVICE_ACCOUNT=${RUNTIME_SA}"
+QUEUE_ENV="EVIDENCE_WORKER_URL=${WORKER_URL}"
+QUEUE_ENV+=",EVIDENCE_CLOUD_TASKS_QUEUE=${QUEUE}"
+QUEUE_ENV+=",EVIDENCE_CLOUD_TASKS_LOCATION=${REGION}"
+QUEUE_ENV+=",EVIDENCE_TASKS_SERVICE_ACCOUNT=${RUNTIME_SA}"
 run gcloud run services update "$SERVICE" \
   --project "$PROJECT" --region "$REGION" \
-  --update-env-vars "$MAIN_ENV" --quiet
+  --update-env-vars "$QUEUE_ENV" --quiet
+
+# The worker needs them too, and for the same reason the main service does: a
+# task is one poll, and the poll after it is enqueued from inside whichever
+# process decided another was needed. Deployed without them the worker answered
+# its first task by polling and sleeping for the whole three hundred seconds
+# Cloud Run allows, died with a 504, and was retried into a lease the killed
+# instance still held. It is a second update rather than part of step 2 because
+# EVIDENCE_WORKER_URL is the worker's own address, which Cloud Run does not
+# issue until the service exists.
+run gcloud run services update "$WORKER_SERVICE" \
+  --project "$PROJECT" --region "$REGION" \
+  --update-env-vars "$QUEUE_ENV" --quiet
 
 # -----------------------------------------------------------------------------
 # Opt-in. Nothing below runs unless its flag was named on the command line.
