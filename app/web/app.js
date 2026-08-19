@@ -1818,6 +1818,16 @@ function renderApprovalCard(workflow) {
     return;
   }
 
+  // The card goes into the transcript, and the transcript is hidden until
+  // something puts it on screen. appendMessage did that, so every gate reached
+  // by working the run through the page was visible -- but a run resumed from
+  // a link mid-stage has no new draft and no dossier, so appendMessage never
+  // fires and the card was appended into a `display: none` transcript with the
+  // "New inquiry" hero still over it. Two live runs, one four searches into
+  // evidence and one with two of four specialists back, showed the researcher
+  // nothing at all for the stage they were watching.
+  ensureConversation();
+
   const requirements = unresolvedRequirements(workflow);
   const findings = workflow.governance_blockers || [];
   const openFindings = findings.filter((item) => !item.resolution);

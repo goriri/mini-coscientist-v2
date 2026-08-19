@@ -4,6 +4,9 @@
 // one of them blocked on governance, was the page hiding its own work. This
 // checks the two halves of that: a first visit with work in progress opens it,
 // and a first visit with nothing running still offers the launcher.
+//
+// And a third thing, which is what opening it is for: the stage has to be on
+// the screen once it does.
 import { spawn } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,8 +30,28 @@ const chrome =
   "/tmp/math-witch-playwright/chromium-1187/chrome-linux/chrome";
 const debuggingPort = Number(process.env.CHROME_DEBUGGING_PORT || "9225");
 const profile = await mkdtemp(join(tmpdir(), "coscientist-landing-chrome-"));
+const stateDir = join(profile, "state");
 const startServer = process.env.COSCIENTIST_E2E_START_SERVER !== "false";
 let server = null;
+
+function run(command, args, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: process.cwd(),
+      env: { ...process.env, ...env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (chunk) => (out += chunk));
+    child.stderr.on("data", (chunk) => (err += chunk));
+    child.on("close", (code) =>
+      code === 0
+        ? resolve(out.trim())
+        : reject(new Error(`${command} failed (${code}): ${err.trim()}`)),
+    );
+  });
+}
 
 if (startServer) {
   await refuseOccupiedServer(baseUrl);
@@ -53,7 +76,7 @@ if (startServer) {
         // Subprocess: no pytest fixture strips its credentials, so the switch
         // has to be thrown here or a browser test bills a research pass.
         COSCIENTIST_DEEP_RESEARCH: "off",
-        COSCIENTIST_STATE_DIR: join(profile, "state"),
+        COSCIENTIST_STATE_DIR: stateDir,
         UV_CACHE_DIR: "/tmp/coscientist-uv-cache",
       },
       stdio: "ignore",
@@ -269,8 +292,68 @@ try {
     `A shared link should open the run it names, not "${shared.title}".`,
   );
 
+  // Opening the run is only half of it. Two runs on the deployment -- one four
+  // searches into evidence, one with two of four specialists back -- opened
+  // correctly, drew a correct progress card, and showed the researcher an empty
+  // "New inquiry" hero anyway: the card was appended into a transcript that is
+  // hidden until something reveals it, and the only things that revealed it
+  // were a new draft and a finished dossier. A stage still running has neither.
+  //
+  // Seeded rather than played out, because the window is not reachable from
+  // here: the offline provider has a draft ready before the second poll, and a
+  // draft is exactly what used to make this work.
+  let watching =
+    "not checked: the run in progress is not this script's to seed";
+  if (startServer) {
+    const seeded = JSON.parse(
+      await run(".venv/bin/python3", ["tests/e2e/seed_running_stage.py"], {
+        COSCIENTIST_STATE_DIR: stateDir,
+      }),
+    );
+    const mid = await openPage(
+      debuggingPort,
+      `${baseUrl}/?session=${seeded.id}`,
+    );
+    await waitFor(
+      mid,
+      "!!document.querySelector('.approval-card')",
+      "The run in progress never drew a card for the stage it is in.",
+      30000,
+    );
+    watching = JSON.parse(
+      await mid.evaluate(`(() => {
+        const card = document.querySelector(".approval-card");
+        const welcome = document.getElementById("welcome");
+        return JSON.stringify({
+          height: Math.round(card.getBoundingClientRect().height),
+          head: card.querySelector("h3").textContent.trim(),
+          progress: card.querySelector(".workflow-progress p")?.textContent.trim() || "",
+          hero: !welcome.hidden && getComputedStyle(welcome).display !== "none",
+        });
+      })()`),
+    );
+    assert(
+      watching.height > 0,
+      `The stage card is in the page but nothing of it is on the screen (${watching.height}px tall).`,
+    );
+    assert(
+      !watching.hero,
+      "A run mid-stage was opened underneath the empty inquiry form.",
+    );
+    assert(
+      watching.progress === seeded.detail,
+      `The card must say what the stage is doing, not ${JSON.stringify(watching.progress)}.`,
+    );
+  } else {
+    console.log(`Mid-stage visibility ${watching}.`);
+  }
+
   console.log(
-    JSON.stringify({ status: "passed", id, empty, running, shared }, null, 2),
+    JSON.stringify(
+      { status: "passed", id, empty, running, shared, watching },
+      null,
+      2,
+    ),
   );
 } finally {
   browser.kill("SIGTERM");
