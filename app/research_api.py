@@ -43,6 +43,7 @@ from coscientist.models import (
     ArtifactStatus,
     CandidatePopulation,
 )
+from coscientist.narrative import stage_name
 from coscientist.orchestration import (
     WORKFLOW_STAGES,
     WORKFLOW_STAGES_V1,
@@ -533,6 +534,30 @@ def _hold_operation_lease(session_id: str, owner: str, stop: threading.Event) ->
             return
 
 
+def _serving_one_task_at_a_time() -> bool:
+    """Whether this process is the queue's worker rather than the web service.
+
+    The same switch the discovery controller reads to poll once and return, so
+    a process cannot be bounded on the poll loop and unbounded on the stages
+    around it.
+    """
+    return os.environ.get("EVIDENCE_TASK_STEP_MODE", "false").lower() == "true"
+
+
+def _advance_one_stage(workflow: CoScientistWorkflow) -> None:
+    """Accept one stage, leaving the next one for the next task.
+
+    The evidence gate is let through the way ``run_auto`` lets it through: a
+    run whose evidence base is too thin to hypothesise from stops for a person,
+    and that is a decision, not a failure of this worker.
+    """
+    try:
+        workflow.accept(workflow.preview(), automatic=True)
+    except ValueError:
+        if workflow.session.status != "evidence_required":
+            raise
+
+
 def _run_advance(
     session_id: str,
     owner: str,
@@ -573,10 +598,34 @@ def _run_advance(
                 elif kind == "auto":
                     workflow.run_auto()
                 elif kind == "evidence":
-                    if workflow.approval_profile == ApprovalProfile.AUTO:
-                        workflow.run_auto()
-                    else:
+                    if workflow.approval_profile != ApprovalProfile.AUTO:
                         _draft_next_gate(workflow)
+                    elif _serving_one_task_at_a_time():
+                        # A task is one stage, and the stage after it is another
+                        # task. ``run_auto`` here would carry the whole rest of
+                        # the pipeline -- generate, five reviewers, a tournament,
+                        # evolution, a meta-review -- inside a single request
+                        # that Cloud Run cuts off at three hundred seconds, and
+                        # the retry then lands on a lease the killed instance
+                        # holds for five more minutes. The poll loop below is
+                        # already bounded this way; this is the same bound
+                        # applied to the stages that follow it.
+                        _advance_one_stage(workflow)
+                        if not workflow.done and workflow.session.status == "active":
+                            _set_operation(
+                                session_id,
+                                "queued",
+                                f"Queued: {stage_name(workflow.stage)}.",
+                                "evidence",
+                            )
+                            enqueue_evidence_step(
+                                session_id,
+                                session_version=workflow.session.version,
+                                delay_seconds=0,
+                            )
+                            return
+                    else:
+                        workflow.run_auto()
                 elif kind == "revision":
                     workflow.preview(feedback)
                 else:
