@@ -54,6 +54,7 @@ from .governance import (
     REHEARSAL_ADJUDICATOR,
     adjudicated_review_ids,
     blockers_for_draft,
+    governance_blockers,
     is_answered,
     open_blockers,
     record_adjudication,
@@ -324,6 +325,29 @@ class CoScientistWorkflow:
                 },
             )
             self._persist(event)
+        elif self.session.status == "governance_blocked" and not open_blockers(
+            self.session
+        ):
+            # A block with nothing open under it is a contradiction, and one with
+            # no way out: adjudication is the only thing that clears the status
+            # and it refuses a finding that is not open. Two live sessions were
+            # left exactly there -- every finding answered, the status still
+            # saying blocked, the accept button greyed out and the override
+            # button refusing. Reconciled on resume rather than left for an
+            # operator to edit the session file, which is the thing the whole
+            # adjudication path exists to avoid.
+            self.session.status = "active"
+            self._persist(
+                self._event(
+                    "governance_block_reconciled",
+                    "supervisor",
+                    payload={
+                        "review_ids": [
+                            item.review_id for item in governance_blockers(self.session)
+                        ]
+                    },
+                )
+            )
 
     def seed_evidence_from(self, source: Session) -> None:
         """Take an earlier run's scope and evidence base instead of searching again.

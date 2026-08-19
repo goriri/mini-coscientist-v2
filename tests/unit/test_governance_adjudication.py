@@ -356,6 +356,45 @@ def test_adjudication_is_refused_on_a_session_that_is_not_blocked():
         )
 
 
+def test_a_block_with_nothing_open_under_it_is_cleared_when_the_session_resumes():
+    """The dead end the hazard match leaves behind on a session already parked.
+
+    Two live sessions were blocked on findings that a later override answers.
+    Nothing could reopen them: adjudication is the only thing that clears the
+    status, and it refuses a finding that is not open -- "Open blockers: none"
+    over a session whose accept button was greyed out for being blocked.
+    """
+    session = _session(reviews=[_review("rev_1", "cand_2", FLAW)])
+    session.governance_adjudications.append(
+        GovernanceAdjudication(
+            review_id="rev_0",
+            candidate_id="cand_2",
+            resolution="override",
+            adjudicator="Safety Officer",
+            justification=REASON,
+            fatal_flaws=[PARAPHRASE],
+        )
+    )
+    session.status = "governance_blocked"
+
+    flow = CoScientistWorkflow("Can a coating extend cycle life?", session=session)
+
+    assert flow.session.status == "active"
+    assert [event.event_type for event in flow.session.events][-1] == (
+        "governance_block_reconciled"
+    )
+
+
+def test_a_resumed_session_with_a_finding_still_open_stays_blocked():
+    """The control: resuming must not be a way of clearing the gate."""
+    session = _session(reviews=[_review("rev_1", "cand_2", FLAW)])
+    session.status = "governance_blocked"
+
+    flow = CoScientistWorkflow("Can a coating extend cycle life?", session=session)
+
+    assert flow.session.status == "governance_blocked"
+
+
 def test_withdrawing_the_last_hypothesis_is_refused_and_changes_nothing():
     session = _session(candidates=1, reviews=[_review("rev_1", "cand_1", FLAW)])
     session.status = "governance_blocked"
