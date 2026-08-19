@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -554,6 +555,53 @@ def test_retry_resumes_the_same_stored_interaction():
     # than starting a second one: seven interactions exist, seven were started.
     assert transport.starts == len(EVIDENCE_FACETS)
     assert result.runs[0].interaction_id == "stable-interaction-1"
+
+
+def test_a_pass_out_of_time_is_cut_off_by_the_worker_that_inherits_it(monkeypatch):
+    """The deadline used to be measured from the top of the call it was set in.
+    Under Cloud Tasks a call is one poll and about twenty seconds long, so it
+    could never arrive: a live pass sat in_progress for forty minutes with its
+    six siblings long finished, and would have been re-polled once a minute for
+    as long as Vertex kept saying "in_progress". The clock the budget is spent
+    against belongs to the interaction, not to whichever worker is holding it."""
+
+    class NeverFinishes:
+        def start(self, *, pass_number: int, **_):
+            return {"id": f"slow-{pass_number}", "status": "in_progress"}
+
+        def get(self, interaction_id: str):
+            return {"id": interaction_id, "status": "in_progress"}
+
+    transport = NeverFinishes()
+    session = Session(question="A pass that will not come back")
+    started = IterativeEvidenceDiscovery(
+        transport,
+        EvidenceArtifactStore(bucket_name=""),
+        polls_per_invocation=0,
+        pass_timeout_seconds=1800,
+    ).run(session, _plan(session))
+    assert [run.status for run in started.runs] == ["in_progress"] * len(
+        EVIDENCE_FACETS
+    )
+
+    # An hour later, on whichever instance the next task lands on.
+    an_hour_ago = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    for run in started.runs:
+        run.started_at = an_hour_ago
+
+    timed_out = IterativeEvidenceDiscovery(
+        transport,
+        EvidenceArtifactStore(bucket_name=""),
+        poll_interval_seconds=0,
+        polls_per_invocation=1,
+        pass_timeout_seconds=1800,
+    ).run(session, _plan(session), manifest=started)
+
+    assert timed_out.convergence_reason != "interaction_in_progress"
+    assert [run.status for run in timed_out.runs] == ["timed_out"] * len(
+        EVIDENCE_FACETS
+    )
+    assert timed_out.runs[0].error == "Deep Research exceeded the local pass deadline."
 
 
 def test_short_worker_steps_start_then_poll_without_duplicate_interaction():

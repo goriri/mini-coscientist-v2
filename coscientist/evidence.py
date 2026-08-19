@@ -187,6 +187,27 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _longest_running(wave: list) -> float:
+    """Seconds since the oldest unfinished pass in ``wave`` was started.
+
+    How much of a pass's time budget has already been spent, read off what was
+    written down rather than off this process's clock -- the process polling a
+    pass is not necessarily the one that started it, and under Cloud Tasks it
+    usually is not.
+    """
+    now = datetime.now(UTC)
+    spent = [0.0]
+    for run in wave:
+        try:
+            started = datetime.fromisoformat(run.started_at)
+        except (TypeError, ValueError):
+            continue
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        spent.append((now - started).total_seconds())
+    return max(spent)
+
+
 class DeepResearchTransport(Protocol):
     def start(self, *, prompt: str, pass_number: int, session_id: str) -> dict: ...
 
@@ -2743,7 +2764,15 @@ class IterativeEvidenceDiscovery:
         ):
             manifest.convergence_reason = "interaction_in_progress"
             return None
-        deadline = time.monotonic() + self.pass_timeout_seconds
+        # Counted from when the interaction was started, not from when this
+        # invocation was. One task is one poll and lives about twenty seconds,
+        # so a deadline measured from the top of this call can never arrive
+        # under Cloud Tasks: a live pass sat in_progress for forty minutes with
+        # its six siblings long finished, and would have been re-polled once a
+        # minute for as long as Vertex kept saying "in_progress".
+        deadline = time.monotonic() + max(
+            0.0, self.pass_timeout_seconds - _longest_running(wave)
+        )
         while any(
             str(payloads[run.interaction_id].get("status")) not in self._TERMINAL
             for run in wave
