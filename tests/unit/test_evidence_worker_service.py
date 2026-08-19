@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import importlib
+import pathlib
+import re
 
 import pytest
 from fastapi.testclient import TestClient
+
+from app.evidence_tasks import EVIDENCE_TASK_DEADLINE_SECONDS
+from coscientist.model_catalog import DEFAULT_MODEL, specialist_agent_name
+
+PROVISION = pathlib.Path(__file__).parents[2] / "scripts/provision_evidence_worker.sh"
 
 QUEUE_SETTINGS = {
     "EVIDENCE_WORKER_URL": "https://coscientist-evidence-worker.example.run.app",
@@ -33,6 +40,38 @@ def test_a_worker_with_a_queue_to_answer_to_starts(monkeypatch):
 
     with TestClient(worker.app):
         pass
+
+
+def test_the_worker_publishes_the_specialists_a_stage_dials(monkeypatch):
+    """A stage reaches its specialist over loopback, on this process's own port,
+    so whichever process runs the stage has to be serving the cards. This one
+    was not: it served a task endpoint and nothing else. A live run polled seven
+    Deep Research passes to completion, read all seven reports, and then failed
+    on a 404 for
+    /a2a/specialists/evidence_discovery/.well-known/agent-card.json -- a card
+    the main service publishes and this service had never been told to. Every
+    stage after evidence dials the same way, and a task is now a whole stage."""
+    monkeypatch.setenv("INTEGRATION_TEST", "TRUE")
+    worker = _worker(monkeypatch, QUEUE_SETTINGS)
+    name = specialist_agent_name("evidence_discovery", DEFAULT_MODEL)
+
+    with TestClient(worker.app) as client:
+        card = client.get(f"/a2a/specialists/{name}/.well-known/agent-card.json")
+
+    assert card.status_code == 200, card.text
+
+
+def test_the_queue_waits_as_long_as_the_worker_is_allowed_to_take():
+    """Two ceilings on one request, and the lower one decides. Both were five
+    minutes, and a task is not the twenty-second poll it is named after: folding
+    a finished wave in is a model call per pass over reports of thirty thousand
+    characters, then a fetch of every source they named, and one live wave spent
+    six and a half minutes on it. Cloud Run cut that request off mid-read, and
+    the retry landed on the lease the killed instance still held."""
+    deployed = re.search(r"--timeout (\d+)", PROVISION.read_text())
+
+    assert deployed, "the worker deploy no longer sets a Cloud Run request timeout"
+    assert int(deployed.group(1)) == EVIDENCE_TASK_DEADLINE_SECONDS
 
 
 def test_a_worker_with_nowhere_to_send_the_next_poll_refuses_to_start(monkeypatch):

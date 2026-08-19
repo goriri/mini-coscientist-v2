@@ -167,6 +167,12 @@ if gcloud run services describe "$WORKER_SERVICE" --project "$PROJECT" \
      --region "$REGION" --format='value(status.url)' >/dev/null 2>&1; then
   note "Exists; redeploying it onto the image the main service is running."
 fi
+# The request timeout below is half an hour, matching the dispatch deadline in
+# EVIDENCE_TASK_DEADLINE_SECONDS. A task is one stage, and folding a finished
+# Deep Research wave in -- a model call per pass, then a fetch of every source
+# those passes named -- took six and a half minutes on a live run. At the five
+# minutes this used to allow, Cloud Run killed the request mid-read and the
+# retry landed on a lease the killed instance still held.
 run gcloud run deploy "$WORKER_SERVICE" \
   --project "$PROJECT" --region "$REGION" --image "$IMAGE" \
   --command uv \
@@ -174,7 +180,7 @@ run gcloud run deploy "$WORKER_SERVICE" \
   --ingress internal --no-allow-unauthenticated \
   --service-account "$RUNTIME_SA" \
   --add-cloudsql-instances "$SQL_CONNECTION" \
-  --cpu 1 --memory 4Gi --timeout 300 --max-instances 4 --no-cpu-throttling \
+  --cpu 1 --memory 4Gi --timeout 1800 --max-instances 4 --no-cpu-throttling \
   --set-env-vars "$WORKER_ENV" \
   --set-secrets "DATABASE_PASSWORD=${SECRET_NAME}:${SECRET_VERSION}" \
   --quiet

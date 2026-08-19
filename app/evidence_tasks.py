@@ -7,6 +7,11 @@ import os
 import re
 from datetime import UTC, datetime, timedelta
 
+EVIDENCE_TASK_DEADLINE_SECONDS = 1800
+"""How long one task may take. Thirty minutes is the ceiling Cloud Tasks allows
+an HTTP target, and ``scripts/provision_evidence_worker.sh`` gives the worker
+the same number as its Cloud Run request timeout."""
+
 
 def configured() -> bool:
     return bool(
@@ -58,7 +63,16 @@ def enqueue_evidence_step(
     schedule_time.FromDatetime(
         datetime.now(UTC) + timedelta(seconds=max(0, delay_seconds))
     )
-    deadline = duration_pb2.Duration(seconds=300)
+    # Long enough for the longest single unit a task carries, which is not the
+    # poll it is named after. A poll is twenty seconds; folding a finished wave
+    # in is a model call per pass over reports that run to thirty thousand
+    # characters, and then the fetch of every source they named. One live wave
+    # took six and a half minutes of that, and at a five-minute deadline Cloud
+    # Tasks cut the request off mid-read, retried it into the lease the killed
+    # instance still held, and was answered 200 for doing nothing. Cloud Run's
+    # request timeout on the worker has to match, or the same cut happens one
+    # layer down.
+    deadline = duration_pb2.Duration(seconds=EVIDENCE_TASK_DEADLINE_SECONDS)
     task = {
         "name": task_name,
         "http_request": request,
