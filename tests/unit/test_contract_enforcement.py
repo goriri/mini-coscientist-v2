@@ -57,7 +57,7 @@ def test_unparseable_live_output_halts_instead_of_substituting_a_template():
     assert raised.value.error
     # The repair round-trip is the whole reason a second call is worth making.
     assert len(provider.prompts) == 2
-    assert "could not be parsed" in provider.prompts[1]
+    assert "no JSON object found" in provider.prompts[1]
     assert "CandidatePopulation" in provider.prompts[1]
 
 

@@ -537,6 +537,14 @@ def align_candidate_ids(
     positional ``Candidate 3``. Discarding an entire review set over a cosmetic
     id mismatch loses real analysis, so resolve what can be resolved and report
     the rest to the caller by omission.
+
+    A revision marker is read as lineage and never as a position. ``_v2`` on the
+    end of ``cand_evidence_first_1_v2`` ends in a digit, and the positional
+    reading below took that digit: four distinct revisions all resolved to the
+    second candidate in the run, collapsed to one on deduplication, and every
+    cluster the proximity specialist had written was dropped for having a single
+    member. The stage then failed its contract twice over output that was
+    correct, and a live run died at stage seven of eight.
     """
     known = {candidate_id: candidate_id for candidate_id in candidate_ids}
     normalized = {
@@ -551,6 +559,14 @@ def align_candidate_ids(
         simple = re.sub(r"[^a-z0-9]", "", reference.lower())
         if simple in normalized:
             mapping[reference] = normalized[simple]
+            continue
+        stem = re.sub(r"[_\-\s]*v\d+$", "", reference, flags=re.IGNORECASE)
+        if stem != reference:
+            # A revision of an idea this run holds is that idea, for the purpose
+            # of grouping ideas. Nothing else about the reference is guessed at.
+            simple = re.sub(r"[^a-z0-9]", "", stem.lower())
+            if simple in normalized:
+                mapping[reference] = normalized[simple]
             continue
         ordinal = re.search(r"(\d+)\s*$", reference)
         if ordinal:
@@ -1500,6 +1516,29 @@ def parsed_tournament_state(
     )
 
 
+def groupable_candidate_ids(session: Session) -> list[str]:
+    """Every idea the clustering stage is allowed to name, revisions included.
+
+    Proximity runs after evolution, so the shortlist in front of the specialist
+    is the evolved one and the ids it writes down are the revisions'. The
+    universe checked against was the generation population alone, which holds
+    none of them: a landscape naming four revisions matched nothing, and the run
+    was failed for output that named exactly the ideas it had been shown.
+    """
+    ids = [
+        candidate.id
+        for candidate in population_from_artifacts(session.artifacts).candidates
+    ]
+    for artifact in session.artifacts:
+        if artifact.schema_name != "EvolutionCycle" or not artifact.payload:
+            continue
+        for record in artifact.payload.get("records") or []:
+            revision = (record.get("candidate") or {}).get("id")
+            if revision:
+                ids.append(revision)
+    return list(dict.fromkeys(ids))
+
+
 def parsed_research_landscape(
     session: Session, parsed: ResearchLandscape | None, fallback: ResearchLandscape
 ) -> ResearchLandscape:
@@ -1524,10 +1563,7 @@ def parsed_research_landscape(
         or parsed.coverage_gaps
     ):
         return fallback
-    candidate_ids = [
-        candidate.id
-        for candidate in population_from_artifacts(session.artifacts).candidates
-    ]
+    candidate_ids = groupable_candidate_ids(session)
     referenced = [
         *(item for cluster in parsed.clusters for item in cluster.candidate_ids),
         *(item for duplicate in parsed.duplicates for item in duplicate),
@@ -1560,6 +1596,36 @@ def parsed_research_landscape(
             "duplicates": duplicates,
             "protected_minority_ids": minority,
         }
+    )
+
+
+def _rejected_after_parsing(
+    session: Session, role: str, parsed: BaseModel | None
+) -> str:
+    """Why a payload that satisfied its schema was still put aside.
+
+    The schema is not the whole contract: a landscape whose ids reach no idea in
+    the run, or a tournament over candidates it does not hold, parses cleanly and
+    is still unusable. That rejection carried no message, and the retry is built
+    out of the message -- so the model was handed an empty list of validation
+    errors and returned the same bytes to the character, and the exception that
+    then ended the stage read "does not satisfy its contract after a repair
+    attempt:" with nothing after the colon. A live run died there with no way to
+    tell from the logs what had been wrong with it.
+    """
+    if parsed is None:
+        return f"Nothing in the {role} response parsed as its contract."
+    if role == "proximity":
+        known = groupable_candidate_ids(session)
+        return (
+            "The clustering is discarded: none of the ids it groups name an idea "
+            "in this run. Group these ids, exactly as written, and no others: "
+            + ", ".join(known)
+            + "."
+        )
+    return (
+        f"The {role} payload parsed, but what it names does not belong to this "
+        "run, so none of it could be kept."
     )
 
 
@@ -1613,8 +1679,10 @@ def typed_specialist_payload(session: Session, role: str, content: str) -> Typed
     else:
         fallback = dossier_manifest(session)
         value = outcome.value or fallback
+    error = outcome.error
     if value is fallback:
         source = "deterministic_fallback"
+        error = error or _rejected_after_parsing(session, role, outcome.value)
     else:
         source = "repaired" if outcome.repairs else "specialist"
     return TypedPayload(
@@ -1622,5 +1690,5 @@ def typed_specialist_payload(session: Session, role: str, content: str) -> Typed
         payload=value.model_dump(mode="json"),
         source=source,
         repairs=list(outcome.repairs),
-        error=outcome.error,
+        error=error,
     )

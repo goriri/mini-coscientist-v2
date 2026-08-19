@@ -869,16 +869,24 @@ def summarize_errors(exc: ValidationError, limit: int = 10) -> str:
 
 
 def repair_prompt(model: type[BaseModel], content: str, error: str) -> str:
-    """Build a follow-up prompt asking a specialist to fix its own JSON."""
+    """Build a follow-up prompt asking a specialist to fix its own JSON.
+
+    Keeping the identifiers is the default because the reasoning hangs off them,
+    but it is not the rule: where the rejection is about the identifiers -- ids
+    that name nothing in the run -- an instruction to keep them is an instruction
+    to return the same answer, and that is what came back, to the character.
+    """
     excerpt = content if len(content) <= 8000 else f"{content[:8000]}\n...[truncated]"
     return (
-        f"Your previous response could not be parsed as a valid {model.__name__} "
+        f"Your previous response was rejected as a {model.__name__} "
         f"JSON object.\n\nValidation errors:\n{error}\n\n"
         f"Your previous response:\n{excerpt}\n\n"
         "Return the same scientific content again, corrected to satisfy the "
         "contract exactly. Keep every substantive claim, review, rationale, and "
         "identifier from your previous answer; change only the JSON structure, "
-        "field names, literal values, and any truncation. If your previous "
+        "field names, literal values, and any truncation. Where the validation "
+        "errors are about the identifiers themselves, use the identifiers those "
+        "errors give you instead of your own. If your previous "
         "answer was cut off, shorten the prose so the whole object fits.\n\n"
         f"{schema_instruction(model)}"
     )

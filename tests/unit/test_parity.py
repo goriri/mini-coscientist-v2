@@ -1,10 +1,14 @@
+import json
+
 import pytest
 
 from coscientist.agents import STRUCTURED_OUTPUT_INSTRUCTIONS
 from coscientist.models import (
     ApprovalProfile,
+    Artifact,
     CandidatePopulation,
     EvolutionCycle,
+    EvolutionRecord,
     ResearchCluster,
     ResearchLandscape,
     ReviewSet,
@@ -14,10 +18,13 @@ from coscientist.narrative import derive_idea_title
 from coscientist.orchestration import MILESTONE_STAGES, CoScientistWorkflow
 from coscientist.parity import (
     REVIEW_CRITERIA,
+    align_candidate_ids,
     dossier_manifest,
+    groupable_candidate_ids,
     parsed_research_landscape,
     population_from_artifacts,
     research_landscape,
+    typed_specialist_payload,
 )
 
 
@@ -342,6 +349,118 @@ def test_a_landscape_naming_no_idea_in_this_run_gives_way_to_the_template(
 
     assert parsed_research_landscape(session, parsed, fallback) is fallback
     assert parsed_research_landscape(session, None, fallback) is fallback
+
+
+def _with_revisions(session, ids: list[str]) -> list[str]:
+    """File an accepted evolution cycle whose revisions are ``id``\\ s of ``ids``."""
+    population = population_from_artifacts(session.artifacts)
+    records = []
+    for parent, candidate in zip(ids, population.candidates, strict=False):
+        revision = candidate.model_copy(
+            update={"id": f"{parent}_v2", "version": 2, "parent_ids": [parent]}
+        )
+        records.append(
+            EvolutionRecord(
+                parent_ids=[parent],
+                candidate=revision,
+                changes=["Named the decisive measurement"],
+                new_prediction="The coated cell holds eighty per cent at cycle five hundred.",
+            )
+        )
+    session.artifacts.append(
+        Artifact(
+            stage="evolve",
+            agent="evolution_agent",
+            artifact_type="specialist_output",
+            content="",
+            schema_name="EvolutionCycle",
+            payload=EvolutionCycle(records=records).model_dump(),
+        )
+    )
+    return [record.candidate.id for record in records]
+
+
+def test_the_clustering_may_name_the_revisions_its_shortlist_was_made_of(rich_session):
+    """Proximity runs after evolution and is shown the evolved shortlist.
+
+    The universe its ids were checked against was the generation population, which
+    holds no revision at all, so a landscape naming four of them matched nothing and
+    the stage was failed for output that named exactly the ideas it had been given.
+    A live run died at stage seven of eight that way.
+    """
+    session = rich_session
+    ids = [
+        candidate.id
+        for candidate in population_from_artifacts(session.artifacts).candidates
+    ]
+    revisions = _with_revisions(session, ids[:2])
+
+    parsed = ResearchLandscape(
+        clusters=[
+            ResearchCluster(
+                name="Anhydrous passivation",
+                candidate_ids=revisions,
+                shared_mechanism="Both revisions passivate without hydrolysis.",
+                shared_outcome="Capacity retention over five hundred cycles.",
+            )
+        ],
+        coverage_gaps=["In-situ measurement during the first cycle"],
+    )
+    fallback = research_landscape(session)
+    aligned = parsed_research_landscape(session, parsed, fallback)
+
+    assert aligned is not fallback
+    assert aligned.clusters[0].candidate_ids == revisions
+
+
+def test_a_revision_marker_is_not_read_as_a_position():
+    """``_v2`` ends in a digit, and the positional reading took that digit.
+
+    Four distinct revisions all resolved to the second candidate in the run,
+    deduplicated to one, and every cluster written about them was dropped for having
+    a single member -- which is how well-formed clustering came to fail its contract.
+    """
+    known = ["cand_alpha", "cand_beta", "cand_gamma"]
+
+    stray = align_candidate_ids(["cand_delta_v2", "cand_epsilon_v2"], known)
+    assert stray == {}
+
+    # A revision of an idea the run does hold is that idea, for grouping purposes.
+    assert align_candidate_ids(["cand_gamma_v3"], known) == {
+        "cand_gamma_v3": "cand_gamma"
+    }
+    # And a genuine position still reads as one.
+    assert align_candidate_ids(["Candidate 2"], known) == {"Candidate 2": "cand_beta"}
+
+
+def test_a_landscape_put_aside_says_which_ids_it_should_have_used(rich_session):
+    """The rejection carried no message, and the retry is built out of the message.
+
+    So the model was handed an empty list of validation errors, returned the same
+    1798 bytes to the character, and the exception that ended the stage read "does
+    not satisfy its contract after a repair attempt:" with nothing after the colon.
+    """
+    session = rich_session
+    content = json.dumps(
+        {
+            "clusters": [
+                {
+                    "name": "Borrowed from another run",
+                    "candidate_ids": ["hyp_alpha", "hyp_beta"],
+                    "shared_mechanism": "Unrelated.",
+                    "shared_outcome": "Unrelated.",
+                }
+            ],
+            "coverage_gaps": ["Written about ideas this run does not hold"],
+        }
+    )
+
+    typed = typed_specialist_payload(session, "proximity", content)
+
+    assert typed.source == "deterministic_fallback"
+    assert typed.error, "A rejection with nothing to say cannot be repaired."
+    for candidate_id in groupable_candidate_ids(session):
+        assert candidate_id in typed.error
 
 
 def test_the_clustering_stage_is_asked_for_the_duplicates_its_contract_holds():
