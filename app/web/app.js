@@ -109,6 +109,10 @@ const state = {
   pendingAttention: false,
   optionsReady: null,
   renamingId: null,
+  // Whether this deployment can create Google Docs, and whether this browser
+  // has said yes to it. Asked once and cached, and cleared when a token turns
+  // out to have expired mid-read.
+  googleDocs: null,
 };
 
 localStorage.setItem("coscientist.userId", state.userId);
@@ -2176,21 +2180,126 @@ function renderReportCompletion(workflow) {
     <div class="report-completion-copy">
       <p class="eyebrow">Research workflow complete</p>
       <h2>Your dossier is ready</h2>
-      <p>Download an editable Word document for Google Docs, a publication-ready PDF, or the complete Markdown research record.</p>
+      <p>Open the dossier as a Google Doc in your own Drive, or download it as an editable Word document, a publication-ready PDF, or the complete Markdown research record.</p>
       <div class="report-export-actions">
+        <button class="primary google-doc-export" type="button" data-session-id="${escapeHtml(workflow.id || state.workflowId || "")}">
+          Open in Google Docs
+        </button>
         ${exports
           .map(
-            (item, index) => `
-              <a class="${index === 0 ? "primary" : ""}" href="${escapeHtml(item.url)}" download="${escapeHtml(item.filename)}">
+            (item) => `
+              <a href="${escapeHtml(item.url)}" download="${escapeHtml(item.filename)}">
                 ${escapeHtml(item.label)}
               </a>`,
           )
           .join("")}
       </div>
-      <small>The DOCX file opens directly in Google Docs and remains editable. Direct Drive creation requires user OAuth and is intentionally not requested by this public service.</small>
+      <p class="google-doc-note" role="status"></p>
     </div>
   `;
   elements.messages.append(panel);
+  // Whether this deployment can create Docs at all is a fact about the server,
+  // so the button is drawn first and corrected by the answer rather than
+  // withheld until it arrives -- a report that took an hour should not have its
+  // export actions appear a second late.
+  syncGoogleDocsButton();
+}
+
+// ---------------------------------------------------------------------------
+// Google Docs
+// ---------------------------------------------------------------------------
+//
+// The .docx download was labelled "Google Docs" and was not: it produced a file
+// the reader then had to upload themselves. Now there is a button for each --
+// the file, and the document in their Drive -- and this half is the second one.
+// The trip to Google is a full-page redirect rather than a popup, because a
+// popup is blocked by default in exactly the case that matters, and it returns
+// with ``?google_doc=1`` so the export the reader started before consenting
+// finishes without them pressing anything twice.
+
+async function googleDocsStatus() {
+  if (state.googleDocs) return state.googleDocs;
+  try {
+    state.googleDocs = await researchApi("/google/status");
+  } catch {
+    state.googleDocs = { configured: false, connected: false };
+  }
+  return state.googleDocs;
+}
+
+async function syncGoogleDocsButton() {
+  const button = document.querySelector(".google-doc-export");
+  if (!button) return;
+  const status = await googleDocsStatus();
+  const note = document.querySelector(".google-doc-note");
+  if (status.configured) {
+    button.textContent = status.connected
+      ? "Open in Google Docs"
+      : "Connect Google Drive and open";
+    if (note && !note.dataset.sticky) {
+      note.textContent = status.connected
+        ? "The document is created in your own Drive and is yours to edit and share."
+        : "Google will ask you to allow this service to create one file in your Drive. It cannot read anything else there.";
+    }
+    return;
+  }
+  // Nothing to connect to. Said plainly rather than left as a button that
+  // fails: an unconfigured deployment is the normal state of a local checkout.
+  button.remove();
+  if (note) {
+    note.textContent =
+      "This deployment has no Google OAuth client, so Docs are created by uploading the .docx to Drive yourself.";
+  }
+}
+
+async function exportToGoogleDocs(sessionId) {
+  const button = document.querySelector(".google-doc-export");
+  const note = document.querySelector(".google-doc-note");
+  const status = await googleDocsStatus();
+  if (!status.configured) return;
+  if (!status.connected) {
+    // Consent, then straight back here to finish this same export.
+    location.assign(
+      `/api/research/google/authorize?session_id=${encodeURIComponent(sessionId)}`,
+    );
+    return;
+  }
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Creating the document…";
+  }
+  try {
+    const created = await researchApi(
+      `/sessions/${encodeURIComponent(sessionId)}/report/google-doc`,
+      { method: "POST" },
+    );
+    if (note) {
+      note.dataset.sticky = "1";
+      // A link, not only a new tab: a blocked popup is otherwise a button that
+      // reports success and shows nothing.
+      note.innerHTML = `Created in your Drive · <a href="${escapeHtml(created.url)}" target="_blank" rel="noopener">${escapeHtml(created.name || "Open the document")}</a>`;
+    }
+    window.open(created.url, "_blank", "noopener");
+    toast("Google Doc created in your Drive");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/authoriz|expired|connected/i.test(message)) {
+      // The token ran out while the report was being read. Ask again rather
+      // than report a failure the reader can do nothing about.
+      state.googleDocs = null;
+      location.assign(
+        `/api/research/google/authorize?session_id=${encodeURIComponent(sessionId)}`,
+      );
+      return;
+    }
+    if (note) note.textContent = message;
+    toast(message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Open in Google Docs";
+    }
+  }
 }
 
 function returnToCurrentGate() {
@@ -2820,6 +2929,8 @@ document.querySelector(".stage-nav").addEventListener("click", (event) => {
 });
 elements.messages.addEventListener("click", (event) => {
   if (event.target.closest("[data-return-current]")) returnToCurrentGate();
+  const toDrive = event.target.closest(".google-doc-export");
+  if (toDrive) exportToGoogleDocs(toDrive.dataset.sessionId);
 });
 elements.sessionHistory.addEventListener("click", (event) => {
   const item = event.target.closest(".session-history-item");
@@ -2916,6 +3027,23 @@ document.addEventListener("click", (event) => {
 // history like any other.
 const sharedSessionId = new URLSearchParams(location.search).get("session");
 const rememberedWorkflowId = localStorage.getItem(CURRENT_WORKFLOW_KEY);
+
+// Back from Google's consent screen, which is a full-page navigation and so
+// arrives as a fresh load of the application with the run named in the address.
+// Both parameters are read once and then wiped out of the address bar: left
+// there, a refresh an hour later would silently create a second copy of the
+// dossier in the reader's Drive, and a stale error would be re-announced over a
+// screen it no longer describes.
+const googleReturn = new URLSearchParams(location.search);
+const resumingGoogleExport = googleReturn.get("google_doc") === "1";
+const googleFailure = googleReturn.get("google_error") || "";
+if (resumingGoogleExport || googleFailure) {
+  const address = new URL(location.href);
+  address.searchParams.delete("google_doc");
+  address.searchParams.delete("google_error");
+  history.replaceState(null, "", address.pathname + address.search);
+}
+if (googleFailure) toast(googleFailure);
 // Every guided visit begins not knowing which screen it is, and says so until
 // it does. All three answers below need a round trip -- the run named in the
 // address, the run this browser was last reading, the run the server has going
@@ -2941,7 +3069,14 @@ if (state.mode === "conversation") {
   );
 } else {
   if (sharedSessionId) {
-    openResearchSession(sharedSessionId).finally(settleLanding);
+    openResearchSession(sharedSessionId)
+      .then(() => {
+        // The export the reader pressed before they were sent to Google. The
+        // report has to be on the page first, because the button and the note
+        // it writes into are part of it.
+        if (resumingGoogleExport) return exportToGoogleDocs(sharedSessionId);
+      })
+      .finally(settleLanding);
   } else if (rememberedWorkflowId) {
     openResearchSession(rememberedWorkflowId, { restore: true }).finally(
       settleLanding,

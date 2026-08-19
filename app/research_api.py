@@ -11,12 +11,14 @@ import threading
 import time
 from pathlib import Path
 from typing import Literal
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlencode
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
-from fastapi.responses import Response
+import httpx
+from fastapi import APIRouter, BackgroundTasks, Cookie, Header, HTTPException
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 
+from app import google_docs
 from app.app_utils.a2a import default_app_url
 from app.evidence_tasks import configured as evidence_tasks_configured
 from app.evidence_tasks import enqueue_evidence_step
@@ -412,8 +414,13 @@ def _snapshot(workflow: CoScientistWorkflow) -> dict:
                         f"/api/research/sessions/{session.id}/report/{report_format}"
                     ),
                 }
+                # A Word file is a Word file. Calling this one "Google Docs"
+                # named the place a reader might take it next rather than the
+                # thing the button produced, and the button that does mean
+                # Google Docs -- the one that puts the dossier in their Drive
+                # -- is beside it now and would have had the same name.
                 for report_format, label, suffix in (
-                    ("docx", "Google Docs (.docx)", ".docx"),
+                    ("docx", "Word (.docx)", ".docx"),
                     ("pdf", "PDF", ".pdf"),
                     ("md", "Markdown", ".md"),
                 )
@@ -950,6 +957,179 @@ def download_research_report(session_id: str, report_format: str) -> Response:
             "Content-Disposition": f'attachment; filename="{basename}{suffix}"',
             "Cache-Control": "private, no-store",
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Google Docs
+# ---------------------------------------------------------------------------
+#
+# Three routes for one button. The browser asks whether this deployment can do
+# it at all and whether this browser has already said yes; it is sent to Google
+# and comes back; and then the dossier is uploaded. The token lives in a signed
+# cookie on the reader's own browser and the reasoning for that, and for the
+# scope, is in ``app/google_docs.py``.
+
+
+@router.get("/google/status")
+def google_docs_status(
+    sealed: str | None = Cookie(default=None, alias=google_docs.TOKEN_COOKIE),
+) -> dict:
+    """Whether the Drive export is available here, and to this browser."""
+    connected = True
+    try:
+        google_docs.access_token(sealed)
+    except google_docs.NotConnected:
+        connected = False
+    return {
+        "configured": google_docs.configured(),
+        "connected": google_docs.configured() and connected,
+        # Reported rather than assumed: this exact string has to be registered
+        # on the OAuth client, and a mismatch is otherwise only discovered by
+        # the first reader who presses the button.
+        "redirect_uri": google_docs.redirect_uri(default_app_url()),
+    }
+
+
+@router.get("/google/authorize", include_in_schema=False)
+def start_google_authorization(session_id: str = "") -> Response:
+    """Send the reader to Google's consent screen for this run."""
+    if not google_docs.configured():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "This deployment has no Google OAuth client, so it cannot create "
+                "Google Docs. Download the .docx instead."
+            ),
+        )
+    state = google_docs.new_state(session_id)
+    response = RedirectResponse(
+        google_docs.authorize_url(default_app_url(), state),
+        status_code=303,
+    )
+    _set_google_cookie(
+        response,
+        google_docs.STATE_COOKIE,
+        state,
+        max_age=google_docs.STATE_TTL_SECONDS,
+    )
+    return response
+
+
+@router.get("/google/callback", include_in_schema=False)
+def finish_google_authorization(
+    code: str = "",
+    state: str = "",
+    error: str = "",
+    started: str | None = Cookie(default=None, alias=google_docs.STATE_COOKIE),
+) -> Response:
+    """Take the code Google sends back and turn it into this browser's token.
+
+    Every failure here lands the reader back on the page they left, with the
+    reason in the address bar for the page to say out loud. A bare error page
+    from an API route would strand them outside the application holding a
+    stack of research they were in the middle of reading.
+    """
+    try:
+        session_id = google_docs.read_state(state, started)
+    except google_docs.GoogleDocsError as failure:
+        return _back_to_reading("", error=str(failure))
+    if error or not code:
+        # The reader pressed Cancel, or Google refused. Both are answers.
+        return _back_to_reading(
+            session_id,
+            error=(
+                "Google Drive access was not granted, so no document was created."
+                if error in ("access_denied", "")
+                else f"Google refused the sign-in ({error})."
+            ),
+        )
+    try:
+        issued = google_docs.exchange_code(code, default_app_url())
+    except (google_docs.GoogleDocsError, httpx.HTTPError) as failure:
+        logger.warning("Google token exchange failed: %s", failure)
+        return _back_to_reading(session_id, error="Google would not issue a token.")
+    response = _back_to_reading(session_id, resume=True)
+    _set_google_cookie(
+        response,
+        google_docs.TOKEN_COOKIE,
+        issued["cookie"],
+        max_age=issued["max_age"],
+    )
+    response.delete_cookie(google_docs.STATE_COOKIE, path="/")
+    return response
+
+
+@router.post("/sessions/{session_id}/report/google-doc")
+def export_report_to_google_docs(
+    session_id: str,
+    sealed: str | None = Cookie(default=None, alias=google_docs.TOKEN_COOKIE),
+) -> dict:
+    """Create the dossier as a Google Doc in the reader's own Drive."""
+    try:
+        token = google_docs.access_token(sealed)
+    except google_docs.NotConnected as refusal:
+        # Asked before the session is loaded, and not because it is cheaper --
+        # though it is, since loading a finished run renders its whole dossier.
+        # 401 rather than 403: the answer is to connect, and the browser turns
+        # this into the trip to Google rather than into an error the reader has
+        # to interpret.
+        raise HTTPException(status_code=401, detail=str(refusal)) from refusal
+    workflow = _load(session_id)
+    if not workflow.done:
+        raise HTTPException(
+            status_code=409,
+            detail="The final dossier is available after Meta-review is accepted.",
+        )
+    name = workflow.report_filename().removesuffix(".md")
+    try:
+        created = google_docs.create_document(
+            token, name, render_docx(workflow.render_report())
+        )
+    except google_docs.NotConnected as refusal:
+        raise HTTPException(status_code=401, detail=str(refusal)) from refusal
+    except (google_docs.GoogleDocsError, httpx.HTTPError) as failure:
+        logger.warning("Google Drive upload failed for %s: %s", session_id, failure)
+        raise HTTPException(status_code=502, detail=str(failure)) from failure
+    return created
+
+
+def _back_to_reading(
+    session_id: str, *, resume: bool = False, error: str = ""
+) -> Response:
+    """A redirect to the run the reader was reading, and why they are back."""
+    parameters = {}
+    if session_id:
+        parameters["session"] = session_id
+    if resume:
+        # The page picks this up and finishes the export the reader started
+        # before they were sent to Google, so pressing Connect is one press and
+        # not two.
+        parameters["google_doc"] = "1"
+    if error:
+        parameters["google_error"] = error
+    return RedirectResponse(f"/?{urlencode(parameters)}" if parameters else "/", 303)
+
+
+def _set_google_cookie(
+    response: Response, name: str, value: str, *, max_age: int
+) -> None:
+    """One cookie policy for both of these, in one place.
+
+    ``Secure`` is conditional because a local checkout is served over plain
+    HTTP and a Secure cookie is silently dropped there -- which presents as the
+    handshake never having started. ``Lax`` rather than ``Strict``: the callback
+    is a cross-site navigation from Google, and Strict withholds the cookie on
+    exactly that request.
+    """
+    response.set_cookie(
+        name,
+        value,
+        max_age=max_age,
+        httponly=True,
+        samesite="lax",
+        secure=default_app_url().startswith("https://"),
+        path="/",
     )
 
 

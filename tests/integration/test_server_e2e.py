@@ -253,7 +253,11 @@ def test_public_research_workspace(server_fixture: subprocess.Popen[str]) -> Non
     assert "height: 100dvh" in stylesheet.text
     assert "nearConversationBottom" in script.text
     assert "renderReportCompletion" in script.text
-    assert "editable Word document for Google Docs" in script.text
+    # The export row offers the Drive document and the Word file as two
+    # different things. It used to offer one button that said Google Docs and
+    # downloaded a .docx.
+    assert "exportToGoogleDocs" in script.text
+    assert "Open in Google Docs" in script.text
     assert "Guided HITL" in response.text
 
     assert requests.get(f"{BASE_URL}/dev-ui", timeout=10).status_code == 404

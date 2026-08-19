@@ -102,6 +102,7 @@ button {
 .artifact-actions button,
 .input-actions button,
 .report-export-actions a,
+.report-export-actions button,
 .historical-preview-banner button,
 .save-edit,
 .send-button,
@@ -2501,33 +2502,53 @@ kbd {
   margin: 18px 0 12px;
 }
 
-.report-export-actions a {
+/* One button here is a button and the rest are links, because one of them
+   creates a document and the other three fetch a file. They are the same row of
+   actions to the reader and are styled as one. */
+.report-export-actions a,
+.report-export-actions button {
   padding: 10px 13px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--white);
   color: var(--ink);
+  font-family: inherit;
   font-size: var(--text-base);
   font-weight: 750;
   text-decoration: none;
+  cursor: pointer;
 }
 
-.report-export-actions a:hover {
+.report-export-actions a:hover,
+.report-export-actions button:hover {
   border-color: var(--teal);
 }
 
-.report-export-actions a.primary {
+.report-export-actions a.primary,
+.report-export-actions button.primary {
   border-color: var(--teal);
   background: var(--teal);
   color: var(--white);
 }
 
-.report-completion small {
+.report-export-actions button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.report-completion small,
+.google-doc-note {
   display: block;
   max-width: 680px;
+  margin: 0;
   color: var(--muted);
   font-size: var(--text-base);
   line-height: 1.45;
+}
+
+.google-doc-note a {
+  color: var(--teal);
+  font-weight: 700;
 }
 
 body.history-preview .composer {
