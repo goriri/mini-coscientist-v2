@@ -7,6 +7,14 @@ import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import {
+  delay,
+  openPage,
+  waitFor as waitForShared,
+  waitForDebugging,
+  waitForServer,
+} from "./browser.mjs";
+
 const baseUrl = process.env.COSCIENTIST_E2E_URL || "http://127.0.0.1:8768";
 const outputDir = process.env.COSCIENTIST_SHOT_DIR || "/tmp/coscientist-shots";
 const chrome =
@@ -16,13 +24,21 @@ const debuggingPort = Number(process.env.CHROME_DEBUGGING_PORT || "9224");
 const profile = await mkdtemp(join(tmpdir(), "coscientist-shots-"));
 const startServer = process.env.COSCIENTIST_E2E_START_SERVER !== "false";
 // Thirty seconds is right for the offline server this script starts itself.
-// Pointed at a deployment with Deep Research on, the evidence stage is seven
-// concurrent research interactions and takes minutes, so the budget is a knob
-// rather than a constant -- otherwise the only way to photograph a real run is
-// to edit the harness.
-const gateTimeout = Number(
-  process.env.COSCIENTIST_E2E_GATE_TIMEOUT_MS || "30000",
-);
+// Pointed at a deployment with Deep Research on, every stage is a real model
+// call, so the waits are stretched by COSCIENTIST_E2E_TIMEOUT_SCALE -- the same
+// knob every other suite takes, applied inside the shared wait. This script
+// read a knob of its own that nothing else set, so a deployment run configured
+// the way the others are kept its local thirty seconds and gave up on the first
+// gate, reported as "The first approval gate never opened".
+const gateTimeout = 30000;
+// Against a deployment the evidence stage is a real Deep Research pass -- seven
+// concurrent interactions, most of an hour -- and a fifteen-minute budget on
+// gate two reported "Gate 2 never became actionable" over a stage that was
+// working exactly as designed. Naming an earlier run of the same question forks
+// its corpus and skips the stage, which is what the HITL suite does. The cost
+// is the two evidence photographs; the run says which ones it did not take
+// rather than printing a shorter list as though it were the whole set.
+const seedEvidenceFrom = process.env.COSCIENTIST_E2E_SEED_FROM || "";
 let server = null;
 
 await mkdir(outputDir, { recursive: true });
@@ -69,72 +85,13 @@ const browser = spawn(
   { stdio: "ignore" },
 );
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function waitForEndpoint(url, attempts, note) {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      if ((await fetch(url)).ok) return;
-    } catch {
-      // Still starting.
-    }
-    await delay(100);
-  }
-  throw new Error(note);
-}
-
-class Cdp {
-  constructor(url) {
-    this.socket = new WebSocket(url);
-    this.nextId = 1;
-    this.pending = new Map();
-    this.socket.addEventListener("message", (event) => {
-      const message = JSON.parse(event.data);
-      if (!message.id) return;
-      const handler = this.pending.get(message.id);
-      if (!handler) return;
-      this.pending.delete(message.id);
-      if (message.error) handler.reject(new Error(message.error.message));
-      else handler.resolve(message.result);
-    });
-  }
-
-  async ready() {
-    if (this.socket.readyState === WebSocket.OPEN) return;
-    await new Promise((resolve, reject) => {
-      this.socket.addEventListener("open", resolve, { once: true });
-      this.socket.addEventListener("error", reject, { once: true });
-    });
-  }
-
-  call(method, params = {}) {
-    const id = this.nextId++;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async evaluate(expression) {
-    const result = await this.call("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails) {
-      throw new Error(result.exceptionDetails.text || "Evaluation failed.");
-    }
-    return result.result.value;
-  }
-}
-
-async function waitFor(cdp, expression, note, timeout = gateTimeout) {
-  const started = Date.now();
-  while (Date.now() - started < timeout) {
-    if (await cdp.evaluate(expression)) return;
-    await delay(150);
-  }
-  throw new Error(note);
+// The gate budget is the only thing this script needs on top of the shared
+// wait, which carries the per-call deadline, the retry around a single failed
+// evaluation and the narration. A copy of that plumbing lived here and had
+// none of the three: one transient DevTools "Internal error", seventeen minutes
+// into a deployment run, killed the whole pass.
+function waitFor(cdp, expression, note, timeout = gateTimeout) {
+  return waitForShared(cdp, expression, note, timeout);
 }
 
 async function click(cdp, selector) {
@@ -208,22 +165,9 @@ const shots = [];
 let rankingShot = false;
 
 try {
-  await waitForEndpoint(baseUrl, 300, "The server did not become ready.");
-  await waitForEndpoint(
-    `http://127.0.0.1:${debuggingPort}/json/version`,
-    80,
-    "Chrome DevTools did not become ready.",
-  );
-  const page = await (
-    await fetch(
-      `http://127.0.0.1:${debuggingPort}/json/new?${encodeURIComponent(baseUrl)}`,
-      { method: "PUT" },
-    )
-  ).json();
-  const cdp = new Cdp(page.webSocketDebuggerUrl);
-  await cdp.ready();
-  await cdp.call("Runtime.enable");
-  await cdp.call("Page.enable");
+  await waitForServer(baseUrl);
+  await waitForDebugging(debuggingPort);
+  const cdp = await openPage(debuggingPort, baseUrl);
   await cdp.call("Emulation.setDeviceMetricsOverride", {
     width: 1512,
     height: 950,
@@ -238,6 +182,20 @@ try {
   await delay(600);
   shots.push(await shoot(cdp, "01-landing-desktop"));
 
+  // The fork is refused unless the question matches the source run's word for
+  // word, which the one typed below is.
+  if (seedEvidenceFrom) {
+    console.log(
+      `Forking the evidence base of ${seedEvidenceFrom}: the evidence stage is ` +
+        "skipped, so 04-evidence-trust and 04-evidence-integrity-gate are not " +
+        "photographed on this pass.",
+    );
+    await cdp.evaluate(`(() => {
+      const field = document.querySelector("#seedEvidenceFrom");
+      field.value = ${JSON.stringify(seedEvidenceFrom)};
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+  }
   await cdp.evaluate(`(() => {
     const input = document.querySelector("#promptInput");
     input.value = "Does a protective coating improve rechargeable battery cycle life compared with an uncoated control?";
@@ -357,7 +315,23 @@ try {
   await delay(500);
   shots.push(await shoot(cdp, "09-history-mobile"));
 
-  console.log(JSON.stringify({ status: "captured", shots }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        status: "captured",
+        shots,
+        ...(seedEvidenceFrom
+          ? {
+              notPhotographed:
+                "the evidence gate: this pass forked the corpus of " +
+                `${seedEvidenceFrom} rather than searching for one`,
+            }
+          : {}),
+      },
+      null,
+      2,
+    ),
+  );
 } finally {
   browser.kill("SIGTERM");
   if (server) server.kill("SIGTERM");

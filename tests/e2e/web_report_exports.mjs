@@ -23,6 +23,7 @@ import {
   assert,
   openPage,
   refuseOccupiedPort,
+  refuseDeploymentTarget,
   refuseOccupiedServer,
   spawnBrowser,
   waitFor,
@@ -31,6 +32,7 @@ import {
 } from "./browser.mjs";
 
 const baseUrl = process.env.COSCIENTIST_E2E_URL || "http://127.0.0.1:8771";
+refuseDeploymentTarget("web_report_exports", baseUrl);
 const chrome =
   process.env.CHROME_BIN ||
   "/tmp/math-witch-playwright/chromium-1187/chrome-linux/chrome";

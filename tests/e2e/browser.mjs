@@ -127,7 +127,9 @@ export async function waitFor(cdp, expression, message, timeout = 15000) {
     }
     await delay(100);
   }
-  throw new Error(lastFailure ? `${message} (${lastFailure.message})` : message);
+  throw new Error(
+    lastFailure ? `${message} (${lastFailure.message})` : message,
+  );
 }
 
 // A second Chrome cannot bind a port the first one holds, and it exits
@@ -171,6 +173,24 @@ export async function refuseOccupiedServer(baseUrl) {
   } catch (error) {
     if (!/ECONNREFUSED|fetch failed/i.test(String(error))) throw error;
   }
+}
+
+// Three of the six suites write the state they then read: a governance block,
+// a finished report, four runs with hand-set clocks. There is no version of
+// those against a deployment -- nothing can seed one, and the assertions are
+// about exactly what was seeded. Pointed at one anyway they reached
+// refuseOccupiedServer and reported "Something is already serving …, and it is
+// not this run", which reads as a leftover server from the last run and sends
+// the reader hunting for a process that was never there.
+export function refuseDeploymentTarget(suite, baseUrl) {
+  if (process.env.COSCIENTIST_E2E_START_SERVER !== "false") return;
+  throw new Error(
+    `${suite} seeds the state it asserts on and has to serve it itself, so it ` +
+      `cannot be pointed at ${baseUrl}. Run it without ` +
+      "COSCIENTIST_E2E_START_SERVER=false. The suites that do run against a " +
+      "deployment are web_hitl_flow, web_landing_resumes_work and " +
+      "web_screenshots.",
+  );
 }
 
 export function spawnBrowser(chrome, debuggingPort, profile) {

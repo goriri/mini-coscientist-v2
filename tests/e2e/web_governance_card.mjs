@@ -21,6 +21,7 @@ import {
   assert,
   openPage,
   refuseOccupiedPort,
+  refuseDeploymentTarget,
   refuseOccupiedServer,
   spawnBrowser,
   waitFor,
@@ -29,6 +30,7 @@ import {
 } from "./browser.mjs";
 
 const baseUrl = process.env.COSCIENTIST_E2E_URL || "http://127.0.0.1:8767";
+refuseDeploymentTarget("web_governance_card", baseUrl);
 const chrome =
   process.env.CHROME_BIN ||
   "/tmp/math-witch-playwright/chromium-1187/chrome-linux/chrome";
@@ -179,9 +181,7 @@ try {
   view = await cdp.evaluate(findingsState);
   assert(
     view.open.length === 3 &&
-      view.open.every(
-        (item) => item.reason === REASON && item.name === NAME,
-      ),
+      view.open.every((item) => item.reason === REASON && item.name === NAME),
     "Copying a reason must fill every open finding, ready to edit.",
   );
 
